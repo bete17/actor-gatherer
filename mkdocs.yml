@@ -32,3 +32,5 @@ extra:
   css_version: 23
 exclude_docs: |
   *.py
+  agents/
+  adr/
