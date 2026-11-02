@@ -1,6 +1,6 @@
 # The dashboard on a standard stack: plan
 
-Status: A0–A3 and B1 built. A1's build step, the server serving it and `publish.yml` building it come with A3, the
+Status: A0–A3, B1 and B3 built. A1's build step, the server serving it and `publish.yml` building it come with A3, the
 first step with something to build. It moves the
 dashboard to the tools most web front ends and Python APIs are built with now, in steps that keep it working.
 
@@ -105,8 +105,8 @@ Checked by ESLint and tests in CI:
 
 1. `core/` imports nothing from `features/`, `apps/` or `layout/`.
 2. A feature imports `core/` and its own folder, not another feature; what two features share moves to `core/`.
-3. Only `apps/` names an app (DocWriter, Browser). On the server, only `apps.py`, `docwriter.py`, `browser.py` and
-   their routers do.
+3. Only `apps/` names an app (DocWriter, Browser). On the server, only `apps.py`, the apps' modules (`docwriter.py`,
+   `browser.py`, and `docwriter_guard.py`, `browser_video.py`) and their routers do (`test_dashboard_apps.py`).
 4. Only `layout/` arranges the page. A view draws into the element it is given, and never moves an iframe: a browser
    reloads an iframe that is moved.
 5. `tsc --noEmit` passes, and `types.gen.ts` matches the server's schema.
@@ -244,16 +244,52 @@ What went another way, and why:
   handlers, and `shutdown()` and `server_close()` work as socketserver's did, so the tests and `__main__` are unchanged.
   FastAPI and uvicorn are imported only once a server is made: `page()` and `--out` need neither.
 - **No /docs, /redoc or /openapi.json** are served (none were); `app.create().openapi()` makes the schema for B2.
-- Rule 3 is not met yet on the server: `/api/send` composes a Browser actor's message and the home says whether
-  DocWriter and the Browser are offered, outside their routers, as `server.py` did. B3 moves them.
+- Rule 3 was not met yet on the server: `/api/send` composed a Browser actor's message and the home said whether
+  DocWriter and the Browser are offered, outside their routers, as `server.py` did. B3 moved them.
 
 **B2. Generated types.** FastAPI's OpenAPI schema generates `frontend/src/core/api/types.gen.ts`, and CI fails when
 it is stale. This needs B1 and A1.
 
-**B3. The apps behind one list.** `apps.py` lists DocWriter and Browser. Each provides the same functions:
-`available(home)`, `create(gatherer, cwd, harness)`, `launch_args(session)`, `asked(text)`. `sessions.py`,
-`coordination.py` and the routers loop over the list instead of naming each. A session's role is already
-`{"<app name>": key}`, so stored sessions don't change.
+**B3. The apps behind one list.** Built. `apps.py`'s `APPS` lists DocWriter and the Browser, each an `App` giving
+what the shared code asks of it -- found there by name (`named`), by its page's path (`under`) or by its actor's
+session (`of`):
+- `name` (its role's key, its routes' first part, its flag in `ag actors new`) and `label`;
+- `start(sessions)`: its running part, one per dashboard (`Server.apps`, by name), which `create(gatherer, cwd, harness,
+  model)`s a new one and its actor, `name_actor(key, name)`s it and `close()`s; `served_at(origin)`;
+- `available(running)`, and `home(running)`, what the home says of it (`home_fields`, which `models.Home` adds);
+- `key_of(session)`, `launch_args(session)` (`sessions.extra_args`), `compose(running, session, text)` (`/api/send`);
+- `error` (its status the HTTP status), `path()`, `max_body` and `page_writes` (`OwnPage`), `router()`.
+
+`sessions.py`, `coordination.py`, `server.py`, `app.py`, `models.py` and `api/sessions.py` loop over `APPS` instead of
+naming each. A session's role is still `{"<app name>": key}`, so stored sessions don't change. `test_dashboard_apps.py`
+checks rule 3 on the server (no module but the apps' own, `apps.py` and their routers names one in its code: strings and
+identifiers, not comments and docstrings), with an allow-list of six entries, each saying why, and that each app gives the
+interface. `compare_servers.py` still finds all 197 answers the same.
+
+What went another way, and why:
+- **No `asked(text)`.** The server never takes an app's state block (`<workspace_state>`, `<browser_state>`) off what its
+  actor was asked: the page does (`legacy/19-docwriter.js`, `20-browser.js`), so it goes to the front end's `APPS`.
+- **`create` is the running part's**, not the `App`'s: an app's documents, Chrome and tools live in it
+  (`docwriter.DocWriters`, `browser.Browsers`), made once per server by `start`; the routers and `coordination.py`
+  reach it in `Server.apps`.
+- **`ag actors new`'s flags are the apps' names**: `Coordination.new(..., **app)` takes `docwriter=True` or
+  `browser=True` as before, and `/api/actors/new` passes each app's flag. Its errors for flags that do not go together
+  are now said the same for every app: "a Browser's actor works in its folder, not on a branch: --browser or --branch,
+  not both" (was "--browser alone"), "an actor is one app's at most: --docwriter alone or --browser alone" (was "a
+  Browser's actor is neither a DocWriter nor on a branch"); DocWriter's with a branch says "a DocWriter's actor works in
+  its folder" for "a DocWriter writes in its folder".
+- **Moved into the apps' own code:** the Browser's error status (from `api/common.py` into `api/browser.py`'s
+  `BrowserErrors`, for all its routes: the same answers); DocWriter's MCP server's name (`mcp.NAME` is now a generic
+  default, "ag-dashboard"; DocWriter passes `docwriter.MCP_NAME`), its body limit (`server.DOCWRITER_BODY`, now
+  `docwriter.MAX_BODY`) and its availability (`docwriter.available()`); `docwriter.key_of`, which also checks the key
+  is one (16 hex digits) where `coordination.py` took any string -- a role nothing writes.
+- **The routers' order:** the apps' come last in `APPS`' order, so `--routes` lists DocWriter's before the Browser's. No
+  path of one is another's.
+- **`preview.py` still names DocWriter**, allowed: it shows a PDF in pdf.js, which DocWriter's build puts under
+  `vendor/docwriter/pdfjs`, with DocWriter's file types and SyncTeX. A module of their own (and pdf.js out of
+  DocWriter's folder) would end that; not done here.
+- **`compare_servers.py`** gives the old server's call of `Coordination` (an argument per app) its new form
+  (`_as_before`): the old `server.py` runs on today's modules.
 
 ### Dependencies
 

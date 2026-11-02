@@ -270,7 +270,7 @@ class CoordinationTest(CoordinationBase):
             self.skipTest("pycrdt is not installed")
         dws = docwriter.DocWriters(self.s)
         self.addCleanup(dws.close)
-        crew = coordination.Coordination(self.s, watch=False, docwriters=dws)
+        crew = coordination.Coordination(self.s, watch=False, apps={"docwriter": dws})
         paper = os.path.join(self.tmp.name, "paper")
         os.makedirs(paper)
         with unittest.mock.patch.object(dws, "name_actor") as name_actor:
@@ -295,7 +295,7 @@ class CoordinationTest(CoordinationBase):
     def test_a_new_browser_is_a_browsers_actor_in_the_folder_started_with_the_message(self):
         bs = browser.Browsers(self.s)
         self.addCleanup(bs.close)
-        crew = coordination.Coordination(self.s, watch=False, browsers=bs)
+        crew = coordination.Coordination(self.s, watch=False, apps={"browser": bs})
         site = os.path.join(self.tmp.name, "site")
         os.makedirs(site)
         with unittest.mock.patch.object(bs, "name_actor") as name_actor:
@@ -487,7 +487,7 @@ class CommandTest(CoordinationBase):
 
     @unittest.skipUnless(browser.available(), "no Chrome here")
     def test_the_gatherer_agent_starts_a_browser_from_its_shell(self):
-        self.crew.browsers = self.httpd.browsers
+        self.crew.apps["browser"] = self.httpd.apps["browser"]
         with unittest.mock.patch.object(browser.Browsers, "name_actor"):   # no ag to name it in
             code, out, err = self.run_cli("new", "--browser", "--cwd", self.tmp.name, "Find", "the", "deadline.")
         self.assertEqual((code, err), (0, ""))

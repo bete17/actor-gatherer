@@ -19,15 +19,15 @@ Key = Annotated[str, Path(pattern=KEY)]
 
 
 class BrowserErrors(Errors):
-    """A Browser's routes: what the user does in it (/browser/w/...) answers a Browser's error with its own status, any
+    """A Browser's routes answer a Browser's error with its own status; what the user does in it (/browser/w/...) any
     other ValueError (a number that is not one...), TypeError or OSError 400 ("<type>: <error>"), the rest 500; its
     stream's, and /api/browser's, as any other route's."""
 
     def failed(self, request: Request, exc: Exception) -> Response:
-        if request.method == "GET" or not request.scope["path"].startswith("/browser/w/"):
-            return super().failed(request, exc)
         if isinstance(exc, browser.BrowserError):
             return failure(exc.status, str(exc))
+        if request.method == "GET" or not request.scope["path"].startswith("/browser/w/"):
+            return super().failed(request, exc)
         status = 400 if isinstance(exc, (ValueError, TypeError, OSError)) else 500
         return failure(status, f"{type(exc).__name__}: {exc}")
 
@@ -54,10 +54,16 @@ Raw = Annotated[bytes, Depends(_raw)]
 Object = Annotated[dict, Depends(_object)]
 
 
+def _browsers(srv) -> "browser.Browsers":
+    """The dashboard's Browsers (server.py's `apps`), else None."""
+    return srv.apps.get("browser")
+
+
 def _browser(srv, key: str) -> "browser.Browser":
-    if srv.browsers is None:
+    bs = _browsers(srv)
+    if bs is None:
         raise Answered(not_found())
-    return srv.browsers.get(key)
+    return bs.get(key)
 
 
 def _num(body: dict, k: str):
@@ -90,9 +96,10 @@ def stream(srv: Parts, key: Key, video: str = "") -> Response:
 @router.post("/browser/w/{key}/mcp")
 def mcp_server(srv: Parts, key: Key, raw: Raw) -> Response:
     """The MCP server the Browser's actor calls (mcp.py): its tools, run in the Browser."""
-    if srv.browsers is None:
+    bs = _browsers(srv)
+    if bs is None:
         return not_found()
-    status, value = mcp.handle(raw, browser.TOOLS, lambda name, args: srv.browsers.call(key, name, args), browser.NAME)
+    status, value = mcp.handle(raw, browser.TOOLS, lambda name, args: bs.call(key, name, args), browser.NAME)
     return answer(value, status) if value is not None else send(202, b"", "text/plain")
 
 
@@ -231,11 +238,11 @@ def other(srv: Parts, key: Key, what: Annotated[str, Path(pattern=r"^[a-z]+$")],
 def create(srv: Parts, body: Body) -> Response:
     """{gatherer, cwd, harness?, model?}: a new Browser, its actor a new session of `harness` in the gatherer, in `cwd`
     (browser.py's `create`) -> {key, channel, ...}."""
-    if srv.browsers is None:
+    bs = _browsers(srv)
+    if bs is None:
         return not_found()
-    return answer(srv.browsers.create(str(body.get("gatherer") or ""), str(body.get("cwd") or ""),
-                                      str(body.get("harness") or harness_kit.DEFAULT),
-                                      str(body.get("model") or "") or None))
+    return answer(bs.create(str(body.get("gatherer") or ""), str(body.get("cwd") or ""),
+                            str(body.get("harness") or harness_kit.DEFAULT), str(body.get("model") or "") or None))
 
 
 @router.post("/api/browser/logins")
@@ -243,8 +250,9 @@ def logins(srv: Parts, body: Body) -> Response:
     """{action?: sites | import, sites?}: the user's Chrome's logins, for every Browser of the dashboard --
     browser.py's `login_sites`, the sites it has cookies for (Chrome asking the user to allow it); `import_logins`,
     those sites' cookies copied."""
-    if srv.browsers is None:
+    bs = _browsers(srv)
+    if bs is None:
         return not_found()
     if body.get("action") == "import":
-        return answer(srv.browsers.import_logins(body.get("sites") or []))
-    return answer(srv.browsers.login_sites())
+        return answer(bs.import_logins(body.get("sites") or []))
+    return answer(bs.login_sites())

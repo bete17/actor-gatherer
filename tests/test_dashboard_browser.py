@@ -383,11 +383,11 @@ class ServerTest(Home):
         self.assertEqual(os.path.realpath(s["cwd"]), self.root)
 
     def test_a_message_to_it_carries_the_browser_state_and_its_picks_are_told(self):
-        b = self.httpd.browsers.get(self.cfg["key"])
+        b = self.httpd.apps["browser"].get(self.cfg["key"])
         b.picks = [{"kind": "area", "id": "p1", "label": "an area", "box": [0, 0, 5, 5]}]
         sent = []
         with mock.patch.object(sessions.Sessions, "send", lambda self, sid, text, *a: sent.append(text) or {"ok": 1}), \
-                mock.patch.object(self.httpd.browsers, "name_actor"):
+                mock.patch.object(self.httpd.apps["browser"], "name_actor"):
             self.post("/api/send", {"session_id": self.cfg["channel"], "text": "look here"})
             self.post("/api/send", {"session_id": self.cfg["channel"], "text": "/compact"})
         self.assertTrue(sent[0].startswith("look here\n\n<browser_state>"))
@@ -413,7 +413,7 @@ class ServerTest(Home):
             self.post(f"/browser/w/{key}/choose", {"n": 7, "index": 0})
         self.assertEqual(got.exception.code, 409)
         fid = self.post(f"/browser/w/{key}/file", {"name": "a.txt", "data": base64.b64encode(b"hi").decode()})["id"]
-        with open(self.httpd.browsers.get(key).uploads[fid]) as fh:
+        with open(self.httpd.apps["browser"].get(key).uploads[fid]) as fh:
             self.assertEqual(fh.read(), "hi")
         with self.assertRaises(urllib.error.HTTPError) as got:
             self.post(f"/browser/w/{key}/file", {"name": "a.txt", "data": "not base64!"})

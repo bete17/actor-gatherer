@@ -14,7 +14,8 @@ import json
 from typing import Callable, List, Optional, Tuple
 
 PROTOCOL = "2025-06-18"     # the version answered to a client that names none
-NAME = "docwriter-doc"      # DocWriter's server's name (`handle` takes another's): the tools' names, as the harness shows them, carry it
+NAME = "ag-dashboard"       # a server's name, where none is given (`handle`): its tools' names, as harnesses show them,
+                            # carry it -- an app's server is given its own (docwriter.py's MCP_NAME, browser.py's NAME)
 
 
 def result(text: str, error: bool = False) -> dict:

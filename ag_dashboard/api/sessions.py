@@ -5,7 +5,7 @@ import harness_kit
 from fastapi import APIRouter
 from starlette.responses import Response
 
-from .. import coordination, data, home, sessions
+from .. import apps, coordination, data, home, sessions
 from .common import Body, Errors, Parts, answer
 
 router = APIRouter(route_class=Errors)
@@ -43,8 +43,8 @@ def send_message(srv: Parts, body: Body) -> Response:
     `adopt`). While the codex in the dashboard's terminal asks whether to implement its plan, what to change instead
     ("No, stay in Plan mode", then the message); refused while it waits on a question there (`dialog`), and while its
     terminal's message box is not there, empty, to take it -- a dialog, a menu, a question, a permission asked, or
-    something typed there and not sent: the error then has `box` (sessions.py's NotAtBox). A message to a Browser's
-    actor ends with what the user did and picked in it (browser.py's `compose`)."""
+    something typed there and not sent: the error then has `box` (sessions.py's NotAtBox). A message to an app's actor
+    is as its app composes it (apps.py's `compose`): a Browser's ends with what the user did and picked in it."""
     started = srv.sessions
     sid = str(body.get("session_id") or "")
     if not sid and body.get("gatherer") and body.get("channel"):     # a session not started here
@@ -59,12 +59,14 @@ def send_message(srv: Parts, body: Body) -> Response:
         raise sessions.SessionError(f"{rules.label if rules else 'It'} waits on its question in the "
                                     "terminal: answer it, or press Esc there to stop the turn, first")
     row = next((x for x in started.list() if x["session_id"] == sid), None)
-    told = None                                  # a Browser's actor: what the user did and picked in it, after
-    if srv.browsers is not None and row is not None and text.strip() and text.lstrip()[0] not in "/!":
-        text, told = srv.browsers.compose(row, text)
+    app = apps.of(row) if row is not None else None   # an app's actor: the message as its app composes it
+    running = srv.apps.get(app.name) if app is not None else None
+    told = None
+    if running is not None and text.strip() and text.lstrip()[0] not in "/!":
+        text, told = app.compose(running, row, text)
     sent = started.send(sid, text, int(body.get("cols") or 120), int(body.get("rows") or 32), bool(body.get("fullscreen")))
-    if told is not None:
-        told.sent()
+    if told is not None:                         # the app told the message went
+        told()
     return answer(sent)
 
 
@@ -136,8 +138,8 @@ def actors_op(crew: coordination.Coordination, op: str, body: dict):
         return crew.send(me, s("ref"), s("text"))
     if op == "new":
         return crew.new(me, s("text"), opt("cwd"), opt("harness"), opt("model"), opt("like"), opt("name"),
-                        bool(body.get("docwriter")), bool(body.get("branch")), bool(body.get("approve")),
-                        bool(body.get("browser")))
+                        branch=bool(body.get("branch")), approve=bool(body.get("approve")),
+                        **{a.name: bool(body.get(a.name)) for a in apps.APPS})
     if op == "when":
         return crew.when(me, s("ref"), s("note"))
     if op == "watches":
@@ -153,5 +155,5 @@ def actors(srv: Parts, op: str, body: Body) -> Response:
     error's text for the command to print (400).
 
     list {all?}, show {ref}, who {path}, send {ref, text}, new {text, cwd?, harness?, model?, like?, name?,
-    docwriter?, branch?, approve?, browser?}, when {ref, note?}, watches, unwatch {watch}."""
+    <app>? (apps.py: docwriter?, browser?), branch?, approve?}, when {ref, note?}, watches, unwatch {watch}."""
     return answer(actors_op(srv.crew, op, body))
