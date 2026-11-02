@@ -247,3 +247,20 @@ test("draws the actor's first turn once stored, where the actor waved hello", as
   expect(await drawn(page)).toEqual(range(10, 14));
   expect(said.filter((t) => t.startsWith("Not updated"))).toEqual([]);
 });
+
+test("starts every turn over as the setting has them, once it is picked", async ({ page }) => {
+  await openActor(page, CLAUDE);
+  const t = turn(page, 12);
+  await t.locator(".fl-head .fl-user").click();
+  await expect(t).toHaveClass("fl-turn shown");
+  const pick = async (which: string) => {
+    await page.locator("#about-btn").click();
+    await page.locator(`[data-earlier-pick=${which}]`).click();
+    await page.keyboard.press("Escape");
+  };
+  await pick("whole");
+  await expect(t).toHaveClass("fl-turn");
+  await expect(turn(page, 10)).toHaveClass("fl-turn");
+  await pick("messages");
+  await expect(t).toHaveClass("fl-turn folded");
+});
