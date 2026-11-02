@@ -151,6 +151,23 @@ class PipesTest(unittest.TestCase):
         self.handed(0)
 
 
+class ShortcutKeyTest(unittest.TestCase):
+    """Chrome's shortcut key -- a link opened in a tab behind, Find, copy and paste -- is Cmd on macOS and Ctrl elsewhere:
+    Cmd from a user on a Mac, or from the agent ("Meta"), goes to a Chrome on Linux as Ctrl."""
+
+    def test_cmd_is_ctrl_where_chrome_is_not_on_a_mac(self):
+        with mock.patch.object(browser, "CHROME_ON_MAC", False):
+            self.assertEqual(browser._for_chrome(4), 2)              # Cmd
+            self.assertEqual(browser._for_chrome(4 | 8), 2 | 8)      # Cmd+Shift
+            self.assertEqual(browser._for_chrome(2 | 4), 2 | 4)      # Ctrl held too: as it is
+            self.assertEqual(browser._for_chrome(1 | 8), 1 | 8)      # no Cmd: as it is
+
+    def test_on_a_mac_cmd_is_cmd(self):
+        with mock.patch.object(browser, "CHROME_ON_MAC", True):
+            self.assertEqual(browser._for_chrome(4), 4)
+            self.assertEqual(browser._for_chrome(2), 2)
+
+
 class MineTest(Home):
     """Which Chrome: the dashboard's own, or the user's ("mine"), found by the port its DevToolsActivePort names."""
 
