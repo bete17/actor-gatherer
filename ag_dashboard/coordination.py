@@ -1,6 +1,6 @@
 """Actors talking to one another, and the GATHERER AGENT that coordinates them for the user -- through the dashboard,
 which runs them. Every actor of a gatherer is told (the gatherer's guide, ag's policy) that the others exist and how to
-reach them: `ag actors` (ag/cli/actors.py), run in its shell, asks this dashboard (server.py's /api/actors/<op>):
+reach them: `ag actors` (ag/cli/actors.py), run in its shell, asks this dashboard (api/sessions.py's /api/actors/<op>):
 
     list      the actors of its gatherer, those not closed (`all`: every one): each one's id, name, status, harness,
               directory, what it was last asked and its recap

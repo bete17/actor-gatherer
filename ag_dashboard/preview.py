@@ -19,7 +19,7 @@ set by the reader in that panel or by an actor with `ag preview` (ag/cli/preview
                             dashboard stops, or no page has watched it for IDLE; `ready` once the URL answers. Any other
                             is stopped after TIMEOUT.
     what it shows           a file of the checkout, served to the page under a token of the checkout's (`token`,
-                            `file`): never one outside it. HTML and SVG are served sandboxed by server.py (an origin of
+                            `file`): never one outside it. HTML and SVG are served sandboxed by api/preview.py (an origin of
                             their own: a page previewed cannot call the dashboard's API). A PDF is shown in pdf.js's
                             viewer -- DocWriter's copy, PDFJS (`viewer_file`) -- which the page keeps from run to run,
                             each new build opened in it where the reader was; and SyncTeX between it and its source

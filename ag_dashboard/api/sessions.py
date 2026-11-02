@@ -1,0 +1,157 @@
+"""The sessions started from the page (sessions.py): started, sent messages, stopped, discarded; a question its
+terminal asks answered; the gatherer agent; what actors' `ag actors` ask (coordination.py)."""
+
+import harness_kit
+from fastapi import APIRouter
+from starlette.responses import Response
+
+from .. import coordination, data, home, sessions
+from .common import Body, Errors, Parts, answer
+
+router = APIRouter(route_class=Errors)
+
+
+@router.get("/api/sessions")
+def listed(srv: Parts) -> Response:
+    """The sessions started from the page (sessions.py)."""
+    return answer(srv.sessions.list())
+
+
+@router.get("/api/models")
+def models(harness: str = "") -> Response:
+    """?harness=H: the models a new session of H can run on (sessions.py's `models`)."""
+    return answer(sessions.models(harness))
+
+
+@router.post("/api/sessions")
+def start(srv: Parts, body: Body) -> Response:
+    """{gatherer, cwd?, permission_mode?, harness?, model?}: a new session (harness claude, the default, or codex) ->
+    the session."""
+    return answer(srv.sessions.create(str(body.get("gatherer") or ""), str(body.get("cwd") or ""),
+                                      str(body.get("permission_mode") or "auto"),
+                                      str(body.get("harness") or harness_kit.DEFAULT),
+                                      str(body.get("model") or "") or None))
+
+
+@router.post("/api/send")
+def send_message(srv: Parts, body: Body) -> Response:
+    """{session_id, text, cols?, rows?, fullscreen?} or {gatherer, channel, text, ...}: a message to the session ->
+    the session.
+
+    Typed into its terminal, or one opened for it (that size, that screen), or to its agent (sessions.py's `send`);
+    a Claude Code or codex session not started here (gatherer, channel) taken into the table first (sessions.py's
+    `adopt`). While the codex in the dashboard's terminal asks whether to implement its plan, what to change instead
+    ("No, stay in Plan mode", then the message); refused while it waits on a question there (`dialog`), and while its
+    terminal's message box is not there, empty, to take it -- a dialog, a menu, a question, a permission asked, or
+    something typed there and not sent: the error then has `box` (sessions.py's NotAtBox). A message to a Browser's
+    actor ends with what the user did and picked in it (browser.py's `compose`)."""
+    started = srv.sessions
+    sid = str(body.get("session_id") or "")
+    if not sid and body.get("gatherer") and body.get("channel"):     # a session not started here
+        sid = started.adopt(str(body["gatherer"]), str(body["channel"]))["session_id"]
+    text = str(body.get("text") or "")
+    held = srv.dialog(sid)
+    if held is not None and held.get("kind") == "plan":     # what to change: its plan dialog's own way to say it
+        started.answer(sid, held, {"plan": "change", "text": " ".join(text.split())})
+        return answer(next(x for x in started.list() if x["session_id"] == sid))
+    if held is not None:
+        rules = harness_kit.get(held.get("harness"))
+        raise sessions.SessionError(f"{rules.label if rules else 'It'} waits on its question in the "
+                                    "terminal: answer it, or press Esc there to stop the turn, first")
+    row = next((x for x in started.list() if x["session_id"] == sid), None)
+    told = None                                  # a Browser's actor: what the user did and picked in it, after
+    if srv.browsers is not None and row is not None and text.strip() and text.lstrip()[0] not in "/!":
+        text, told = srv.browsers.compose(row, text)
+    sent = started.send(sid, text, int(body.get("cols") or 120), int(body.get("rows") or 32), bool(body.get("fullscreen")))
+    if told is not None:
+        told.sent()
+    return answer(sent)
+
+
+@router.post("/api/upload")
+def upload(body: Body) -> Response:
+    """{type, data (base64)}: a file pasted into a message, kept in the home for its agent to read (home.py's
+    `save_upload`) -> where."""
+    return answer(home.save_upload(str(body.get("type") or ""), str(body.get("data") or "")))
+
+
+@router.post("/api/stop")
+def stop(srv: Parts, body: Body) -> Response:
+    """{session_id}: its agent, idle, ended -- or its terminal closed -> the session."""
+    return answer(srv.sessions.stop(str(body.get("session_id") or "")))
+
+
+@router.post("/api/discard")
+def discard(srv: Parts, body: Body) -> Response:
+    """{session_id}: one that never started -- no process of it running, nothing of it in its gatherer -- forgotten:
+    listed nowhere, nothing of it kept (sessions.py's `discard`) -> {}."""
+    sid = str(body.get("session_id") or "")
+    row = next((x for x in srv.sessions.list() if x["session_id"] == sid), None)
+    if row is None:
+        raise sessions.SessionError(f"no session {sid} started from the dashboard")
+    if data.actors(row["gatherer"], {sid}, []):   # its gatherer has something of it: a history to keep
+        raise sessions.SessionError("it has a conversation in its gatherer: close it instead")
+    srv.sessions.discard(sid)
+    if srv.branches is not None:                 # its branch, if it had one: gone too
+        srv.branches.discarded(sid)
+    srv.hub.ring(None, what="list")              # every open page's list
+    return answer({})
+
+
+@router.post("/api/answer")
+def answer_ask(srv: Parts, body: Body) -> Response:
+    """{session_id, call, choice}: what its terminal asks (data.py's `asking`, the call `call`), answered with `choice`
+    (answers.py): its keys typed there -> the answer."""
+    sid = str(body.get("session_id") or "")
+    row = next((x for x in srv.sessions.list() if x["session_id"] == sid), None)
+    if row is None:
+        raise sessions.SessionError(f"no session {sid} started from the dashboard")
+    ask = data.asking_of(row["gatherer"], sid, row.get("cwd"))
+    if not ask or ask.get("call") != body.get("call"):
+        raise sessions.SessionError("it no longer asks that")
+    choice = body.get("choice")
+    return answer(srv.sessions.answer(sid, ask, choice if isinstance(choice, dict) else {}))
+
+
+@router.post("/api/coordinator")
+def coordinator(srv: Parts, body: Body) -> Response:
+    """{gatherer, cwd?, harness?}: the gatherer's gatherer agent, started (with no message yet) if it has none
+    (coordination.py) -> the session."""
+    return answer(srv.crew.page_coordinator(str(body.get("gatherer") or ""), str(body.get("cwd") or "") or None,
+                                            str(body.get("harness") or "") or None))
+
+
+def actors_op(crew: coordination.Coordination, op: str, body: dict):
+    """What an actor's `ag actors <op>` asked: the coordination's answer."""
+    s = lambda k: str(body.get(k) or "")              # noqa: E731
+    opt = lambda k: s(k) or None                      # noqa: E731
+    me = s("actor")
+    if op == "list":
+        return crew.list(me, bool(body.get("all")))
+    if op == "show":
+        return crew.show(me, s("ref"))
+    if op == "who":
+        return crew.who(me, s("path"))
+    if op == "send":
+        return crew.send(me, s("ref"), s("text"))
+    if op == "new":
+        return crew.new(me, s("text"), opt("cwd"), opt("harness"), opt("model"), opt("like"), opt("name"),
+                        bool(body.get("docwriter")), bool(body.get("branch")), bool(body.get("approve")),
+                        bool(body.get("browser")))
+    if op == "when":
+        return crew.when(me, s("ref"), s("note"))
+    if op == "watches":
+        return crew.watches(me)
+    if op == "unwatch":
+        return crew.unwatch(me, body.get("watch"))
+    raise coordination.CoordinationError(f"no `ag actors {op}`: one of list, show, who, send, new, when, watches, unwatch")
+
+
+@router.post("/api/actors/{op:path}")
+def actors(srv: Parts, op: str, body: Body) -> Response:
+    """{actor, ...}: what an actor's `ag actors <op>` asks (coordination.py; `actor`, its id) -> what it answers; an
+    error's text for the command to print (400).
+
+    list {all?}, show {ref}, who {path}, send {ref, text}, new {text, cwd?, harness?, model?, like?, name?,
+    docwriter?, branch?, approve?, browser?}, when {ref, note?}, watches, unwatch {watch}."""
+    return answer(actors_op(srv.crew, op, body))

@@ -1,6 +1,6 @@
 # The dashboard on a standard stack: plan
 
-Status: A0–A3 built. A1's build step, the server serving it and `publish.yml` building it come with A3, the
+Status: A0–A3 and B1 built. A1's build step, the server serving it and `publish.yml` building it come with A3, the
 first step with something to build. It moves the
 dashboard to the tools most web front ends and Python APIs are built with now, in steps that keep it working.
 
@@ -84,10 +84,11 @@ frontend/                  the dashboard's front end: Vite, TypeScript, React
   e2e/                     Playwright: a spec per view, screenshots (tests/web_home.py builds and serves its home)
 ag_dashboard/
   static/                  the built front end (not in git; in the package)
-  app.py                   the FastAPI app: routers, the own-page check, static files, snapshots
-  api/                     one router per feature: home, stream, agent, files, history, sessions, terminal,
-                           editor, preview, branches, monitor, settings, browser, docwriter
-  models.py                Pydantic models of what the routes return
+  server.py                the page (`page()`, snapshots) and `Server`: the parts the routes share, run by uvicorn
+  app.py                   the FastAPI app: routers, the own-page check (`OwnPage`), errors as the page reads them
+  api/                     one router per feature: page, home, stream, agent, files, history, sessions, terminal,
+                           editor, preview, branches, monitor, settings, browser, docwriter; common.py, what they share
+  models.py                Pydantic models of what the main routes return
   apps.py                  the apps: (docwriter, browser)
   data.py, files.py, …     the logic, unchanged
 ```
@@ -203,13 +204,48 @@ monitor), settings, Terminal, Editor, then DocWriter and Browser as entries in `
 
 ### Track B: the server
 
-**B1. FastAPI beside the old server, then in its place.**
-- A router per feature, ported route by route.
+**B1. FastAPI beside the old server, then in its place.** Built.
+- A router per feature, ported route by route: 118 routes in 15 routers (`api/`), each handler's docstring saying
+  what it answers -- the old hand-kept list in `server.py`'s docstring is gone; `python -m ag_dashboard --routes`
+  prints the table, and a test checks every route has one.
 - Pydantic models for the main responses: home, agent, transcript, files, history.
 - The own-page check as middleware, and the streams (home and agent, terminal, editor, preview) on sse-starlette.
 
 Check: every route in today's docstring list, requested of both servers on a scratch home, gives the same status and
-body. Then `ag dashboard` runs on uvicorn and `server.py`'s handler goes.
+body. Then `ag dashboard` runs on uvicorn and `server.py`'s handler goes. `tests/compare_servers.py` does it: the old
+`server.py` from git beside the new one, on `tests/web_home.py`'s home, 197 requests -- every GET route with good
+parameters and bad, and the writes that change nothing (refused, malformed, not found). All the same (status, type,
+body), but for HEAD and OPTIONS: 501 from both, http.server's as an HTML page.
+
+What went another way, and why:
+- **The models describe, they do not serialize.** Each main route declares its model (`response_model`, for the
+  schema B2 generates types from) but sends the JSON `json.dumps` writes, as before. Serialized through Pydantic,
+  the keys would be reordered, non-ASCII written as is, NaN refused, and a model's field the answer lacks (every
+  route answers `{error}` for a gatherer with no database) a 500. `test_dashboard_app.py` checks each model takes
+  real answers and gives them back unchanged. Every field may be left out, and fields not named are kept.
+- **Bad parameters are still "not found".** Query parameters are declared with types (`Whole`: digits only, as the
+  old `isdigit()` checks; `Decimal`), and a request FastAPI finds invalid is answered 404 "not found", text: the old
+  server's if-chain fell through to that, and the page and tests read it so. Errors raised by the logic are answered
+  as before (`common.Errors`: a GET's editor or preview error 400, a POST's ValueError 400 with `box`, a Browser's its
+  own status, the rest 500, JSON `{error}`); DocWriter's and the Browser's routes keep their own (`<type>: <error>`).
+- **The query is read as `parse_qs` read it** (`app.first_values`): a blank value is no value, a repeated key its
+  first. Starlette keeps blanks and takes the last; the page's `?channel=` and `?to=` would have meant something new.
+  The path's leading slashes are made one, as http.server did.
+- **POST bodies are a dict, not a model.** The routes read them as before (`str(body.get(...) or "")`): a model
+  would refuse what the old server took (a number for a string). Typing them is left for when the page is typed (B2).
+- **Streams** (`common.Events`, a sse-starlette `EventSourceResponse`) send the same bytes: `event:`/`data:` lines
+  ended by `\n`, a `: keepalive` comment as before (sse-starlette's own ping off). Each blocking wait runs in a thread
+  (`anyio.to_thread`, given up on when the page goes), and what a stream holds (its hub watch, its editor room, its
+  preview or DocWriter queue, its Browser viewer) is let go -- and its waiting thread woken -- as soon as the page
+  disconnects, where the old one noticed at its next write (up to 15 s). A server stopping ends every open stream, so
+  uvicorn's wait for connections to close is short.
+- **uvicorn runs in a thread of its own** under `Server.serve_forever()`, on the socket `serve()` bound (so port 0
+  works and `server_port` is known at once): the caller's thread keeps Ctrl-C and `__main__.py`'s SIGTERM and SIGHUP
+  handlers, and `shutdown()` and `server_close()` work as socketserver's did, so the tests and `__main__` are unchanged.
+  FastAPI and uvicorn are imported only once a server is made: `page()` and `--out` need neither.
+- **No /docs, /redoc or /openapi.json** are served (none were); `app.create().openapi()` makes the schema for B2.
+- Rule 3 is not met yet on the server: `/api/send` composes a Browser actor's message and the home says whether
+  DocWriter and the Browser are offered, outside their routers, as `server.py` did. B3 moves them.
 
 **B2. Generated types.** FastAPI's OpenAPI schema generates `frontend/src/core/api/types.gen.ts`, and CI fails when
 it is stale. This needs B1 and A1.

@@ -92,8 +92,8 @@ def page_names(path: str, whole: bool = False) -> list:
 class DashboardNamesNoHarnessTest(unittest.TestCase):
     def test_the_dashboard_s_code_names_no_harness(self):
         found = []
-        for name in sorted(os.listdir(DASHBOARD)):
-            path = os.path.join(DASHBOARD, name)
+        for name in sorted(os.listdir(DASHBOARD)) + sorted("api/" + n for n in os.listdir(os.path.join(DASHBOARD, "api"))):
+            path = os.path.join(DASHBOARD, name)                   # its modules, and its server's routers (api/)
             got = python_names(path) if name.endswith(".py") else []
             found += [f"{name}:{line}: {what}" for line, what in got
                       if not any(f == name and what.startswith(words) for f, words in ALLOWED)]
