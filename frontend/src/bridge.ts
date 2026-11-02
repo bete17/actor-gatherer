@@ -1,7 +1,7 @@
 // Between the old page (src/legacy/, one script) and the new code, while views move from one to the other
 // (ag_dashboard/DESIGN.md, A4-A6). Set up before the old page runs, as `window.agNext`: what it hands the new code
-// (the stream's home) and calls of it (ag's settings; the renderers it draws with, `ui`). The old page hands back
-// `window.agLegacy`: what the new code calls of it. Each side goes once nothing calls it.
+// (the stream's home) and calls of it (ag's settings; the renderers it draws with, `ui`; Chat's turns, `chat`). The old
+// page hands back `window.agLegacy`: what the new code calls of it. Each side goes once nothing calls it.
 import { useDashboard } from "./core/store";
 import type { Home } from "./core/api/types";
 import {
@@ -17,6 +17,8 @@ import {
 } from "./core/ui/highlight";
 import { escapeHtml } from "./core/ui/html";
 import { markdown, unplanned } from "./core/ui/md";
+import { drawTurns } from "./features/chat/mount";
+import { useTurns } from "./features/chat/store";
 import { useSettings } from "./features/settings/store";
 
 /** What the old page gives the new code (src/legacy/03-settings.js). */
@@ -51,6 +53,10 @@ const agNext = Object.freeze({
     markdown,
     unplanned,
   }),
+  /** Chat's turns (src/legacy/16-files-view.js's filesRender): drawn from the feed it hands over, into the actor's own
+   * node, which it puts in its view; what they call of the page, its host (features/chat/types.ts). The setting "Chat's
+   * earlier turns" picked (02-data.js): every turn as it has them, the clicks against it dropped. */
+  chat: Object.freeze({ draw: drawTurns, clearFlips: () => useTurns.getState().clearFlips() }),
 });
 
 declare global {

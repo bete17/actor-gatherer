@@ -11,7 +11,6 @@ import unittest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-import harness_kit  # noqa: E402
 from ag_dashboard import data  # noqa: E402
 import page_source  # noqa: E402
 
@@ -108,53 +107,21 @@ class EscTest(unittest.TestCase):
         self.assertEqual(elsewhere, [["", ""]])
 
 
-STOPPED = ("// How a turn stopped short, under it, as its harness says it there", "// Claude Code's own notes in a turn")
-RUN_STOPPED = r"""
-const el = (tag, attrs, ...kids) => ({ cls: attrs && attrs.class,
-  text: attrs && attrs.text !== undefined ? attrs.text : kids.map((k) => k.text).join(" ") });
-const state = { home: %s };                       // each harness's words, as harness_kit says them (data.py's home)
-const harnessInfo = (h) => ((state.home && state.home.harness_info) || {})[h] || null;
-%s
-let input = "";
-process.stdin.on("data", (d) => { input += d; }).on("end", () =>
-  process.stdout.write(JSON.stringify(JSON.parse(input).map(([info, t, latest]) => stoppedLine(info, t, latest)))));
-"""
+FIXTURE = os.path.join(ROOT, "frontend", "src", "core", "ui", "harness-info.json")
 
 
-@unittest.skipUnless(shutil.which("node"), "the page's code runs in Node")
 class StoppedTest(unittest.TestCase):
     """A turn stopped short says so under it in its harness's own words (harness_kit's `stopped_says`): Claude Code's,
-    codex's; a harness that says none its own, plain ones."""
+    codex's; a harness that says none its own, plain ones. Its cases run in Vitest (frontend/src/features/chat/
+    Working.test.tsx) on the words in frontend/src/core/ui/harness-info.json; here, that those are harness_kit's."""
 
-    def lines(self, *cases):
-        text = page_source.script()
-        code = text[text.index(STOPPED[0]):text.index(STOPPED[1])]
-        home = {"harness_info": data.harness_info(), "harness_default": harness_kit.DEFAULT}
-        got = subprocess.run(["node", "-e", RUN_STOPPED % (json.dumps(home), code)], input=json.dumps(cases),
-                             capture_output=True, text=True, timeout=30)
-        if got.returncode:
-            raise AssertionError(got.stderr)
-        return [x and [x["cls"], x["text"]] for x in json.loads(got.stdout)]
-
-    def test_in_each_harness_s_words(self):
-        claude, codex = {"harness": "claude", "status": "idle"}, {"harness": "codex", "status": "idle"}
-        interrupted, error = {"kind": "interrupted"}, {"kind": "error", "text": "stream disconnected", "status": None}
-        self.assertEqual(self.lines(
-            [claude, {"stopped": interrupted}, False], [codex, {"stopped": interrupted}, False],
-            [codex, {"stopped": dict(interrupted, reason="budget_limited")}, False], [codex, {"stopped": error}, False],
-            [claude, {"stopped": {"kind": "error", "text": None, "status": 529}}, False],
-            [dict(claude, status="error"), {"stopped": error}, True],          # the actor's error note says it
-            [claude, {"stopped": None}, True],
-            [{"harness": None, "status": "idle"}, {"stopped": interrupted}, False],    # from before it was recorded
-            [{"harness": "antigravity", "status": "idle"}, {"stopped": interrupted}, False]), [
-            ["fl-stopped", "⎿ Interrupted · What should Claude do instead?"],
-            ["fl-stopped", "■ Conversation interrupted"],
-            ["fl-stopped error", "■ Goal budget reached - the turn was stopped."],
-            ["fl-stopped error", "■ stream disconnected"],
-            ["fl-stopped error", "⎿ API Error: 529"],
-            None, None,
-            ["fl-stopped", "⎿ Interrupted · What should Claude do instead?"],
-            ["fl-stopped", "⎿ Interrupted"]])
+    def test_the_pages_tests_read_the_words_harness_kit_has(self):
+        with open(FIXTURE, encoding="utf-8") as fh:
+            fixture = json.load(fh)
+        said = lambda info: {n: h.get("stopped") for n, h in info.items()}  # noqa: E731
+        self.assertEqual(said(fixture), said(data.harness_info()),
+                         "harness_kit's words for a stopped turn changed: write them to the page's tests' "
+                         "harness-info.json")
 
 
 if __name__ == "__main__":

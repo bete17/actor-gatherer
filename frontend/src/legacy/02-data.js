@@ -252,7 +252,7 @@ const EARLIER_KEY = "ag-dashboard-chat-earlier";
 let earlierTurns = "messages";
 function setEarlierTurns(pick, keep, draw = true) {
   earlierTurns = pick === "whole" ? "whole" : "messages";
-  if (state.files && state.files.flips) state.files.flips.clear();   // in place: the messages' clicks kept from a draw use it
+  window.agNext.chat.clearFlips();                   // the turns' clicks: Chat's turns (src/features/chat/store.ts)
   for (const b of document.querySelectorAll("[data-earlier-pick]")) b.setAttribute("aria-pressed", b.dataset.earlierPick === earlierTurns ? "true" : "false");
   if (keep) { try { localStorage.setItem(EARLIER_KEY, earlierTurns); } catch (e) { /* this page only */ } }
   for (const p of panes.others) p.call("earlier", earlierTurns);

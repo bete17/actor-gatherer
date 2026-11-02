@@ -11,12 +11,26 @@ export interface Home {
   browser_profile?: string;
   /** What the dashboard knows of each harness (data.py's harness_info, from harness_kit), as far as the new code reads it. */
   harness_info?: Record<string, HarnessInfo>;
+  /** The harness taken for an actor recorded before ag recorded its harness (harness_kit's DEFAULT). */
+  harness_default?: string;
 }
 
 /** A harness, as the dashboard reads it (harness_kit's fields). */
 export interface HarnessInfo {
   /** A block its model writes in a reply that its terminal draws apart (codex's proposed plan): core/ui/md.ts. */
   reply_block?: { open: string; close: string; title: string } | null;
+  /** How its terminal says a turn stopped short (harness_kit's `stopped_says`): features/chat's stopped line. */
+  stopped?: StoppedSays;
+}
+
+/** A harness's words for a turn stopped short: the mark before them, an interruption, an error (with its HTTP status,
+ * `{status}`, when known), and other reasons it gives, by their names in the record. */
+export interface StoppedSays {
+  lead: string;
+  interrupted: string;
+  error: string;
+  error_status?: string;
+  reasons?: Record<string, string>;
 }
 
 /** /api/settings (settings.py's `read`): ag's config.toml as the panel shows it. */
