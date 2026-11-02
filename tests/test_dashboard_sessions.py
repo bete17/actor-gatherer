@@ -19,7 +19,7 @@ import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from ag_dashboard import avatars, data, hiding, saved, seen, server, sessions  # noqa: E402
+from ag_dashboard import avatars, data, hiding, saved, seen, server, sessions, titles  # noqa: E402
 import harness_kit  # noqa: E402
 from harness_kit.base import Box  # noqa: E402
 from ag_dashboard import home as dashboard_home  # noqa: E402
@@ -1246,6 +1246,16 @@ class EndpointTest(SessionsBase):
         self.assertEqual(self.post("/api/hiding", {"gatherer": "", "choice": "hidden"})[0], 400)
         self.assertEqual(self.post("/api/hiding", {"gatherer": "x", "choice": "hidden"}, {"Origin": "https://evil.example"})[0], 403)
         self.assertEqual(hiding.stored(), {"quiet": "shown"})
+
+    def test_a_gatherer_named_by_the_reader_keeps_its_own_name_underneath(self):
+        self.assertEqual(json.load(urllib.request.urlopen(self.url + "/api/home", timeout=10))["titles"], {})
+        self.assertEqual(self.post("/api/title", {"gatherer": "ag-mod", "title": "  Ag   work\n"}), (200, {"ag-mod": "Ag work"}))
+        self.assertEqual(self.post("/api/title", {"gatherer": "other", "title": "other"}), (200, {"ag-mod": "Ag work"}))  # its own: none
+        self.assertEqual(data.home([])["titles"], {"ag-mod": "Ag work"})
+        self.assertEqual(self.post("/api/title", {"gatherer": "ag-mod", "title": ""}), (200, {}))
+        self.assertEqual(self.post("/api/title", {"gatherer": "", "title": "x"})[0], 400)
+        self.assertEqual(self.post("/api/title", {"gatherer": "g", "title": "x"}, {"Origin": "https://evil.example"})[0], 403)
+        self.assertEqual(titles.stored(), {})
 
     def test_an_actor_saved_for_later_stays_saved_for_every_dashboard_on_the_home(self):
         self.assertEqual(json.load(urllib.request.urlopen(self.url + "/api/home", timeout=10))["saved"], {})

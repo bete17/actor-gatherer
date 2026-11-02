@@ -100,6 +100,8 @@ context manager's home (data.py), read-only. Standard library only.
                                           `shell`) -> the shell, its id the session_id its terminal is reached by
     POST /api/shells/close {id}           the shell's terminal closed, as a window is
     POST /api/hiding {gatherer, choice}   keep "hidden" / "shown" / "" for it (hiding.py) -> every choice
+    POST /api/title {gatherer, title}     the reader's name for the gatherer ("": none), shown in its place (titles.py)
+                                          -> every title
     POST /api/saved {gatherer, channel, saved}  the actor saved for later, or no longer (saved.py) -> every one saved
     POST /api/name {gatherer, channel, name, harness?, cwd?}  the reader's name for the actor ("": none), a `name`
                                           event in its gatherer, put in by ag (naming.py), given to its harness's own
@@ -200,7 +202,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 import harness_kit
 
 from . import (actions, avatars, branches, browser, coordination, data, docwriter, editor, files, hiding, history, home,
-               live, mcp, migrating, monitor, naming, preview, saved, seen, sessions, settings)
+               live, mcp, migrating, monitor, naming, preview, saved, seen, sessions, settings, titles)
 
 PAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "page.html")
 _VENDOR_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vendor")
@@ -1010,6 +1012,10 @@ def handler(calls: _Calls, hub: live.Hub, started: sessions.Sessions, editors: e
                 if url.path == "/api/hiding":
                     kept = hiding.choose(str(body.get("gatherer") or ""), str(body.get("choice") or ""))
                     hub.ring(None, what="list")          # every open page's list
+                    return self.answer(kept)
+                if url.path == "/api/title":
+                    kept = titles.give(str(body.get("gatherer") or ""), str(body.get("title") or ""))
+                    hub.ring(None, what="list")
                     return self.answer(kept)
                 if url.path == "/api/saved":
                     kept = saved.choose(str(body.get("gatherer") or ""), str(body.get("channel") or ""), bool(body.get("saved")))
