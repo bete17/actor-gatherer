@@ -1501,7 +1501,7 @@ class Browser:
             if not isinstance(e, dict):
                 continue
             kind = e.get("type")
-            mods = int(e.get("modifiers") or 0)
+            mods = _for_chrome(int(e.get("modifiers") or 0))
             if kind == "mouse":
                 what = str(e.get("kind") or "")
                 if what not in ("mousePressed", "mouseReleased", "mouseMoved", "mouseWheel"):
@@ -2015,7 +2015,7 @@ def _press_key(cdp: Cdp, tab: Tab, letter: str, mods: int) -> None:
     Option left out, which would make it another."""
     e = {"key": letter, "code": "Key" + letter.upper(), "keyCode": ord(letter.upper())}
     for down in (True, False):
-        cdp.call("Input.dispatchKeyEvent", _key_event(e, down, (mods & 6) or 4), tab.session,
+        cdp.call("Input.dispatchKeyEvent", _key_event(e, down, _for_chrome((mods & 6) or 4)), tab.session,
                  until=lambda: tab.dialog is not None)
         if tab.dialog:
             return
@@ -2056,6 +2056,17 @@ KEYS = {   # a key's name -> (its code, its Windows virtual key code)
 EDIT_COMMANDS = {("a", False): "selectAll", ("c", False): "copy", ("x", False): "cut", ("v", False): "paste",
                  ("z", False): "undo", ("z", True): "redo"}
 MODIFIERS = {"alt": 1, "option": 1, "control": 2, "ctrl": 2, "meta": 4, "cmd": 4, "command": 4, "shift": 8}
+CHROME_ON_MAC = sys.platform == "darwin"     # where the dashboard's Chrome runs: this machine, the user's or its own
+
+
+def _for_chrome(mods: int) -> int:
+    """Modifiers (CDP's: Alt 1, Ctrl 2, Meta 4, Shift 8) as Chrome takes them for its shortcuts -- a link opened in a
+    tab behind, Find, copy and paste: Cmd on macOS, Ctrl elsewhere. The user may be on a Mac while Chrome runs on
+    Linux (the dashboard over SSH), and the agent names Meta as on a Mac; so where Chrome is not on macOS, Cmd held
+    without Ctrl is sent as Ctrl."""
+    if CHROME_ON_MAC or not mods & 4 or mods & 2:
+        return mods
+    return (mods & ~4) | 2
 HIGHLIGHT = {"showInfo": True, "showAccessibilityInfo": True, "contentColor": {"r": 80, "g": 140, "b": 255, "a": 0.22},
              "paddingColor": {"r": 80, "g": 200, "b": 120, "a": 0.18}, "borderColor": {"r": 40, "g": 100, "b": 230, "a": 1}}
 
@@ -2873,6 +2884,7 @@ class Browsers:
                            "document.documentElement.scrollHeight]"}, tab.session)["result"]["value"]
         except (BrowserError, KeyError, TypeError):
             pos = None
+        b._retitle(tab)                                  # its title as the page has it now (Chrome tells no change)
         with b.lock:
             tabs, active = list(b.tabs), b.active
         head = [f"page: {tab.title or '(no title)'} — {tab.url}" + (" (loading)" if tab.loading else "")]
@@ -2889,7 +2901,7 @@ class Browsers:
 
     def _t_click(self, b: Browser, args: dict) -> dict:
         cdp, tab, _, _, label, (x, y) = self._act(b, str(args.get("ref") or ""), "clicking")
-        mods = _mods(args.get("modifiers"))
+        mods = _for_chrome(_mods(args.get("modifiers")))
         button = args.get("button") if args.get("button") in ("left", "right", "middle") else "left"
         starts, tabs = tab.starts, len(b.tabs)
         with b.lock:
@@ -3153,6 +3165,7 @@ def _press(cdp: Cdp, tab: Tab, combo: str) -> None:
         if m.lower() not in MODIFIERS:
             raise BrowserError(f"no modifier {m}: one of Alt, Control, Meta, Shift")
         mods |= MODIFIERS[m.lower()]
+    mods = _for_chrome(mods)
     if key in ("Space", "space"):
         key = " "
     if key not in KEYS and len(key) != 1:
