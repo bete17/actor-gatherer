@@ -31,10 +31,6 @@ jobs:
         with:
           node-version: "22"
       - run: pip install -e .
-      # The Browser's tests start Chrome, whose sandbox needs unprivileged user namespaces; Ubuntu 24.04 blocks them by
-      # default (AppArmor), and Chrome stops at once without them.
-      - name: Let Chrome's sandbox run
-        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - working-directory: tests
         run: PYTHONPATH=.. python -m unittest discover -s .
 
