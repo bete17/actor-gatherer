@@ -1,6 +1,6 @@
 # The dashboard on a standard stack: plan
 
-Status: A0–A4 built. A1's build step, the server serving it and `publish.yml` building it come with A3, the
+Status: A0–A4 built; A5 begun (the renderers the views share, in `core/ui/`). A1's build step, the server serving it and `publish.yml` building it come with A3, the
 first step with something to build. It moves the
 dashboard to the tools most web front ends and Python APIs are built with now, in steps that keep it working.
 
@@ -209,6 +209,33 @@ the page; the page also runs under `vite` in development with no errors.
 
 Order: Chat (where most of the redraw bugs were), Details, Transcript, History, the list (with the rail and
 monitor), settings, Terminal, Editor, then DocWriter and Browser as entries in `APPS`.
+
+**A5, first part: the renderers the views share, in `core/ui/`.** Before Chat, what draws its code and markdown moved
+out of the old script, as one implementation that the old page and React both use:
+- **Where it went:** `11-code.js`'s highlighter into `core/ui/highlight/`: the languages and their rules
+  (`languages.ts`: `hlLang`, `langOfPath`, `guessWeb`), the shell reader (`shell.ts`: `shLex`, `hereLang`), the
+  highlighter (`highlight.ts`: `hlTokens`, `hlLines`, `hlPart`, `hlInside`, `quoteRole`), a command laid out
+  (`command.ts`: `shellHtml`, `tildePath`), a command's output (`output.ts`: `ansiHtml`, `outputHtml`) and a fenced
+  block (`fence.ts`: `codeFence`, `foldCode`, the blocks folded by a click, and `codeClick`, the click on a block's
+  Fold, Show all and Copy). `12-transcript.js`'s `escapeHtml` into `core/ui/html.ts`, and its `markdown` with the
+  harnesses' reply blocks (`replyBlocks`, `unplanned`) into `core/ui/md.ts`. All TypeScript, the output the same to
+  the byte: checked once against the old code on the repository's files and recorded sessions' commands, outputs and
+  messages.
+- **marked and DOMPurify** stay the vendored scripts index.html loads before the page (`window.marked`,
+  `window.DOMPurify`, typed in `md.ts`), set up on the first message drawn. The reply blocks are read from the
+  store's home (the stream's, as the old page hands it over), not the old page's `state`.
+- **How the old page reaches them:** `bridge.ts` puts them on `window.agNext.ui`; in the old files, each function it
+  still calls is a one-line `function` calling that (`function hlLines(...a) { return window.agNext.ui.hlLines(...a); }`),
+  declared so the sections before can call it. Functions only the moved code called have none. `11-code.js` still
+  registers the click listener (now `codeClick`), at the same point of the page's start, and keeps `shellSpan`, a
+  DOM builder on the old page's `el`.
+- **For React, not used by a view yet:** `core/ui/Markdown.tsx` (the same HTML in the same boxes as `markdown()`) and
+  `core/ui/Code.tsx` (a block as `codeFence` draws it). Their buttons work by the document's one `codeClick`
+  listener, the old page's for now; it moves with the shell (A6).
+- **Tests:** `test_dashboard_code.py` and `test_dashboard_plan.py`'s cases are Vitest's now, beside the modules
+  (`highlight/*.test.ts`, `md.test.ts`); the components' own in `Markdown.test.tsx` and `Code.test.tsx`. Vitest runs
+  the vendored marked and DOMPurify (`core/ui/testing.ts`). The plan's cases use the reply blocks in
+  `core/ui/harness-info.json`; `test_dashboard_plan.py` checks those are harness_kit's.
 
 **A6. The shell in React.**
 - The arrangement becomes the store's `layout` slice: the list's mode and width, the Editor open and its height, the

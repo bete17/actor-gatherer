@@ -9,6 +9,14 @@ export interface Home {
   /** Browsers can be started here; `browser_profile` "mine": they run in the user's own Chrome. */
   browser?: boolean;
   browser_profile?: string;
+  /** What the dashboard knows of each harness (data.py's harness_info, from harness_kit), as far as the new code reads it. */
+  harness_info?: Record<string, HarnessInfo>;
+}
+
+/** A harness, as the dashboard reads it (harness_kit's fields). */
+export interface HarnessInfo {
+  /** A block its model writes in a reply that its terminal draws apart (codex's proposed plan): core/ui/md.ts. */
+  reply_block?: { open: string; close: string; title: string } | null;
 }
 
 /** /api/settings (settings.py's `read`): ag's config.toml as the panel shows it. */
