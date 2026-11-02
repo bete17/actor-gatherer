@@ -159,8 +159,8 @@ aside h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; co
   display: inline-flex; align-items: center; }
 .gatherer-row .act:last-child { margin-right: 8px; }
 .gatherer-row .act:hover { color: var(--ink); }
-.gatherer-row .act.hide { opacity: 0; }
-.gatherer-row:hover .act.hide, .gatherer-row .act.hide:focus-visible { opacity: 1; }
+.gatherer-row :is(.act.hide, .act.rename) { opacity: 0; }
+.gatherer-row:hover :is(.act.hide, .act.rename), .gatherer-row :is(.act.hide, .act.rename):focus-visible { opacity: 1; }
 @media (hover: none) { .gatherer-row .act.hide { opacity: 1; } }
 .agent-group { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); padding: 6px 18px 2px 40px; }
 button.agent-group { display: block; width: 100%; text-align: left; background: none; border: 0; cursor: pointer; font-family: inherit; }
@@ -200,11 +200,12 @@ button.agent-group:hover { color: var(--ink-2); }
 /* the one shown: its top line clicked names it */
 .agent[aria-current="true"] .name[title], .agent[aria-current="true"] .asked[title] { cursor: text; }
 .agent.renaming { cursor: default; }
-.agent .name-box { display: block; width: 100%; box-sizing: border-box; font: inherit; font-size: 13px; font-weight: 600; line-height: 1.4;
+:is(.agent, .gatherer-row) .name-box { display: block; width: 100%; box-sizing: border-box; font: inherit; font-size: 13px; font-weight: 600; line-height: 1.4;
   color: var(--ink); background: var(--surface); border: 1px solid var(--ring); border-radius: 5px; padding: 1px 6px; margin: -2px 0 -2px -7px;
   width: calc(100% + 7px); outline: none; }
-.agent .name-box:focus { border-color: var(--ink-2); }
-.agent .name-box::placeholder { color: var(--muted); font-weight: 400; }
+:is(.agent, .gatherer-row) .name-box:focus { border-color: var(--ink-2); }
+.gatherer-row .name-box { flex: 1 1 60%; min-width: 0; width: auto; margin: 4px 8px; font-size: 14px; }
+:is(.agent, .gatherer-row) .name-box::placeholder { color: var(--muted); font-weight: 400; }
 .agent.renaming .name-box + .asked { font-size: 12px; font-weight: 400; color: var(--ink-2); -webkit-line-clamp: 2; }
 .agent .meta { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; margin-top: 4px; font-variant-numeric: tabular-nums; }
 .agent .meta .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--axis); flex: none; }
@@ -3065,7 +3066,7 @@ function render(userAction = false) {
     if (!heldDraw) heldDraw = setTimeout(() => { heldDraw = null; render(); }, TYPING_MS - since + 10);
     return;
   }
-  const agents = signature([state.home.gatherers, state.home.hook_servers, state.home.hiding, state.home.saved, state.home.seen, state.home.harnesses,
+  const agents = signature([state.home.gatherers, state.home.hook_servers, state.home.hiding, state.home.titles, state.home.saved, state.home.seen, state.home.harnesses,
     state.home.shells, state.home.branches, paneSig(),
     opened(selectedInfo()),
     Math.floor(Date.now() / AGO_MS)]);
@@ -3512,6 +3513,21 @@ async function keepChoice(name, choice) {
   try { state.home.hiding = await post("/api/hiding", { gatherer: name, choice }); }
   catch (err) { setLive(`Not saved: ${err.message}`); }
 }
+// The reader's name for a gatherer, kept by the server (titles.py, `home.titles`) and shown in place of its own, which
+// everything else -- its directory, its actors, `ag` -- still goes by.
+const titleOf = (g) => (state.home.titles || {})[g.name] || g.name;
+// Named in the actor's name box (nameBox), its channel null: Enter keeps it, Esc leaves it, empty gives its own back.
+function retitle(g) {
+  state.renaming = { g: g.name, c: null, value: titleOf(g), was: "" };
+  nameInput = null;
+  renderAgents();
+  if (nameInput) { nameInput.focus(); nameInput.select(); }
+}
+async function keepTitle(gname, text) {
+  try { state.home.titles = await post("/api/title", { gatherer: gname, title: text }); }
+  catch (err) { setLive(`Not named: ${err.message}`); }
+  renderAgents();
+}
 async function setHidden(g, hide) {
   const kept = keepChoice(g.name, hide ? "hidden" : stale(g) ? "shown" : "");
   renderAgents();
@@ -3576,7 +3592,11 @@ function renderAgents() {
       el("div", { class: "gatherer-row", "data-key": g.name },
         el("button", { class: "name", type: "button", "aria-expanded": open ? "true" : "false", onclick: () => toggleGatherer(g.name),
           title: g.policy ? `${g.name} · policy ${g.policy}` : g.name },
-          el("span", { class: "caret", text: "▶" }), el("span", { class: "gname", text: g.name })),
+          el("span", { class: "caret", text: "▶" }), state.renaming && isAt([state.renaming.g, state.renaming.c], g.name, null) ? null
+            : el("span", { class: "gname", text: titleOf(g) })),
+        state.renaming && isAt([state.renaming.g, state.renaming.c], g.name, null) ? nameBox() : null,
+        SNAPSHOT ? null : el("button", { class: "act rename", type: "button", title: `Rename ${titleOf(g)}`, "aria-label": `Rename ${titleOf(g)}`,
+          onclick: () => retitle(g) }, strokeIcon("M10.6 2.6l2.8 2.8-7.9 7.9-3.4.6.6-3.4zM9.1 4.1l2.8 2.8", 14)),
         el("button", { class: "act hide", type: "button", title: `Hide ${g.name}`, "aria-label": `Hide ${g.name}`, onclick: () => setHidden(g, true) },
           hideIcon()),
         // how many of its actors wait on the user, how many stopped on an error, and how many run now; nothing while none does
@@ -3624,7 +3644,7 @@ function renderAgents() {
   if (hidden.length) {
     const list = el("details", { class: "hidden-list", id: "hidden-gatherers" },
       el("summary", { text: `${hidden.length} hidden gatherer${hidden.length === 1 ? "" : "s"}` }));
-    for (const g of hidden) list.append(el("div", { class: "hidden-row" }, el("span", { class: "gname", text: g.name }),
+    for (const g of hidden) list.append(el("div", { class: "hidden-row" }, el("span", { class: "gname", text: titleOf(g) }),
       el("span", { class: "why", text: choiceOf(g) === "hidden" ? "hidden" : `nothing for ${ago(g.last).replace(" ago", "")}` }),
       el("button", { type: "button", onclick: () => setHidden(g, false) }, "Show")));
     const wasOpen = document.getElementById("hidden-gatherers");
@@ -3864,7 +3884,7 @@ function nameBox() {
   if (nameInput) return nameInput;
   const r = state.renaming;
   nameInput = el("input", { class: "name-box", type: "text", maxlength: "120", spellcheck: "false", autocomplete: "off",
-    placeholder: "Name this actor", "aria-label": "This actor's name" });
+    placeholder: r.c === null ? r.g : "Name this actor", "aria-label": r.c === null ? "This gatherer's name" : "This actor's name" });
   nameInput.value = r.value;
   nameInput.addEventListener("input", () => { r.value = nameInput.value; });
   nameInput.addEventListener("keydown", (ev) => {
@@ -3883,6 +3903,7 @@ async function endRename(keep) {
   state.renaming = null; nameInput = null;
   const g = state.home.gatherers.find((x) => x.name === r.g), a = g && g.agents.find((x) => x.channel === r.c);
   const text = r.value.replace(/\s+/g, " ").trim().slice(0, 120);
+  if (r.c === null) return keep && g && text !== titleOf(g) ? keepTitle(r.g, text) : redrawNamed();
   if (!keep || !a || text === ((a.name && a.name.text) || "") || (!text && !r.was)) { redrawNamed(); return; }
   const before = a.name;
   a.name = text ? { text, by: "user" } : null;     // shown at once; the gatherer's event confirms it (the harness's own back)
@@ -4156,7 +4177,7 @@ function drawCard(g, a, d, many, current, open, read) {
     live && d && d.at ? el("span", { title: "This turn so far" }, "for ", el("span", { "data-lasting": d.at, text: lasting(d.at) }))
       : el("span", { "data-ago": a.last || "", text: ago(a.last) }),
     size !== null && size !== undefined ? el("span", { text: `${compact(size)} tokens` }) : null,
-    many ? el("span", { class: "gname", text: g.name }) : null);
+    many ? el("span", { class: "gname", text: titleOf(g) }) : null);
   const now = nowLine(a, cls, d);
   const steps = d && d.steps && ["running", "asking", "error", "background", "building"].includes(cls) ? d.steps.filter((s) =>
     !(s.running && (cls === "asking" || (now && now.dataset.call && s.text === now.dataset.call)))) : [];   // not what the line above says
