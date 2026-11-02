@@ -121,6 +121,36 @@ class ExecutableTest(Home):
             self.assertIsNone(browser.executable())
 
 
+class PipesTest(unittest.TestCase):
+    """Chrome is handed its DevTools pipe as fds 3 and 4 (PLACE_PIPES), whatever numbers the pipes have here: past 9,
+    as a server's mostly are (where Linux's /bin/sh, dash, refused them), or one of them on 3 already."""
+
+    def handed(self, opened):
+        keep = [os.open(os.devnull, os.O_RDONLY) for _ in range(opened)]
+        try:
+            r3, w3 = os.pipe()
+            r4, w4 = os.pipe()
+            probe = "import os; os.write(4, os.read(3, 5).upper())"         # reads 3, writes 4, as Chrome does
+            p = subprocess.Popen([sys.executable, "-c", browser.PLACE_PIPES, str(r3), str(w4), sys.executable, "-c",
+                                  probe], pass_fds=(r3, w4))
+            os.close(r3)
+            os.close(w4)
+            os.write(w3, b"hello")
+            self.assertEqual(p.wait(timeout=30), 0)
+            self.assertEqual(os.read(r4, 5), b"HELLO")
+            os.close(w3)
+            os.close(r4)
+        finally:
+            for f in keep:
+                os.close(f)
+
+    def test_pipes_past_nine(self):
+        self.handed(12)
+
+    def test_a_pipe_on_three_already(self):
+        self.handed(0)
+
+
 class MineTest(Home):
     """Which Chrome: the dashboard's own, or the user's ("mine"), found by the port its DevToolsActivePort names."""
 
