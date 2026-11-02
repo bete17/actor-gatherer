@@ -37,6 +37,10 @@ ALLOWED = {
         "what the Gatherer's model is asked for: who reads an AGENTS.md",
     ("history.py", '"claude"'): "a History record's kind (a CLAUDE.md, made before AGENTS.md), not a harness",
     ("frontend/src/legacy", '"claude"'): "the same",
+    ("frontend/src/features/settings/AgSettings.tsx", '"claude-code/'): "the Gatherer model's providers: a model, not a session's harness",
+    ("frontend/src/features/settings/AgSettings.tsx", '"codex/'): "the same",
+    ("frontend/src/features/settings/AgSettings.tsx", '"No model set'): "the same, in its note",
+    ("frontend/src/features/settings/AgSettings.tsx", "'[cli] gatherer: where `ag claude`"): "ag's own command, as config.toml's [cli] gatherer says it",
     ("frontend/src/legacy", "claude"): "the same (HIST_KINDS.claude)",
     ("frontend/src/legacy", '"CLAUDE.md"'): "the same: its file's name",
 }
@@ -97,6 +101,15 @@ class DashboardNamesNoHarnessTest(unittest.TestCase):
             got = python_names(path) if name.endswith(".py") else []
             found += [f"{name}:{line}: {what}" for line, what in got
                       if not any(f == name and what.startswith(words) for f, words in ALLOWED)]
+        front = os.path.join(ROOT, "frontend", "src")         # the new front end: core/, features/, the app's own files
+        for folder, _, names in os.walk(front):
+            if os.path.relpath(folder, front).split(os.sep)[0] == "legacy":
+                continue
+            for name in sorted(n for n in names if n.endswith((".ts", ".tsx")) and ".test." not in n):
+                path = os.path.join(folder, name)
+                rel = os.path.relpath(path, ROOT)
+                found += [f"{rel}:{line}: {what}" for line, what in page_names(path, whole=True)
+                          if not any(f == rel and what.startswith(words) for f, words in ALLOWED)]
         for path in page_source.script_files():               # the page's script (frontend/src/legacy/)
             found += [f"frontend/src/legacy/{os.path.basename(path)}:{line}: {what}"
                       for line, what in page_names(path, whole=True)
