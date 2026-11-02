@@ -1,0 +1,91 @@
+# Checks every pull request: the Python suite (tests/), and the dashboard's front end (frontend/: types, lint,
+# formatting, unit tests, and the browser tests on a home of recorded sessions, tests/web_home.py).
+#
+# The browser tests' screenshots are kept per platform (frontend/e2e/*-snapshots/*-<platform>.png). Until Linux ones
+# are kept, CI checks everything but the screenshots (--ignore-snapshots); a run of the "update screenshots" input
+# writes them and keeps them as the run's artifact, to look over and commit.
+
+name: Tests
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      update_screenshots:
+        description: "Write the browser tests' Linux screenshots, as an artifact"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4 # some tests run the page's code in Node
+        with:
+          node-version: "22"
+      - run: pip install -e .
+      - working-directory: tests
+        run: PYTHONPATH=.. python -m unittest discover -s .
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm format:check
+      - run: pnpm test
+
+  browser:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: pip install -e ..
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Browser tests
+        env:
+          AG_PYTHON: python
+        run: |
+          if [ "${{ inputs.update_screenshots }}" = "true" ]; then
+            pnpm e2e --update-snapshots
+          elif ls e2e/*-snapshots/*-linux.png >/dev/null 2>&1; then
+            pnpm e2e
+          else
+            pnpm e2e --ignore-snapshots
+          fi
+      - if: inputs.update_screenshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-screenshots
+          path: frontend/e2e/*-snapshots/*-linux.png
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: frontend/playwright-report/

@@ -14,3 +14,8 @@ build/
 !ag_dashboard/vendor/docwriter/pdfjs/build/
 dist/
 site/
+# the dashboard's built front end (frontend/, ag_dashboard/DESIGN.md): made by `pnpm -C frontend build`, shipped in the package
+ag_dashboard/static/
+# Playwright's runs (frontend/e2e)
+frontend/test-results/
+frontend/playwright-report/
