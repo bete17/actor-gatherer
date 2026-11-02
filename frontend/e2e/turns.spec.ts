@@ -199,3 +199,51 @@ test("shows the latest turn over: the actor done under it", async ({ page }) => 
   await expect(talk(page).locator(".fl-turn.on .fl-finished .now")).toHaveText("Done");
   await expect(talk(page).locator(".fl-turn.on .fl-stopped")).toHaveCount(0);
 });
+
+test("draws the actor's first turn once stored, where the actor waved hello", async ({ page }) => {
+  // the actor's files with no turn stored yet, until `stored`
+  let stored = false;
+  await page.route("**/api/files?*", (route) =>
+    stored ? route.continue() : route.fulfill({ json: { turns: [], turn: null, files: [], commands: [], home: "" } }),
+  );
+  // what the page says of its updates, each time it says it: a draw that failed says "Not updated", until the next
+  const said: string[] = [];
+  await page.exposeFunction("agSaid", (text: string) => said.push(text));
+  await page.addInitScript(() =>
+    new MutationObserver(() => {
+      const live = document.getElementById("live");
+      if (live?.textContent) (window as unknown as { agSaid: (t: string) => void }).agSaid(live.textContent);
+    }).observe(document, { subtree: true, childList: true, characterData: true }),
+  );
+  await openActor(page, CLAUDE);
+  await expect(talk(page)).toHaveClass("fl-talk hi");
+  const hello = page.locator("#main .fl-hello");
+  await expect(hello.locator(":scope > .stage-box > svg.stage.s-hello")).toHaveCount(1);
+  await expect(hello).toHaveText("No messages yet."); // read only here: no line of its own to say
+  // the page drawn again (Details opened and closed): the same actor waving, its endless animations running on -- once
+  // the stream has drawn it, live
+  await expect(page.locator("#live")).toContainText("Live");
+  await page.waitForTimeout(500);
+  const stage = hello.locator(":scope > .stage-box");
+  await stage.evaluate((n) => {
+    const endless = n.getAnimations({ subtree: true }).filter((a) => a.effect?.getTiming().iterations === Infinity);
+    Object.assign(window, { agStage: n, agAnims: endless });
+  });
+  const details = page.locator("#controls .details-btn").last();
+  await details.click();
+  await page.waitForTimeout(300);
+  await details.click();
+  await page.waitForTimeout(300);
+  const kept = await stage.evaluate((n) => {
+    const w = window as unknown as { agStage: Element; agAnims: Animation[] };
+    const endless = n.getAnimations({ subtree: true }).filter((a) => a.effect?.getTiming().iterations === Infinity);
+    return [n === w.agStage, w.agAnims.length > 0 && endless.every((a, i) => a === w.agAnims[i])];
+  });
+  expect(kept).toEqual([true, true]);
+  // stored: Chat picked again loads it, and draws it in place of the hello
+  stored = true;
+  await page.locator("#controls").getByRole("button", { name: "Chat" }).click();
+  await expect(page.locator("#main .fl-grid .fl-talk .fl-turn.on")).toContainText("probe-greet");
+  expect(await drawn(page)).toEqual(range(10, 14));
+  expect(said.filter((t) => t.startsWith("Not updated"))).toEqual([]);
+});
