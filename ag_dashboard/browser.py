@@ -107,6 +107,14 @@ ARGS = ["--headless=new", "--remote-debugging-pipe", "--no-first-run", "--no-def
         "--disable-features=Translate,OptimizationHints,MediaRouter", "--disable-search-engine-choice-screen"]
 APPS = ["Google Chrome.app/Contents/MacOS/Google Chrome", "Chromium.app/Contents/MacOS/Chromium",
         "Microsoft Edge.app/Contents/MacOS/Microsoft Edge", "Brave Browser.app/Contents/MacOS/Brave Browser"]
+#: Run as `python -c PLACE_PIPES R W exe args...`: fds R and W, passed as they are, become 3 and 4 -- where Chrome's
+#: --remote-debugging-pipe reads and writes -- and exe runs with them. Not a shell's `3<&R 4>&W`: dash, Linux's
+#: /bin/sh, refuses an fd past 9 ("Bad fd number"), and a server's pipes are mostly past 9. Each is copied above 9
+#: first, so neither is overwritten by the other moved to 3 or 4.
+PLACE_PIPES = ("import fcntl, os, sys; r, w = (int(a) for a in sys.argv[1:3]); "
+               "hi = [fcntl.fcntl(f, fcntl.F_DUPFD, 10) for f in (r, w)]; "
+               "[os.close(f) for f in {r, w}]; os.dup2(hi[0], 3); os.dup2(hi[1], 4); [os.close(f) for f in hi]; "
+               "os.execvp(sys.argv[3], sys.argv[3:])")
 COMMANDS = ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "microsoft-edge", "brave-browser"]
 ALLOW_WAIT = 120.0          # the most the user's Chrome is waited on to be allowed (its "Allow remote debugging?")
 USER_DIRS = {               # where the user's Chrome keeps its profiles (and DevToolsActivePort, its debugging on)
@@ -319,8 +327,8 @@ class PipeCdp(Cdp):
         r3, w3 = os.pipe()
         r4, w4 = os.pipe()
         log = open(os.path.join(log_dir, "browser.log"), "ab")
-        try:   # sh hands Chrome the pipes as 3 and 4: they keep the numbers they have here otherwise
-            self.proc = subprocess.Popen(["/bin/sh", "-c", f'exec "$0" "$@" 3<&{r3} 4>&{w4}', exe, *ARGS,
+        try:   # PLACE_PIPES hands Chrome the pipes as 3 and 4: they keep the numbers they have here otherwise
+            self.proc = subprocess.Popen([sys.executable, "-c", PLACE_PIPES, str(r3), str(w4), exe, *ARGS,
                                           *browser_video.FLAGS, f"--user-data-dir={profile}", "about:blank"],
                                          pass_fds=(r3, w4), stdin=subprocess.DEVNULL, stdout=log, stderr=log,
                                          start_new_session=True, env=_chrome_env())
