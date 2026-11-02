@@ -89,7 +89,7 @@ document.addEventListener("keydown", (ev) => {
   }
   if ((n && n.closest && n.closest("input, textarea, select, [contenteditable], .xterm, #ed-top"))
     || document.querySelector("[role=menu]:not([hidden]), [role=dialog]:not([hidden]), dialog[open]")
-    || !document.getElementById("about").hidden || !document.getElementById("cfg-file").hidden) return;
+    || !document.getElementById("about").hidden || window.agNext.settings.fileOpen()) return;
   if (!PANE && panes.focus !== panes.here ? panes.focus.call("escape") : escapeShown()) ev.preventDefault();
 }, true);
 // An Esc from outside the message box, for the actor this pane shows: in Chat, its panel closed (the Esc closes that),

@@ -271,12 +271,12 @@ document.getElementById("theme").addEventListener("click", (ev) => {
 document.getElementById("about-btn").addEventListener("click", () => {
   const open = document.getElementById("about").hidden;
   setAbout(open);
-  if (open) loadSettings().catch(() => {});
+  if (open) window.agNext.settings.load().catch(() => {});
 });
 document.addEventListener("click", (ev) => { if (!ev.target.closest(".about-wrap, .cfg-file, .r-about")) setAbout(false); });
 document.addEventListener("keydown", (ev) => {
   if (ev.key !== "Escape") return;
-  if (!document.getElementById("cfg-file").hidden) { document.getElementById("cfg-file").hidden = true; return; }
+  if (window.agNext.settings.fileOpen()) { window.agNext.settings.closeFile(); return; }
   setAbout(false);
 });
 

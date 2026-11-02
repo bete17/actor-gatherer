@@ -475,13 +475,14 @@ class PageTest(HomeBase):
         self.assertNotIn("<!--VENDOR-->", text)
         self.assertIn("marked v15", text)
         self.assertIn("DOMPurify", text)
-        self.assertEqual(text.count("<script>"), 6)          # the two libraries, xterm.js and its fit and WebGL add-ons, the snapshot's line
+        self.assertEqual(len(re.findall(r"^<script>", text, re.M)), 6)          # the two libraries, xterm.js and its fit and WebGL add-ons, the snapshot's line
         self.assertRegex(text, r'<script type="module" crossorigin src="/assets/[\w.-]+\.js">')   # then the page's own
         self.assertIn(".xterm-helper-textarea", text)                       # xterm.js's stylesheet
 
     def test_a_snapshot_has_no_terminal(self):
         text = server.page(data.snapshot())
-        self.assertEqual(text.count("<script>"), 3)
+        self.assertEqual(len(re.findall(r"^<script>", text, re.M)), 3)    # the two libraries, the snapshot's line (the page's
+        #                                                                  # own code, inlined, may say "<script>" in a string)
         self.assertNotIn(".xterm-helper-textarea", text)
 
     def test_the_build_s_files_are_served_and_nothing_beside_them(self):
