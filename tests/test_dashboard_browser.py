@@ -899,6 +899,8 @@ class UsersChromeTest(Home):
         self.assertFalse(got.get("isError"), got)
         return got["content"][0]["text"]
 
+    @unittest.skipUnless(sys.platform == "darwin", "on Linux no frame comes from a tab hidden in the user's Chrome "
+                                                   "(ag_dashboard/TODO.md: Browser, Linux)")
     def test_a_browser_in_the_user_s_chrome(self):
         self.text("navigate", url=os.path.join(self.root, "index.html"))
         self.assertEqual(type(self.bs.chrome.conn), browser.PipeCdp)    # the dashboard's own, by default
