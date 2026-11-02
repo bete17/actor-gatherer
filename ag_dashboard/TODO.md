@@ -519,5 +519,12 @@ Not done yet:
   is logged into.
 - **Downloads** go to <home>/dashboard/downloads, the agent told so; the view shows one done, with its folder a click
   away (never opened: it may be anything).
-- **Linux** is untested: it needs google-chrome or chromium on the PATH (headless: no display), or
-  `[dashboard] browser` in config.toml.
+- **Linux.** It needs google-chrome or chromium on the PATH (headless: no display), or `[dashboard] browser` in
+  config.toml. CI runs the Browser's tests on GitHub's Ubuntu (headless): Chrome starts there since its pipes are
+  handed over by Python, not dash (#220), and Cmd goes to it as Ctrl, its shortcut key (#221).
+  - [ ] **No picture from a tab hidden in the user's Chrome ("mine") on Linux.** `new_target` makes the Browser's tab
+    there a hidden target (out of the user's tab strip); on Linux no screencast frame comes from it, so the view
+    stays blank (on macOS Chrome renders it all the same). Seen only with a headless Chrome standing in for the
+    user's, as the test runs it; a real Linux desktop Chrome may differ. To do: try it on one, then choose a fix
+    (e.g. a window of its own in the background, not minimized, which `new_target` falls back to already).
+    `test_a_browser_in_the_user_s_chrome` runs on macOS only until then.
