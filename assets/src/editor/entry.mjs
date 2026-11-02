@@ -1,4 +1,4 @@
-// What the dashboard's Editor panel (ag_dashboard/page.html) uses, as `window.agEditor`: CodeMirror 6 to edit
+// What the dashboard's Editor panel (frontend/src/legacy/18-editor.js) uses, as `window.agEditor`: CodeMirror 6 to edit
 // in, Yjs to share each file between everyone editing it (y-codemirror.next binds the two, with each other
 // editor's cursor and selection), and a language for a file's name, coloured with the page's own classes (LaTeX and
 // BibTeX are latex.mjs's).

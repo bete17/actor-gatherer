@@ -31,6 +31,9 @@ jobs:
         with:
           node-version: "22"
       - run: pip install -e .
+      - name: Build the dashboard's page (its tests serve it)
+        working-directory: frontend
+        run: corepack enable && pnpm install --frozen-lockfile && pnpm build
       - working-directory: tests
         run: PYTHONPATH=.. python -m unittest discover -s .
 
@@ -50,6 +53,7 @@ jobs:
       - run: pnpm lint
       - run: pnpm format:check
       - run: pnpm test
+      - run: pnpm build
 
   browser:
     runs-on: ubuntu-latest

@@ -12,7 +12,8 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
-    "types": ["node"]
+    "types": ["node"],
+    "allowImportingTsExtensions": true
   },
-  "include": ["src", "e2e", "*.config.ts"]
+  "include": ["src", "e2e", "scripts", "*.ts"]
 }

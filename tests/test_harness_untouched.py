@@ -16,6 +16,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 import harness_kit  # noqa: E402
+import page_source  # noqa: E402
 
 DASHBOARD = os.path.join(ROOT, "ag_dashboard")
 NAMES = set(harness_kit.HARNESSES) | {"agy"}                      # agy: Antigravity's command
@@ -30,14 +31,14 @@ ALLOWED = {
     ("data.py", '"codex"'): "the Gatherer model's providers (codex/..., claude-code/...): a model, not a session's harness",
     ("data.py", '"claude-code"'): "the same",
     ("settings.py", '"name a model, e.g. claude-code/sonnet or gemini/gemini-3.8-flash"'): "a Gatherer model's name, as an example",
-    ("page.html", '"No model set: every Gatherer call fails until one is. A coding agent on its own login (claude-code/'):
+    ("frontend/src/legacy", '"No model set: every Gatherer call fails until one is. A coding agent on its own login (claude-code/'):
         "the same, in Settings",
     ("history.py", '"""\n\nFrom it, write an AGENTS.md: the standing instructions coding agents (Claude Code, Codex'):
         "what the Gatherer's model is asked for: who reads an AGENTS.md",
     ("history.py", '"claude"'): "a History record's kind (a CLAUDE.md, made before AGENTS.md), not a harness",
-    ("page.html", '"claude"'): "the same",
-    ("page.html", "claude"): "the same (HIST_KINDS.claude)",
-    ("page.html", '"CLAUDE.md"'): "the same: its file's name",
+    ("frontend/src/legacy", '"claude"'): "the same",
+    ("frontend/src/legacy", "claude"): "the same (HIST_KINDS.claude)",
+    ("frontend/src/legacy", '"CLAUDE.md"'): "the same: its file's name",
 }
 
 
@@ -72,13 +73,14 @@ def python_names(path: str) -> list:
 LITERAL = re.compile(r'"(?:[^"\\\n]|\\.)*"|\'(?:[^\'\\\n]|\\.)*\'|`(?:[^`\\\n]|\\.)*`')
 
 
-def page_names(path: str) -> list:
-    """The same for the page's script, line by line: comments (a line's own, or after ` // `) say what they like."""
-    out, inside = [], False
+def page_names(path: str, whole: bool = False) -> list:
+    """The same for the page's script, line by line: comments (a line's own, or after ` // `) say what they like.
+    `whole`: a file that is all script (frontend/src/legacy/*.js), not a page with a <script> in it."""
+    out, inside = [], whole
     with open(path, encoding="utf-8") as fh:
         lines = fh.read().split("\n")
     for i, line in enumerate(lines, 1):
-        inside = (inside or "<script" in line) and "</script>" not in line
+        inside = whole or (inside or "<script" in line) and "</script>" not in line
         if not inside or line.strip().startswith(("//", "/*", "*")):
             continue
         code = re.split(r"\s//\s", re.sub(r"/\*.*?\*/", "", line))[0]
@@ -92,9 +94,13 @@ class DashboardNamesNoHarnessTest(unittest.TestCase):
         found = []
         for name in sorted(os.listdir(DASHBOARD)):
             path = os.path.join(DASHBOARD, name)
-            got = python_names(path) if name.endswith(".py") else page_names(path) if name == "page.html" else []
+            got = python_names(path) if name.endswith(".py") else []
             found += [f"{name}:{line}: {what}" for line, what in got
                       if not any(f == name and what.startswith(words) for f, words in ALLOWED)]
+        for path in page_source.script_files():               # the page's script (frontend/src/legacy/)
+            found += [f"frontend/src/legacy/{os.path.basename(path)}:{line}: {what}"
+                      for line, what in page_names(path, whole=True)
+                      if not any(f == "frontend/src/legacy" and what.startswith(words) for f, words in ALLOWED)]
         self.assertEqual(found, [], "a harness's rule in the dashboard: put it in its harness_kit class, and read it "
                                     "through a generic field (harness_kit/DESIGN.md)")
 

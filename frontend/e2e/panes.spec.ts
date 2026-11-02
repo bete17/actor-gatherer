@@ -1,5 +1,5 @@
 // Panes (page.html: "panes"): actors side by side, a ⌘/Ctrl+click on one in the list opening it beside.
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./test";
 import { CLAUDE, CODEX, masks, openActor } from "./home";
 
 const beside = process.platform === "darwin" ? "Meta" : "Control";

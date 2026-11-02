@@ -28,6 +28,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = ap.parse_args(argv)
     if args.home:
         home.HOME = os.path.abspath(os.path.expanduser(args.home))
+    wrong = server.built()                         # the page not built, or older than its source in frontend/
+    if wrong:
+        print(f"ag dashboard: {wrong}", file=sys.stderr)
     if args.out:
         with open(args.out, "w", encoding="utf-8") as fh:
             fh.write(server.page(data.snapshot()))

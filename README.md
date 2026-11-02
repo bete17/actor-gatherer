@@ -145,7 +145,7 @@ the others, and about `ag actors`, a command it runs in its shell:
 
 ```bash
 ag actors                                    # the other actors of this gatherer: ids, status, what each was asked
-ag actors who page.html                      # which actors changed a file
+ag actors who ag_dashboard/data.py           # which actors changed a file
 ag actors send 1a2b3c4d "I'm editing x.py"   # a message to one, typed into its conversation
 ag actors send gatherer "..."                # a message to the gatherer agent
 ```

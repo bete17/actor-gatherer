@@ -1,6 +1,6 @@
 // The Chat view (page.html: "the Files view", "the chat"): turns, the latest whole and the earlier folded, and
 // beside them each turn's files and commands.
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./test";
 import { CLAUDE, CODEX, masks, openActor } from "./home";
 
 test("shows a Claude Code actor's latest turn whole and its earlier turns folded", async ({ page }) => {

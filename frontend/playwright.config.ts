@@ -8,7 +8,7 @@
 import { defineConfig, devices } from "@playwright/test";
 import path from "node:path";
 
-const PORT = Number(process.env.AG_E2E_PORT || 4791);
+const PORT = Number(process.env.AG_E2E_PORT || 47913);
 const ROOT = path.resolve(import.meta.dirname, "..");
 
 export default defineConfig({
@@ -30,12 +30,15 @@ export default defineConfig({
     trace: "retain-on-failure",
   },
   webServer: {
-    command: `${process.env.AG_PYTHON || "python3"} tests/web_home.py --serve ${PORT}`,
+    // the page built first (frontend/'s build, which the dashboard serves), then served on the test home
+    command: `cd frontend && "${process.execPath}" node_modules/vite/bin/vite.js build --logLevel warn && cd .. && ${
+      process.env.AG_PYTHON || "python3"
+    } tests/web_home.py --serve ${PORT}`,
     cwd: ROOT,
     env: { PYTHONPATH: ROOT },
     url: `http://127.0.0.1:${PORT}/api/home`,
     reuseExistingServer: false, // a fresh home each run: what a run marks seen or opens does not carry to the next
-    timeout: 60_000,
+    timeout: 120_000,
     stdout: "ignore",
     stderr: "pipe",
   },

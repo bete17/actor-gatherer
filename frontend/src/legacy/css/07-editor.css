@@ -1,0 +1,166 @@
+/* The Editor, above the panes (the actors' views shorter while it is open), the edge between them dragged to resize:
+   a folder's tree, and a file in it edited by everyone who has it open, in the page's code colours; what is written
+   to the file on disk marked as it lands, in its actor's hue (--who); the actors that changed each file, their avatars */
+.ed-top { flex: 0 0 var(--ed-h, 50%); min-height: 140px; display: flex; flex-direction: column; position: relative;
+  background: var(--page); border-bottom: 5px solid color-mix(in srgb, var(--ink) 14%, var(--page));   /* the edge between it and the panes: a bar, its grip over it */
+  --mono: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.ed-top[hidden] { display: none; }
+/* in the page's top row, as tall as it (--top-h), so the rule under the row runs straight across: the file's head, and
+   the folder's bar beside it */
+.ed-top .ed-head { min-height: var(--top-h, 40px); box-sizing: border-box; }
+.ed-top .ed-bar { min-height: var(--top-h, 40px); box-sizing: border-box; align-content: center; padding-top: 6px;
+  border-bottom: 1px solid var(--grid); margin-bottom: 6px; }
+.ed-bar { position: sticky; top: 0; z-index: 1; background: var(--page); padding: 0 8px 6px; display: grid; gap: 5px; }
+.ed-tree:has(> .ed-bar) { padding-top: 0; }
+.ed-bar .row { display: flex; gap: 4px; }
+.ed-up { flex: none; display: inline-flex; align-items: center; padding: 2px 6px; color: var(--ink-2); }
+.ed-pick { min-width: 0; width: 100%; font: 12px/1.4 var(--mono); padding: 3px 6px; color: var(--ink); background: var(--surface);
+  border: 1px solid var(--ring); border-radius: 5px; }
+.ed-avs { display: inline-flex; align-items: center; flex: none; }
+.ed-avs img, .ed-avs .ed-noav { width: 15px; height: 15px; border-radius: 50%; margin-left: -5px; box-shadow: 0 0 0 1.5px var(--page); }
+.ed-avs > :first-child { margin-left: 0; }
+/* the header's: each a button, its actor's changes to the file (edChanges) */
+.ed-avs > .ed-av { display: inline-flex; padding: 0; margin-left: -5px; border: 0; border-radius: 50%; background: none; cursor: pointer; }
+.ed-avs > .ed-av:first-child { margin-left: 0; }
+.ed-avs > .ed-av img, .ed-avs > .ed-av .ed-noav { width: 18px; height: 18px; margin-left: 0; }
+.ed-avs > .ed-av:hover img, .ed-avs > .ed-av:focus-visible img { box-shadow: 0 0 0 2px var(--axis); }
+.ed-avs > .ed-av.on img, .ed-avs > .ed-av.on .ed-noav { box-shadow: 0 0 0 2px var(--ink); }
+/* beside the file: an actor's changes to it (edDrawChanges), as the Chat view shows a file's */
+.ed-work { flex: 1; min-height: 0; display: flex; }
+.ed-work > .ed-body { min-width: 0; }
+.ed-changes { flex: none; width: min(460px, 46%); max-width: calc(100% - 200px); min-height: 0; overflow-y: auto; border-left: 1px solid var(--ring); background: var(--surface); }
+.ed-changes[hidden] { display: none; }
+/* the edges between the editor's columns, dragged (widthGrip): the files' list, and an actor's changes once open */
+.ed-col-grip { flex: none; width: 7px; margin: 0 -3px; position: relative; z-index: 4; cursor: col-resize; touch-action: none; }
+.ed-col-grip:has(+ [hidden]) { display: none; }
+.ed-changes .ed-ch-h { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 8px; padding: 5px 6px 5px 12px;
+  background: var(--surface); border-bottom: 1px solid var(--ring); font-size: 12.5px; color: var(--ink-2); }
+.ed-changes .ed-ch-h .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ed-changes .ed-ch-h b { color: var(--ink); font-weight: 600; }
+.ed-changes .ed-ch-x { flex: none; border: 0; background: none; font-size: 17px; line-height: 1; padding: 3px 7px; color: var(--muted); }
+.ed-changes .ed-ch-x:hover { color: var(--ink); background: var(--wash); }
+.ed-changes .ed-ch-go { flex: none; margin-left: auto; padding: 1px 8px; font-size: 11.5px; }
+.ed-changes .asked { padding: 0 16px 6px 34px; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ed-changes .none { padding: 14px 16px; color: var(--muted); font-size: 12.5px; }
+/* beside the file, in its place when no actor's changes show: the project's preview (pvDraw) -- what its command makes,
+   or what it prints */
+.ed-exec { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px 3px 7px; }
+.ed-topdf { padding: 3px 8px; white-space: nowrap; }
+.ed-exec svg { color: var(--good); }
+.ed-exec.busy svg { animation: ed-pv-pulse .9s ease-in-out infinite alternate; }
+@keyframes ed-pv-pulse { from { opacity: .3; } to { opacity: 1; } }
+.ed-pv { flex: none; width: min(520px, 50%); max-width: calc(100% - 200px); min-height: 0; display: flex; flex-direction: column;
+  border-left: 1px solid var(--ring); background: var(--surface); }
+.ed-pv[hidden] { display: none; }
+.ed-pv-h { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; padding: 4px 6px 4px 10px; min-height: 31px; box-sizing: border-box;
+  border-bottom: 1px solid var(--ring); font-size: 12.5px; color: var(--ink-2); }
+.ed-pv-h .t { display: inline-flex; align-items: center; gap: 5px; font-weight: 600; color: var(--ink); flex: none; }
+.ed-pv-h .t svg { color: var(--good); }
+.ed-pv-h .nm { flex: 1 1 0; min-width: 0; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ed-pv-h > button { flex: none; padding: 1px 8px; font-size: 11.5px; }
+.ed-pv-h > .x { border: 0; background: none; font-size: 17px; line-height: 1; padding: 3px 7px; color: var(--muted); }
+.ed-pv-h > .x:hover { color: var(--ink); background: var(--wash); }
+.ed-pv-open { flex: none; color: var(--muted); text-decoration: none; padding: 0 4px; }
+.ed-pv-open:hover { color: var(--ink); }
+.ed-pv-tabs { display: inline-flex; flex: none; border: 1px solid var(--ring); border-radius: 6px; overflow: hidden; }
+.ed-pv-tabs button { border: 0; border-radius: 0; background: none; padding: 1px 8px; font-size: 11.5px; color: var(--muted); }
+.ed-pv-tabs button + button { border-left: 1px solid var(--ring); }
+.ed-pv-tabs button.on { background: var(--wash); color: var(--ink); }
+.ed-pv-st { flex: none; font-size: 11px; padding: 1px 8px; border-radius: 9px; background: var(--wash); color: var(--muted); white-space: nowrap;
+  font-variant-numeric: tabular-nums; }
+.ed-pv-st.run { color: var(--s1); } .ed-pv-st.ok { color: var(--good); } .ed-pv-st.bad { color: var(--critical); }
+.ed-pv-st.run::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: currentColor;
+  margin-right: 5px; vertical-align: 1px; animation: ed-pv-pulse .9s ease-in-out infinite alternate; }
+.ed-pv-cmd { display: flex; align-items: center; gap: 8px; padding: 4px 10px; border-bottom: 1px solid var(--grid); font-size: 11.5px; color: var(--muted); }
+.ed-pv-cmd[hidden] { display: none; }
+.ed-pv-cmd code { flex: 1; min-width: 0; font: 11.5px/1.5 var(--mono); color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ed-pv-cmd code .to { color: var(--muted); }
+.ed-pv-cmd .by { flex: none; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.ed-pv-cmd .by img { width: 14px; height: 14px; border-radius: 50%; }
+.ed-pv-body { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; }
+.ed-pv-body > [hidden] { display: none !important; }
+.ed-pv-card { flex: none; max-height: 100%; overflow: auto; padding: 12px 14px; display: grid; gap: 9px; align-content: start; font-size: 12.5px; color: var(--ink-2); }
+.ed-pv-card .head { font-weight: 600; color: var(--ink); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.ed-pv-card .head img { width: 18px; height: 18px; border-radius: 50%; }
+.ed-pv-card .note, .ed-pv-card .head .note { font-size: 11.5px; font-weight: 400; color: var(--muted); }
+.ed-pv-card .err { color: var(--critical); overflow-wrap: anywhere; }
+.ed-pv-card .row { display: flex; gap: 6px; flex-wrap: wrap; }
+.ed-pv-card code { font: 11.5px var(--mono); }
+.ed-pv-card pre { margin: 0; padding: 6px 8px; font: 12px/1.5 var(--mono); color: var(--ink); background: var(--hl-bg); border: 1px solid var(--grid);
+  border-radius: 5px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ed-pv-form, .ed-pv-ask { display: grid; gap: 9px; }
+.ed-pv-form label { display: grid; gap: 3px; font-size: 12px; color: var(--ink-2); font-weight: 550; }
+.ed-pv-form label .note { font-weight: 400; }
+.ed-pv-form input { font: 12px/1.4 var(--mono); padding: 5px 7px; color: var(--ink); background: var(--page); border: 1px solid var(--ring);
+  border-radius: 5px; width: 100%; box-sizing: border-box; }
+.ed-pv-result { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
+.ed-pv-result.off { position: absolute; inset: 0; visibility: hidden; pointer-events: none; }
+.ed-pv-result > iframe { flex: 1; min-height: 0; width: 100%; border: 0; background: #fff; }
+.ed-pv-result > iframe.pdf { background: var(--page); }
+.ed-pv-result > .img { flex: 1; min-height: 0; display: grid; place-items: center; padding: 12px; box-sizing: border-box;
+  background: repeating-conic-gradient(#eef0f2 0 25%, #fff 0 50%) 50% / 16px 16px; }
+.ed-pv-result > .img img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.ed-pv-result > .md-box { padding: 12px 16px; font-size: 13px; }
+.ed-pv-result > pre, .ed-pv-out { flex: 1; min-height: 0; margin: 0; overflow: auto; padding: 8px 10px; font: 12px/1.5 var(--mono); color: var(--ink);
+  background: var(--hl-bg); white-space: pre-wrap; overflow-wrap: anywhere; }
+.ed-pv-note { padding: 14px; color: var(--muted); font-size: 12.5px; }
+.ed-noav { display: inline-block; background: var(--who); }
+.ed-avs.many { padding: 1px 5px 1px 2px; border-radius: 10px; background: color-mix(in srgb, var(--warning) 26%, transparent); }
+.ed-avs .n { font-size: 10.5px; font-weight: 650; margin-left: 4px; color: var(--ink); }
+.ed-writers { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); min-width: 0; }
+.ed-writers.many { color: var(--ink); background: color-mix(in srgb, var(--warning) 22%, transparent); padding: 2px 8px 2px 6px; border-radius: 10px; }
+.ed-writers.many .lbl { font-weight: 600; }
+.ed-writer { display: inline-flex; align-items: center; gap: 4px; color: var(--ink); white-space: nowrap; }
+.ed-writer img, .ed-writer .ed-noav { width: 16px; height: 16px; border-radius: 50%; }
+.ed-writer .nm { max-width: 18ch; overflow: hidden; text-overflow: ellipsis; }
+/* narrow (Details open beside it, or a small window): a narrower tree, and the header on one line -- each editor
+   its colour's dot, its name on hover; the disk's change its dot, said on hover */
+.ed-top { container: ed / inline-size; }
+@container ed (max-width: 760px) {
+  .ed-tree { width: 170px; } .ed-head { flex-wrap: nowrap; }
+  .ed-person { width: 10px; height: 10px; padding: 0; font-size: 0; border-radius: 50%; background: var(--who); border: 0; flex: none; }
+  .ed-changed { font-size: 0; } .ed-changed::before { margin-right: 0; } .ed-writer .nm { display: none; } }
+.ed-grip { position: absolute; left: 0; right: 0; bottom: -7px; height: 9px; cursor: row-resize; z-index: 4; touch-action: none; }
+/* the chat minimized under the Editor (setChatMin): the Editor the column's height but for the row of message boxes, each
+   pane's as tall as what it shows -- a frame's told by its page (fitMini) -- and no head of its own */
+.work.chat-min > .ed-top { flex: 1 1 0; }
+.work.chat-min > .ed-top > .ed-grip { display: none; }
+.work.chat-min > .panes { flex: none; }
+.work.chat-min .pane > iframe { flex: none; margin-top: auto; }   /* the strips side by side, along the bottom */
+.pane:has(> main > .chat.mini) > .pane-top { display: none; }
+main:has(> .chat.mini) { align-items: flex-end; }
+/* a pane minimized: what the agent asks the reader, if it does, over the message box; the way back at its left, the actor's
+   status at its right */
+.chat.mini { flex: 1 1 auto; min-height: 48px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center;
+  grid-template-areas: "note note note" "back box st" ". err st"; }
+.chat.mini > * { grid-area: note; }
+.chat.mini > .mini-back { grid-area: back; }
+.chat.mini > :is(.composer, .readonly, .mini-sh) { grid-area: box; }
+.chat.mini > .err { grid-area: err; padding: 0 8px 6px 0; }
+.chat.mini > .mini-st { grid-area: st; }
+.chat.mini .composer, .chat.mini .readonly { border-top: 0; padding: 8px 8px 8px 0; }
+.chat.mini .asking-note { max-height: 360px; }      /* not in vh: a frame is as tall as its pane (fitMini) */
+.mini-back { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; margin: 0 4px 0 8px; padding: 0;
+  border: 0; border-radius: 5px; background: none; color: var(--muted); cursor: pointer; }
+.mini-back:hover, .mini-back:focus-visible { background: var(--wash); color: var(--ink); }
+.mini-st { align-self: stretch; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; min-width: 56px;
+  margin: 0; padding: 4px 10px 5px; border: 0; border-left: 1px solid var(--grid); border-radius: 0; background: none; cursor: pointer;
+  font: 10.5px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); }
+.mini-st:hover, .mini-st:focus-visible { background: var(--wash); }
+.mini-st .pic { display: flex; align-items: center; justify-content: center; height: 26px; }
+.mini-st .spin::before { content: "✻"; display: inline-block; color: var(--term-accent); font-size: 16px; animation: term-spin 1.2s steps(1) infinite; }
+.mini-st .still { position: relative; display: inline-flex; }
+.mini-st .still img { width: 24px; height: 24px; display: block; filter: drop-shadow(0 0 .6px var(--buddy-edge, rgba(0, 0, 0, .45))); }
+.mini-st .mk { position: absolute; right: -4px; bottom: -2px; width: 12px; height: 12px; border-radius: 50%; display: grid; place-items: center;
+  box-shadow: 0 0 0 1.5px var(--surface); color: #fff; font: 700 9px/1 system-ui, sans-serif; }
+.mini-st .mk.ask { background: var(--warning); } .mini-st .mk.err { background: var(--critical); }
+.mini-st .mk.bg { right: -2px; bottom: 0; width: 8px; height: 8px; background: var(--good); }
+.mini-st .n { display: flex; align-items: center; gap: 5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.mini-st .n:empty { display: none; }
+.mini-st .c { display: inline-flex; align-items: center; gap: 2px; color: var(--ink-2); } .mini-st .c.err { color: var(--critical); }
+.mini-st .chg-a { color: var(--term-ok); } .mini-st .chg-r { color: var(--term-err); }
+.mini-sh { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 10px 8px 10px 0; color: var(--ink-2); font-size: 12.5px; }
+.mini-sh > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ed-grip:hover, .ed-grip.on { background: color-mix(in srgb, var(--s1) 35%, transparent); }
+.ed-close { border: 0; background: none; font-size: 18px; line-height: 1; padding: 2px 6px; color: var(--muted); }
+.ed-close:hover { color: var(--ink); background: var(--wash); }

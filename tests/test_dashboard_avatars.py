@@ -16,6 +16,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 from ag_dashboard import avatars, server  # noqa: E402
+import page_source  # noqa: E402
 from ag_dashboard import home as dashboard_home  # noqa: E402
 
 CIRCLE = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"{}><circle cx="32" cy="32" r="32"/></svg>'
@@ -185,8 +186,7 @@ class AvatarsTest(AvatarsBase):
     def test_the_drawn_avatars_move_as_the_page_and_the_readme_know(self):
         avatars.DIR = self.saved[1]
         pool = avatars.pictures()
-        with open(os.path.join(ROOT, "ag_dashboard", "page.html"), encoding="utf-8") as fh:
-            page = fh.read()
+        page = page_source.text()
         with open(os.path.join(avatars.DIR, "README.md"), encoding="utf-8") as fh:
             readme = fh.read()
         moves = set(re.findall(r"^\.m-([a-z-]+) \{ --m: b-\1;", page, re.M))

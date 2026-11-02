@@ -1,4 +1,4 @@
-"""The History view's data (page.html: the History view): a gatherer's history laid out to be looked
+"""The History view's data (the page: the History view): a gatherer's history laid out to be looked
 through and picked from -- each event, light, and the tasks ag has segmented it into -- searched; and
 what the reader picks, rendered as one transcript, to export, or to give the Gatherer's model to
 summarize, or to write memories, an AGENTS.md or a skill from -- and those saved where Claude Code reads

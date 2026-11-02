@@ -9,7 +9,8 @@ import subprocess
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PAGE = os.path.join(ROOT, "ag_dashboard", "page.html")
+
+import page_source  # noqa: E402
 START = "// ------------------------------------------------------------------ code, coloured"
 END = "// a code block's Copy"
 API = "hlTokens, hlLines, hlPart, hlInside, shellHtml, outputHtml, ansiHtml, hlLang, langOfPath, guessWeb, codeFence"
@@ -26,8 +27,7 @@ process.stdin.on("data", (d) => { input += d; }).on("end", () =>
 
 
 def section() -> str:
-    with open(PAGE, encoding="utf-8") as fh:
-        text = fh.read()
+    text = page_source.script()
     return text[text.index(START):text.index(END)]
 
 

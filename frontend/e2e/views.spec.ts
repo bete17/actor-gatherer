@@ -1,6 +1,6 @@
 // The actor's other views (page.html: "the Terminal view", "the History view", "the Transcript view") and the Details
 // panel beside the chat ("the selected agent", "the chat"'s context cards).
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./test";
 import { CLAUDE, masks, openActor } from "./home";
 
 test("the Terminal view of a session with no terminal says so", async ({ page }) => {

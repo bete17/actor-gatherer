@@ -2,7 +2,7 @@
 the actors apart. The pictures are the SVGs in ag_dashboard/avatars/<kind>/<name>.svg (drawn by
 assets/src/avatars/draw.py, or put there by hand: the README there), each in one hue, which its root
 names (`data-hue`), as it does how the character moves while its actor works (`data-motion`: the
-Chat view's, page.html's `.buddy`). What each can say before its actor's first message is in a file beside
+Chat view's, the page's `.buddy`). What each can say before its actor's first message is in a file beside
 them, hello.toml (`LINES`), read again whenever it changes. Which actor has which is kept in the dashboard's own database (<home>/dashboard.db,
 next to sessions.py's and hiding.py's tables), so every dashboard on this home shows the same. Table
 `avatars`, one row per actor given one:

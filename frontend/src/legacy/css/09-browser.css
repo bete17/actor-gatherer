@@ -1,0 +1,156 @@
+/* a Browser (browser.py): its bar, its tabs, and the page's screen as Chrome casts it -- the pane's whole width */
+.chat .chat-frame.bw-frame { position: relative; overflow: hidden; padding: 0; display: flex; flex-direction: column; }
+.bw { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.bw [hidden] { display: none !important; }
+/* a Browser's actor: its status (actorStatus) at the message box's right, as a minimized pane has it */
+.chat:has(> .bw-frame) { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: minmax(0, 1fr) auto auto;
+  grid-template-areas: "frame frame" "box st" "err st"; }
+.chat:has(> .bw-frame) > .bw-frame { grid-area: frame; }
+.chat:has(> .bw-frame) > :is(.composer, .readonly) { grid-area: box; }
+.chat:has(> .bw-frame) > .err { grid-area: err; }
+.chat:has(> .bw-frame) > .mini-st { grid-area: st; border-top: 1px solid var(--ring); }
+.bw-bar { flex: none; display: flex; align-items: center; gap: 2px; padding: 5px 8px; border-bottom: 1px solid var(--ring); }
+.bw-bar button { flex: none; display: grid; place-items: center; width: 28px; height: 26px; border: 0; border-radius: 6px;
+  background: none; color: var(--muted); cursor: pointer; }
+.bw-bar button:hover:not([disabled]) { background: var(--wash); color: var(--ink); }
+.bw-bar button[disabled] { opacity: .4; cursor: default; }
+.bw-bar button[aria-pressed="true"] { background: color-mix(in srgb, #2563EB 16%, transparent); color: #2563EB; }
+.bw-bar form { flex: 1 1 auto; min-width: 0; display: flex; margin: 0 4px; }
+.bw-bar input { flex: 1 1 auto; min-width: 0; font: 12.5px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--ink);
+  background: var(--page); border: 1px solid var(--grid); border-radius: 999px; padding: 3px 12px; }
+.bw-bar input:focus { outline: 2px solid color-mix(in srgb, #2563EB 45%, transparent); outline-offset: -1px; }
+.bw-bar .sep { width: 1px; height: 18px; background: var(--grid); margin: 0 4px; flex: none; }
+.bw-bar .mine { flex: none; font-size: 11.5px; padding: 2px 8px; border-radius: 999px; color: #2563EB; white-space: nowrap;
+  background: color-mix(in srgb, #2563EB 12%, transparent); }
+.bw-tabs { flex: none; display: flex; gap: 2px; padding: 4px 8px 0; overflow-x: auto; border-bottom: 1px solid var(--ring); }
+.bw-tabs .t { display: flex; align-items: center; gap: 4px; max-width: 220px; padding: 4px 6px 5px 10px; border: 1px solid transparent;
+  border-bottom: 0; border-radius: 6px 6px 0 0; background: none; color: var(--muted); font-size: 12px; cursor: pointer; }
+.bw-tabs .t .nm { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.bw-tabs .t.on { background: var(--surface); border-color: var(--ring); color: var(--ink); }
+.bw-tabs .t .x { border: 0; background: none; color: inherit; padding: 0 3px; cursor: pointer; border-radius: 4px; line-height: 1; }
+.bw-tabs .t .x:hover { background: var(--wash); }
+.bw-tabs .add { border: 0; background: none; color: var(--muted); cursor: pointer; padding: 2px 8px; }
+.bw-stage { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; background: #fff; outline: none;
+  cursor: var(--bw-cursor, default); touch-action: none; }   /* the page's pointer shape (bwUiDraw) */
+.bw-stage:focus-visible { box-shadow: inset 0 0 0 2px color-mix(in srgb, #2563EB 50%, transparent); }
+.bw-stage.picking { cursor: crosshair; }
+.bw-stage img, .bw-stage canvas.screen { position: absolute; left: 0; top: 0; display: block; user-select: none; -webkit-user-drag: none; pointer-events: none; }
+.bw-stage .acting { position: absolute; border: 2px solid #E8590C; border-radius: 4px; pointer-events: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, #E8590C 22%, transparent); transition: all .15s ease-out; }
+.bw-stage .acting-label { position: absolute; left: 8px; bottom: 8px; max-width: calc(100% - 16px); padding: 4px 10px; border-radius: 999px;
+  background: #E8590C; color: #fff; font-size: 12px; font-weight: 600; pointer-events: none; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; box-shadow: 0 2px 8px rgba(0, 0, 0, .18); }
+.bw-stage .drag { position: absolute; border: 1.5px dashed #2563EB; background: color-mix(in srgb, #2563EB 10%, transparent); pointer-events: none; }
+.bw-stage .hint { position: absolute; left: 50%; top: 8px; transform: translateX(-50%); padding: 4px 12px; border-radius: 999px;
+  background: #2563EB; color: #fff; font-size: 12px; pointer-events: none; white-space: nowrap; }
+.bw-stage .cover { position: absolute; inset: 0; display: grid; place-items: center; align-content: center; gap: 8px;
+  background: var(--surface); color: var(--muted); font-size: 13px; text-align: center; padding: 20px; }
+.bw-stage .cover .err { color: var(--critical); max-width: 520px; overflow-wrap: anywhere; }
+.bw-stage .dialog { position: absolute; left: 50%; top: 18px; transform: translateX(-50%); width: min(420px, calc(100% - 24px));
+  box-sizing: border-box; display: grid; gap: 8px; padding: 12px 14px; border-radius: 10px; background: var(--surface); color: var(--ink);
+  border: 1px solid var(--grid); box-shadow: 0 8px 28px rgba(0, 0, 0, .22); font-size: 13px; }
+.bw-stage .dialog .lbl { color: var(--muted); font-size: 11.5px; }
+.bw-stage .dialog .msg { white-space: pre-wrap; overflow-wrap: anywhere; }
+.bw-stage .dialog input { font: inherit; padding: 4px 8px; border: 1px solid var(--grid); border-radius: 6px; background: var(--page); color: var(--ink); }
+.bw-stage .dialog .row { display: flex; gap: 6px; justify-content: flex-end; }
+.bw-stage .dialog { cursor: default; }
+/* what Chrome would show itself (bwUi): a tooltip, a list or menu, a download done, a file dropped on the page */
+.bw-stage.dropping::after { content: ""; position: absolute; inset: 0; border: 2px dashed #2563EB; pointer-events: none;
+  background: color-mix(in srgb, #2563EB 8%, transparent); }
+.bw-stage .tip { position: absolute; z-index: 3; max-width: min(360px, calc(100% - 8px)); box-sizing: border-box; padding: 4px 8px;
+  border-radius: 5px; background: #2b2b2b; color: #fff; font-size: 12px; line-height: 1.35; white-space: pre-wrap;
+  overflow-wrap: anywhere; pointer-events: none; box-shadow: 0 2px 8px rgba(0, 0, 0, .25); }
+.bw-stage .pop-native { position: absolute; opacity: 0; pointer-events: none; margin: 0; padding: 0; border: 0; font-size: 13px; }
+.bw-menu { position: absolute; z-index: 4; min-width: 200px; max-width: 340px; max-height: 60%; overflow-y: auto; box-sizing: border-box;
+  padding: 4px; border-radius: 8px; background: var(--surface); color: var(--ink); border: 1px solid var(--grid);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .22); font-size: 13px; cursor: default; }
+.bw-menu button { display: block; position: relative; width: 100%; box-sizing: border-box; text-align: left; border: 0; background: none;
+  color: inherit; font: inherit; padding: 5px 10px; border-radius: 5px; cursor: default; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; }
+.bw-menu button:hover:not([disabled]), .bw-menu button:focus-visible { background: var(--wash); outline: none; }
+.bw-menu button[disabled] { opacity: .45; }
+.bw-menu.list button { padding-left: 26px; }
+.bw-menu.list button.on::before { content: "✓"; position: absolute; left: 9px; }
+.bw-menu .grp { padding: 5px 10px 2px; color: var(--muted); font-size: 11.5px; font-weight: 600; }
+.bw-menu .note { color: var(--muted); margin-left: 10px; }
+.bw-menu.suggest { min-width: 120px; }
+.bw-menu hr { border: 0; border-top: 1px solid var(--ring); margin: 4px 2px; }
+.bw-menu.field { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 8px; }
+.bw-menu.field button { width: auto; color: #2563EB; }
+.bw-stage .dl { position: absolute; right: 10px; bottom: 10px; z-index: 3; display: flex; align-items: center; gap: 2px;
+  max-width: calc(100% - 20px); box-sizing: border-box; padding: 4px 4px 4px 12px; border-radius: 8px; background: var(--surface);
+  color: var(--ink); border: 1px solid var(--grid); box-shadow: 0 4px 16px rgba(0, 0, 0, .18); font-size: 12.5px; cursor: default; }
+.bw-stage .dl .nm { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; min-width: 0; }
+.bw-stage .dl button { flex: none; border: 0; background: none; color: #2563EB; font: inherit; padding: 3px 8px; border-radius: 5px; cursor: pointer; }
+.bw-stage .dl button:hover { background: var(--wash); }
+.bw-stage .dl .x { color: var(--muted); padding: 3px 6px; }
+.bw-bar .bw-find { flex: none; display: flex; align-items: center; gap: 1px; margin: 0 2px; padding: 0 2px 0 10px;
+  border: 1px solid var(--grid); border-radius: 999px; background: var(--page); }
+.bw-bar .bw-find input { width: 140px; flex: none; border: 0; border-radius: 0; background: none; padding: 3px 0; outline: none;
+  font: 12.5px/1.4 system-ui, -apple-system, sans-serif; }
+.bw-bar .bw-find input:focus { outline: none; }
+.bw-bar .bw-find .n { font-size: 11.5px; color: var(--muted); white-space: nowrap; padding: 0 4px; }
+.bw-bar .bw-find .n.none { color: var(--critical); }
+.bw-bar .bw-find button { width: 22px; height: 22px; }
+.bw-picks { display: flex; flex-wrap: wrap; gap: 4px; }
+.bw-picks:empty { display: none; }
+.bw-picks .pk { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding: 1px 4px 1px 8px; border-radius: 999px;
+  border: 1px solid color-mix(in srgb, #2563EB 40%, transparent); background: color-mix(in srgb, #2563EB 9%, transparent); font-size: 12px; }
+.bw-picks .pk .id { font: 600 11px ui-monospace, SFMono-Regular, Menlo, monospace; color: #2563EB; }
+.bw-picks .pk .nm { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; max-width: 320px; }
+.bw-picks .pk button { border: 0; background: none; color: var(--muted); cursor: pointer; padding: 0 4px; border-radius: 999px; }
+.bw-picks .pk button:hover { color: var(--ink); background: var(--wash); }
+.tx .bw-said { display: block; margin-top: 3px; color: var(--muted); font-size: 12px; }
+.dw-slot { position: absolute; inset: 0; }
+/* its frames, never moved (a frame moved loads again): laid over the slot of the view shown, else hidden -- running */
+.dw-page { position: fixed; border: 0; display: block; background: var(--page); z-index: 5; }
+.dw-page.off { visibility: hidden; pointer-events: none; left: 0; top: 0; width: 1px; height: 1px; }
+.side-btns { display: flex; gap: 6px; }
+.ed { display: flex; flex: 1; min-width: 0; min-height: 0; }
+.ed-tree { width: 250px; max-width: calc(100% - 300px); flex: none; overflow: auto; border-right: 1px solid var(--grid); padding: 6px 0 12px; font-size: 12.5px; }
+.ed-row { display: flex; align-items: center; gap: 5px; width: 100%; min-height: 23px; border: 0; border-radius: 0; background: none;
+  color: var(--ink); font: inherit; text-align: left; padding: 2px 10px; cursor: pointer; white-space: nowrap; }
+.ed-row:hover { background: var(--wash); }
+.ed-row.on { background: color-mix(in srgb, var(--s1) 16%, transparent); }
+.ed-row.dir { font-weight: 550; }
+.ed-row .chev { width: 10px; flex: none; color: var(--muted); font-size: 10px; }
+.ed-row .n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.ed-row .mk { flex: none; }
+.ed-row .mk.dirty { width: 7px; height: 7px; border-radius: 50%; background: var(--warning); }
+.ed-row .mk.fresh { width: 6px; height: 6px; border-radius: 50%; background: var(--s2); }
+.ed-row .mk.eds { font-size: 10.5px; color: var(--muted); border: 1px solid var(--ring); border-radius: 8px; padding: 0 5px; line-height: 14px; }
+.ed-note { color: var(--muted); font-size: 12px; padding: 2px 10px; } .ed-note.err { color: var(--critical); }
+.ed-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.ed-head { display: flex; align-items: center; gap: 6px 10px; flex-wrap: wrap; padding: 6px 12px; min-height: 40px;
+  border-bottom: 1px solid var(--grid); font-size: 12.5px; }
+.ed-path { font-family: var(--mono); font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ed-status { font-size: 11.5px; padding: 1px 8px; border-radius: 9px; background: var(--wash); color: var(--muted); white-space: nowrap; }
+.ed-status.ok { color: var(--good); } .ed-status.warn { color: var(--warning); } .ed-status.bad { color: var(--critical); white-space: normal; }
+.ed-changed { color: var(--muted); font-size: 12px; }
+.ed-changed::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--who, var(--s2));
+  margin-right: 6px; vertical-align: 1px; }
+.ed-people { display: flex; gap: 6px; margin-left: auto; align-items: center; flex-wrap: wrap; }
+.ed-person { font: inherit; font-size: 11.5px; padding: 1px 8px; border-radius: 10px; color: var(--ink);
+  border: 1px solid color-mix(in srgb, var(--who) 55%, transparent); background: color-mix(in srgb, var(--who) 14%, transparent); }
+button.ed-person { cursor: pointer; }
+.ed-hint { color: var(--muted); }
+.ed-auto { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); white-space: nowrap; cursor: pointer; }
+.ed-auto input { margin: 0; }
+.ed-wrap { border: 0; background: none; padding: 3px 5px; border-radius: 5px; color: var(--muted); cursor: pointer; display: inline-flex; }
+.ed-wrap:hover { background: var(--wash); color: var(--ink); }
+.ed-wrap.on { color: var(--s1); background: color-mix(in srgb, var(--s1) 14%, transparent); }
+.ed-body { flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--hl-bg); }
+.ed-body .cm-editor { flex: 1; min-height: 0; background: var(--hl-bg); color: var(--ink); font-size: 12.5px; }
+.ed-body .cm-editor.cm-focused { outline: none; }
+.ed-body .cm-scroller { font-family: var(--mono); line-height: 1.55; }
+.ed-body .cm-gutters { background: var(--hl-bg); color: var(--muted); border-right: 1px solid var(--grid); }
+.ed-body .cm-activeLine { background: color-mix(in srgb, var(--ink) 4%, transparent); }
+.ed-body .cm-activeLineGutter { background: color-mix(in srgb, var(--ink) 7%, transparent); color: var(--ink); }
+.ed-body .cm-cursor, .ed-body .cm-dropCursor { border-left-color: var(--ink); }
+.ed-body .cm-selectionLayer .cm-selectionBackground { background: color-mix(in srgb, var(--s1) 30%, transparent) !important; }
+.ed-body .cm-matchingBracket { background: color-mix(in srgb, var(--s1) 22%, transparent); outline: none; }
+.ed-body .cm-searchMatch { background: color-mix(in srgb, var(--s4) 30%, transparent); outline: none; }
+.ed-body .cm-panels { background: var(--surface); color: var(--ink); border-color: var(--grid); }
+.ed-body .cm-textfield { background: var(--surface); color: var(--ink); border: 1px solid var(--ring); border-radius: 4px; }
+.ed-body .cm-button { background: var(--wash); background-image: none; color: var(--ink); border: 1px solid var(--ring); border-radius: 4px; }
+.ed-body .cm-tooltip { background: var(--surface); color: var(--ink); border: 1px solid var(--ring); }
