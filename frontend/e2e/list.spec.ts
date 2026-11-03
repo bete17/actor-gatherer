@@ -66,6 +66,55 @@ test("the rail groups the actors by gatherer, names each, says who it is hovered
   await expect(actors).toHaveCount(2);
 });
 
+test("the rail starts a new actor in a gatherer: its harness picked beside the rail, its directory asked if it fails", async ({
+  page,
+}) => {
+  // the home as the server has it, but with two harnesses a session can be started on here, and its actors working in a
+  // directory (its stream held back, so the server's own home does not replace it)
+  await page.route("**/api/home", async (route) => {
+    const home = await (await route.fetch()).json();
+    for (const a of home.gatherers.find((x: { name: string }) => x.name === GATHERER).agents) a.cwd = "/work/demo";
+    home.harnesses = ["claude", "codex"];
+    for (const h of home.harnesses) home.harness_info[h] = { ...home.harness_info[h], runs: true };
+    await route.fulfill({ json: home });
+  });
+  await page.route("**/api/stream*", (route) => route.abort());
+  const asked: { gatherer: string; cwd: string; harness: string }[] = [];
+  await page.route("**/api/sessions", async (route) => {
+    asked.push(route.request().postDataJSON());
+    await route.fulfill({ status: 400, json: { error: "no directory /gone" } });
+  });
+  await open(page);
+  await page.locator("#agents .lb-fold").click();
+  const rail = page.locator("#rail");
+  const plus = rail.locator(".r-new");
+  await expect(plus).toHaveCount(1); // one for the one gatherer, under its name
+  await expect(plus).toHaveAttribute("aria-label", `New actor in ${GATHERER}`);
+  await plus.click();
+  const menu = page.locator(".row-menu[role=menu]");
+  await expect(menu).toBeVisible();
+  const [box, side] = [await menu.boundingBox(), await rail.boundingBox()];
+  expect(box!.x).toBeGreaterThanOrEqual(side!.x + side!.width); // beside the rail, not over it
+  await expect(menu.locator("[role=menuitem] .nm")).toHaveText(["Claude Code", "Codex"]);
+  await menu.getByRole("menuitem", { name: "Codex" }).click();
+  // started in the directory its newest actor works in; that failing, a box asks for one, saying why
+  await expect.poll(() => asked.length).toBe(1);
+  expect(asked[0]).toEqual({ gatherer: GATHERER, cwd: "/work/demo", harness: "codex" });
+  const ask = page.locator(".dw-menu[role=dialog]");
+  await expect(ask).toBeVisible();
+  await expect(ask).toContainText(`New actor in ${GATHERER}`);
+  await expect(ask.locator(".err")).toHaveText("no directory /gone");
+  await expect(ask.locator("input")).toHaveValue("/work/demo"); // the one tried
+  await ask.locator("input").fill("~/elsewhere");
+  await ask.getByRole("button", { name: "Claude Code" }).click();
+  await expect.poll(() => asked.length).toBe(2);
+  expect(asked[1]).toMatchObject({ gatherer: GATHERER, cwd: "~/elsewhere", harness: "claude" });
+  await expect(ask).toBeVisible(); // failed again: still open, for another try
+  await plus.click(); // pressed again: closed
+  await expect(ask).toBeHidden();
+  await expect(plus).toHaveAttribute("aria-expanded", "false");
+});
+
 test("shows every actor over the whole page", async ({ page }) => {
   await open(page);
   await page.locator("#agents .lb-full").click();

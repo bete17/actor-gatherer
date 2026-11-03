@@ -146,6 +146,15 @@ header .brand .list-btns { display: none; margin-left: -6px; }
 .rail .r-counts .count i { width: 6px; height: 6px; border-radius: 50%; background: var(--good); }
 .rail .r-counts .count.asking i { background: var(--warning); }
 .rail .r-counts .count.error i { background: var(--critical); }
+/* under its name, "+" and an actor's outline: a new actor in it (railNew); blinking while one starts */
+.rail .r-new { display: flex; align-items: center; justify-content: center; gap: 1px; height: 20px; padding: 0 8px; margin: 0 0 2px;
+  border: 0; border-radius: 6px; background: none; color: var(--muted); font: inherit; font-size: 13px; line-height: 1; cursor: pointer; flex: none; }
+.rail .r-new svg { display: block; pointer-events: none; }
+.rail .r-new:hover, .rail .r-new:focus-visible, .rail .r-new[aria-expanded="true"] { color: var(--ink); background: var(--wash); outline: none; }
+.rail .r-new:disabled { cursor: default; opacity: .45; }
+.rail .r-new:disabled:hover { color: var(--muted); background: none; }
+.rail .r-new.busy { opacity: 1; }
+.rail .r-new.busy svg { animation: term-blink 1s ease-in-out infinite; }
 /* its Saved or Closed, folded as the list folds them: the line that opens them, small */
 .rail .r-fold { border: 0; background: none; padding: 2px 4px; border-radius: 5px; color: var(--muted); font: inherit; font-size: 9.5px;
   white-space: nowrap; cursor: pointer; font-variant-numeric: tabular-nums; }
@@ -304,6 +313,7 @@ header .brand .list-btns { display: none; margin-left: -6px; }
   :root.list-folded .rail .r-gatherer { flex-direction: row; width: auto; padding: 0 4px 0 0; gap: 2px; }
   :root.list-folded .rail .r-gatherer + .r-gatherer { border-top: 0; border-left: 1px solid var(--grid); padding: 0 4px 0 6px; margin: 0; }
   :root.list-folded .rail .r-gname { width: auto; max-width: 64px; }
+  :root.list-folded .rail .r-new { align-self: center; margin: 0; padding: 0 5px; }
   :root.list-folded .rail .r-gname[aria-expanded="true"] .caret { display: inline; }
   :root.list-folded .rail .r-actor { width: auto; padding: 4px; }
   :root.list-folded .rail .r-name { display: none; }
