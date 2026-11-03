@@ -308,8 +308,10 @@ class EndpointTest(SessionsBase):
         with unittest.mock.patch.object(ClaudeCode, "record_path", lambda self, session, cwd=None, config=None: None):
             code, got = self.post({"gatherer": "g", "channel": sid, "name": "Keeper", "harness": "claude"})
         self.assertEqual((code, got["terminal"]), (200, True))
-        json.load(urllib.request.urlopen(self.url + "/api/home", timeout=20))     # a page's home: idle, so it is typed
-        self.until(lambda: "/rename Keeper" in "".join(x.get("typed", "") for x in self.logged()))
+        def typed():                       # a page's home, asked again as its stream is: once its terminal is up, the
+            json.load(urllib.request.urlopen(self.url + "/api/home", timeout=20))   # session is idle, and the name typed
+            return "/rename Keeper" in "".join(x.get("typed", "") for x in self.logged())
+        self.until(typed)
 
 
 if __name__ == "__main__":
