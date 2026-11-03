@@ -81,7 +81,7 @@ function renderFolded() {
 // folded as the list folds them, to a line here too that opens them (the one shown staying in view) -- and under its name, a
 // "+" starting a new actor in it (railNew). Each actor its avatar, its
 // status's dot at its corner, and its name in small under it; hovered (or in focus from the keys), a card beside the rail
-// says who it is (actorCard). A click shows it, as in the list.
+// says who it is (actorCard), and its bookmark and × show in its top corners. A click shows it, as in the list.
 function renderRail() {
   const shown = state.home.gatherers.filter((g) => !isHidden(g));
   const list = el("div", { class: "r-actors" });
@@ -152,7 +152,10 @@ function railActor(g, a) {
     ...(HOVERS.matches ? {} : { title: `${nm.text}\n${label} · ${ago(a.last)} · ${titleOf(g)}` }),
     onclick: (ev) => { cardHide(); pick(g.name, a.channel, ev); }, oncontextmenu: (ev) => pickBeside(g.name, a.channel, ev) },
     el("span", { class: "r-pic" }, actorLogo(a), el("i", { class: `rd ${cls}`, "aria-hidden": "true", style: `--spin-at: -${Date.now() % 1200}ms` })),
-    el("span", { class: "r-name" + (nm.cls === "none" ? " none" : ""), "aria-hidden": "true", text: nm.text }));
+    el("span", { class: "r-name" + (nm.cls === "none" ? " none" : ""), "aria-hidden": "true", text: nm.text }),
+    // the list's bookmark and × (saveButton, closeButton), in the corners over its avatar: shown while hovered, in focus or
+    // the one shown (a saved one's bookmark always, filled)
+    saveButton(g, a), closeButton(g, a));
 }
 // The card an actor shows while hovered, in the rail or the list (or in focus from the keys): its avatar and name, its
 // gatherer and harness, its directory, its status, when it last did something and its size, what it was last asked

@@ -353,32 +353,10 @@ function agentRow(g, a, group) {
       el("div", { class: "meta" }, el("span", { class: `dot ${cls}`, "aria-label": label, style: `--spin-at: -${Date.now() % 1200}ms` }),
         el("span", { ...(folder && group !== "Saved" ? { class: "when" } : {}),
           text: [size !== null && size !== undefined ? `${compact(size)} tokens` : null, ago(a.last)].filter(Boolean).join(" · ") }),
-        isCoordinator(a) && !SNAPSHOT ? el("span", { class: "save-btn", role: "button", tabindex: "0",     // not saved: hidden
-          title: "Hide the gatherer agent from the list: its face on the gatherer's row shows it again, and opens it",
-          "aria-label": "Hide the gatherer agent", onclick: (ev) => { ev.stopPropagation(); setCrewHidden(g.name, true); },
-          onkeydown: (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); ev.stopPropagation(); setCrewHidden(g.name, true); } } },
-          hideIcon())
-        : null,
         // its folder, where it is not listed in it: open, it is listed by its status
         folder && group !== "Saved" ? el("span", { class: "in-folder-chip", title: `Saved in the folder ${folder}: listed in it once closed` },
           folderMark(), el("span", { text: folder })) : null,
-        isCoordinator(a) && !SNAPSHOT ? null
-        : SNAPSHOT ? (saved ? el("span", { class: "save-btn on", title: folder ? `Saved for later, in the folder ${folder}` : "Saved for later" }, saveIcon(true)) : null)
-          : el("span", { class: "save-btn" + (saved ? " on" : ""), role: "button", tabindex: "0", "aria-pressed": saved ? "true" : "false",
-            title: saved ? `Saved for later${folder ? `, in the folder ${folder}` : ""}: click to unsave`
-              : "Save for later: once closed, kept under Saved, at the top of its gatherer (drag it onto one of its folders to put it there)",
-            "aria-label": saved ? "Unsave" : "Save for later", onclick: (ev) => { ev.stopPropagation(); setSaved(g.name, a, !saved); },
-            onkeydown: (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); ev.stopPropagation(); setSaved(g.name, a, !saved); } } },
-            saveIcon(saved)),
-        closable(a) ? el("span", { class: "close-btn", role: "button", tabindex: "0", title: "Close this session's process (the dashboard's agent or terminal), even mid-turn",
-          "aria-label": "Close session", onclick: (ev) => { ev.stopPropagation(); closeSession(a); },
-          onkeydown: (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); ev.stopPropagation(); closeSession(a); } } },
-          closeIcon())
-        : discardable(a) ? el("span", { class: "close-btn", role: "button", tabindex: "0",
-          title: "Close: it never started, so it goes from the list, and nothing of it is kept",
-          "aria-label": "Close session", onclick: (ev) => { ev.stopPropagation(); discardSession(g, a); },
-          onkeydown: (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); ev.stopPropagation(); discardSession(g, a); } } },
-          closeIcon()) : null,
+        saveButton(g, a), closeButton(g, a),
         !hasChat(a) ? null : a.chattable === false
           ? el("span", { class: "chat-icon held", title: "Open in another process: close it there to chat here" }, chatIcon(true))
           : el("span", { class: "chat-icon", title: a.session ? "Chat: started from the dashboard" : "Chat: can be messaged from the dashboard" }, chatIcon(false))),
@@ -386,6 +364,30 @@ function agentRow(g, a, group) {
       (a.background || []).length ? el("div", { class: "bgline", title: a.background.map((t) => `${TASK_KINDS[t.kind] || t.kind}: ${t.label || t.id}`).join("\n") },
         `${a.background.length} in background · ${a.background.map((t) => t.label || t.id).join(", ")}`) : null));
   return naming ? row : dragRow(row, g, a);
+}
+// An actor's own buttons, in its row of the list and over its avatar in the rail (railActor): a press on one does only
+// what it says, not showing the actor. A span the keys reach (its row a button already), Enter or Space pressing it.
+const rowButton = (cls, attrs, run, icon) => el("span", { class: cls, role: "button", tabindex: "0", ...attrs,
+  onclick: (ev) => { ev.stopPropagation(); run(); },
+  onkeydown: (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); ev.stopPropagation(); run(); } } }, icon);
+// Its bookmark: saved for later (filled), or to be, a press either way -- in a snapshot, filled if saved, and nothing to
+// press. The gatherer agent's, in its place: hidden from the list (its face on the gatherer's row shows it again).
+function saveButton(g, a) {
+  if (isCoordinator(a)) return SNAPSHOT ? null : rowButton("save-btn", { title: "Hide the gatherer agent from the list: its face on the gatherer's row shows it again, and opens it",
+    "aria-label": "Hide the gatherer agent" }, () => setCrewHidden(g.name, true), hideIcon());
+  const saved = !!savedAs(g.name, a), folder = saved ? folderOf(g.name, a) : null;
+  if (SNAPSHOT) return saved ? el("span", { class: "save-btn on", title: folder ? `Saved for later, in the folder ${folder}` : "Saved for later" }, saveIcon(true)) : null;
+  return rowButton("save-btn" + (saved ? " on" : ""), { "aria-pressed": saved ? "true" : "false",
+    title: saved ? `Saved for later${folder ? `, in the folder ${folder}` : ""}: click to unsave`
+      : "Save for later: once closed, kept under Saved, at the top of its gatherer (drag it onto one of its folders to put it there)",
+    "aria-label": saved ? "Unsave" : "Save for later" }, () => setSaved(g.name, a, !saved), saveIcon(saved));
+}
+// Its ×: its process closed (closable), or, one that never started, it discarded (discardable); null: neither.
+function closeButton(g, a) {
+  return closable(a) ? rowButton("close-btn", { title: "Close this session's process (the dashboard's agent or terminal), even mid-turn",
+      "aria-label": "Close session" }, () => closeSession(a), closeIcon())
+    : discardable(a) ? rowButton("close-btn", { title: "Close: it never started, so it goes from the list, and nothing of it is kept",
+      "aria-label": "Close session" }, () => discardSession(g, a), closeIcon()) : null;
 }
 // Naming an actor: its top line in the list, clicked once it is the one shown, becomes a box with its name in it;
 // Enter (or a press anywhere else in the page, or Tab away) keeps what is typed, Esc leaves it as it was, and nothing
