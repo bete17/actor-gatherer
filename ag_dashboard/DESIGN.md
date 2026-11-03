@@ -1,6 +1,6 @@
 # The dashboard on a standard stack: plan
 
-Status: A0–A3 built. A1's build step, the server serving it and `publish.yml` building it come with A3, the
+Status: A0–A4 built. A1's build step, the server serving it and `publish.yml` building it come with A3, the
 first step with something to build. It moves the
 dashboard to the tools most web front ends and Python APIs are built with now, in steps that keep it working.
 
@@ -189,8 +189,24 @@ Left open: the production build carries no source maps. `build.sourcemap` is set
 Checks: the browser tests pass against the screenshots taken of `page.html` (A0), now failing on any error thrown in
 the page; the page also runs under `vite` in development with no errors.
 
-**A4. React and the store.** The Zustand store is fed by `stream.ts`, and `legacy/` reads from it. The ESLint rules go
-in for the new code; `src/legacy/` stays outside them, as outside formatting, until it is gone.
+**A4. React and the store, and the first view in React: ag's settings.**
+- **How the two halves talk** (`src/bridge.ts`): the bridge runs first and sets `window.agNext`, which the old page
+  calls: it hands over the stream's home (`04-seen.js`'s `takeHome`) and asks for ag's settings (opening the panel,
+  Esc closing the config.toml dialog). The old page hands back `window.agLegacy` (`03-settings.js`): what the new
+  code calls of it (the panel opened or closed; whether this is a snapshot or a pane's frame). Both go when nothing
+  calls them.
+- **One stream.** The old page's stream stays the only one, and copies what it takes into the store
+  (`core/store`, Zustand). It moves into `core/api/stream.ts` with the shell (A6): until panes stop being frames, the
+  page around them streams for them, which is the old page's code.
+- **The first view:** ag's part of the dashboard's panel (the model, the defaults, the harnesses, Browser logins,
+  config.toml's dialog) is `features/settings/` now: a component drawn into the old panel's `#cfg`, its own Zustand
+  store for config.toml, its markup and classes as before so it looks the same. Its tests (`AgSettings.test.tsx`,
+  Testing Library) cover what each form sends and shows.
+- **The rules** (`eslint.config.js`): React's hooks rules, and eslint-plugin-boundaries: `core/` imports no feature,
+  a feature imports only `core/` and itself, and the app's own files (`main.ts`, `bridge.ts`) any. `src/legacy/`
+  stays outside lint and formatting until it is gone.
+- **One look changed, a fix:** the Browser logins' site picker showed, empty, before Chrome was read (its CSS
+  `display` overrode `hidden`); it shows once read now. The settings screenshot was taken again for it.
 
 **A5. The views in React, one PR each.** Each PR:
 - adds the view's Playwright specs if A0 didn't have them;
