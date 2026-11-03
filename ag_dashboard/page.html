@@ -4370,7 +4370,7 @@ async function show(g, c, view = null) {
   await select(g, c);
 }
 function setViewHere(id) {
-  chatViewId = id;
+  state.chatViewId = id;
   try { localStorage.setItem(CHAT_VIEW_KEY, id); } catch (e) { /* this page only */ }
 }
 function openBeside(g, c) {
@@ -4577,14 +4577,14 @@ if (!PANE && !SNAPSHOT) window.agPanes = Object.freeze({
 // In a frame: its URL says what it shows -- its actor and view -- so that loaded again it shows them still.
 function paneUrl() {
   const [g, c] = state.selected || [];
-  try { history.replaceState(null, "", "/?" + new URLSearchParams({ pane: "1", gatherer: g || "", channel: c || "", view: chatViewId })); }
+  try { history.replaceState(null, "", "/?" + new URLSearchParams({ pane: "1", gatherer: g || "", channel: c || "", view: state.chatViewId })); }
   catch (e) { /* stays as it was */ }
 }
 // In a frame: what the page around it can ask of it, and its word that it is up.
 function paneReady() {
   window.agPane = Object.freeze({
     take: (name, data) => streamTake(name, data),
-    select: (g, c, view) => { if (view) chatViewId = view; select(g, c); },
+    select: (g, c, view) => { if (view) state.chatViewId = view; select(g, c); },
     view: (id) => setChatView(id),
     theme: (pick) => setTheme(pick, false),
     avatar: (pick) => setAvatarMode(pick, false),
@@ -5466,13 +5466,13 @@ function chatCard(info) {
   let sending = false;
   refill(info, draft);
   // A message box kept from an earlier draw (`patch`) still calls the send it was drawn with: each send goes to the
-  // latest draw's (chatSend), which knows the session as it is now.
-  ctx.send = (t) => chatSend(t);
-  chatSend = async (t) => {
+  // latest draw's (state.chatSend), which knows the session as it is now.
+  ctx.send = (t) => state.chatSend(t);
+  state.chatSend = async (t) => {
     t = String(t ?? "").trim();
     if (dashboardCommand(t)) { const box = document.getElementById("composer-text"); if (box) { box.value = ""; fitBox(box); } keepDraft(draft, ""); return true; }
     if (!t || sending || held) return false;
-    sending = true; err.textContent = ""; sendFailed.delete(draft); interrupting = null;
+    sending = true; err.textContent = ""; sendFailed.delete(draft); state.interrupting = null;
     for (const n of document.querySelectorAll("[data-send]")) n.disabled = true;
     // a "/" command of the harness's own (dashboardCommand took the page's): what it does (a dialog, a report) is drawn
     // in the session's terminal, and may never come back as a message -- not shown pending; the terminal shown once
@@ -6884,7 +6884,7 @@ function notesSwitch() {
 // still work.
 const CHAT_VIEWS = new Map();
 const CHAT_VIEW_KEY = "ag-dashboard-chat-view";
-let chatViewId = (PANE && PANE_URL.get("view")) || (() => { try { return localStorage.getItem(CHAT_VIEW_KEY) || "files"; } catch (e) { return "files"; } })();
+state.chatViewId = (PANE && PANE_URL.get("view")) || (() => { try { return localStorage.getItem(CHAT_VIEW_KEY) || "files"; } catch (e) { return "files"; } })();
 // A DocWriter's actor (dwKey) opens in DocWriter's view each time it is selected; another picked for it (its Terminal,
 // say) lasts while it stays selected, apart from the other actors' choice. A view with `when(info)` is offered only to
 // the actors it says (DocWriter's, to theirs).
@@ -6897,7 +6897,7 @@ const offeredViews = () => [...CHAT_VIEWS.values()].filter((v) => offeredTo(v, s
   .sort((a, b) => (b.when ? 1 : 0) - (a.when ? 1 : 0));
 const chatView = () => {
   const info = selectedInfo(), kind = kindOf(info);
-  const v = CHAT_VIEWS.get(kind ? kindViewId[kind] : chatViewId);
+  const v = CHAT_VIEWS.get(kind ? kindViewId[kind] : state.chatViewId);
   return offeredTo(v, info) ? v : CHAT_VIEWS.get(kind && CHAT_VIEWS.has(KIND_VIEWS[kind]) ? KIND_VIEWS[kind] : "files");
 };
 async function setChatView(id) {
@@ -6906,7 +6906,7 @@ async function setChatView(id) {
   const kind = kindOf(selectedInfo());
   if (kind) kindViewId[kind] = id;                   // a DocWriter's, a Browser's actor: while it stays selected
   else {
-    chatViewId = id;
+    state.chatViewId = id;
     if (PANE) { paneUrl(); PANE.viewed(window, id); }  // a frame's: kept with its pane, not as every page's
     else try { localStorage.setItem(CHAT_VIEW_KEY, id); } catch (e) { /* this page only */ }
   }
@@ -7708,7 +7708,7 @@ const heardCount = (h, text) => [...h.stored, ...h.typed.filter((q) => !q.chat)]
 // actor's records hold one more message of its words than when it was sent (`base`) -- from then on, as they say.
 // One not seen for UNSEEN_MS says so.
 const sentHere = [], UNSEEN_MS = 15000;
-let chatSend = async () => false;                    // the message box's send, as the latest draw made it (chatCard)
+state.chatSend = async () => false;                    // the message box's send, as the latest draw made it (chatCard)
 const sendFailed = new Map();                         // per actor (its draft's key): why its last message was not sent
 // Whether the message Claude Code took back is in its input box untouched, as sessions.py's `took_back` reads it: what was
 // last typed into its terminal, the dashboard's, is the key that stopped the turn, after the call before (`since`).
@@ -7750,8 +7750,8 @@ function refill(info, draft) {
 }
 // Esc, as in the harness's own terminal: the agent's turn interrupted -- the key typed into the session's terminal, which
 // the dashboard runs. Only while it works or asks (an idle Claude Code takes Esc twice for its rewind; one starting, for
-// "No" to trusting its folder), and once a second. `interrupting`: the actor it was sent for, and when.
-let interrupting = null;
+// "No" to trusting its folder), and once a second. `state.interrupting`: the actor it was sent for, and when.
+state.interrupting = null;
 // Or a message sent from here into its terminal, pending: its turn under way before the dashboard has heard of it (the
 // key waits for the message's Enter: sessions.py's `type`) -- not into a terminal the message opened, which may ask
 // first whether to trust the folder, where Esc is "No".
@@ -7761,16 +7761,16 @@ const sentPending = (info) => !!state.selected && state.selected[1] === info.cha
   && sentHere.some((m) => m.ran && m.key === key(...state.selected) && Date.now() - m.at < UNSEEN_MS);
 function interrupt(info) {
   const k = state.selected && key(...state.selected);
-  if (!canInterrupt(info) || (interrupting && interrupting.key === k && Date.now() - interrupting.at < 1000)) return false;
-  interrupting = { key: k, at: Date.now() };
+  if (!canInterrupt(info) || (state.interrupting && state.interrupting.key === k && Date.now() - state.interrupting.at < 1000)) return false;
+  state.interrupting = { key: k, at: Date.now() };
   post("/api/terminal/input", { session_id: info.session.session_id, data: "\u001b" })
-    .catch((err) => { interrupting = null; setLive(`Not interrupted: ${err.message}`); });
+    .catch((err) => { state.interrupting = null; setLive(`Not interrupted: ${err.message}`); });
   keepingPlace(renderMain);
   return true;
 }
 const INTERRUPTING_MS = 10000;                      // "Interrupting…" shown at most this long, if the turn goes on
-const isInterrupting = () => !!interrupting && !!state.selected && interrupting.key === key(...state.selected)
-  && Date.now() - interrupting.at < INTERRUPTING_MS;
+const isInterrupting = () => !!state.interrupting && !!state.selected && state.interrupting.key === key(...state.selected)
+  && Date.now() - state.interrupting.at < INTERRUPTING_MS;
 // What waits to reach the agent, at the latest turn's end, faded: sent from here and not seen yet; in Claude Code's
 // queue; in the dashboard agent's queue. Not seen for long, with its terminal open: it may be asking something there
 // first (whether to trust the folder, on a new actor's first message), and the way to it.
@@ -7913,7 +7913,7 @@ function filesTalk(d, info, running) {
   for (const t of d.turns.slice(first)) {
     const on = t.n === d.turn;
     const live = running && !opens.length && t.n === d.turns.length - 1;
-    if (!live && t.n === d.turns.length - 1 && isInterrupting()) interrupting = null;   // its turn over: interrupted
+    if (!live && t.n === d.turns.length - 1 && isInterrupting()) state.interrupting = null;   // its turn over: interrupted
     // its messages, by their place in the turn (their ids keep it); thinking that is encrypted has nothing to read
     const said = (t.replies || []).map((r, i) => [r, i])
       .filter(([r]) => r.kind === "text" || NOTED[r.kind] || (r.kind === "thinking" && (r.texts || []).length));

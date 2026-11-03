@@ -1,6 +1,6 @@
 # The dashboard on a standard stack: plan
 
-Status: A0 and A1 built. A1's build step, the server serving it and `publish.yml` building it come with A3, the
+Status: A0, A1 and A2 built. A1's build step, the server serving it and `publish.yml` building it come with A3, the
 first step with something to build. It moves the
 dashboard to the tools most web front ends and Python APIs are built with now, in steps that keep it working.
 
