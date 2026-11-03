@@ -50,8 +50,31 @@
 .ed-exec.busy svg { animation: ed-pv-pulse .9s ease-in-out infinite alternate; }
 @keyframes ed-pv-pulse { from { opacity: .3; } to { opacity: 1; } }
 .ed-pv { flex: none; width: min(520px, 50%); max-width: calc(100% - 200px); min-height: 0; display: flex; flex-direction: column;
-  border-left: 1px solid var(--ring); background: var(--surface); }
+  border-left: 1px solid var(--ring); background: var(--surface); position: relative; }
 .ed-pv[hidden] { display: none; }
+.ed-pv-top { flex: none; }
+.ed-pv-edge { display: none; }
+/* over its result (a PDF, a page, an image): its head and command tucked away above it, the result the panel's whole
+   height. The pointer at the panel's top edge (a handle there while the pointer is over the panel) slides them down
+   over the result, and they go back up a moment after it leaves them; the keyboard in them keeps them down too. */
+.ed-pv.hov { overflow: hidden; }
+.ed-pv.hov > .ed-pv-edge { display: block; position: absolute; top: 0; left: 0; right: 0; height: 9px; z-index: 4; }
+.ed-pv.hov > .ed-pv-edge::after { content: ""; position: absolute; top: 3px; left: 50%; width: 38px; height: 4px; margin-left: -19px;
+  border-radius: 2px; background: color-mix(in srgb, var(--ink) 30%, transparent); opacity: 0; transition: opacity .15s; }
+.ed-pv.hov:hover > .ed-pv-edge::after { opacity: 1; }
+.ed-pv.hov > .ed-pv-top { position: absolute; top: 0; left: 0; right: 0; z-index: 5; background: var(--surface);
+  box-shadow: 0 3px 10px rgb(0 0 0 / .18); transform: translateY(calc(-100% - 14px)); transition: transform .16s ease .3s; }
+.ed-pv.hov > .ed-pv-edge:hover + .ed-pv-top, .ed-pv.hov > .ed-pv-top:hover, .ed-pv.hov > .ed-pv-top:focus-within {
+  transform: none; transition: transform .16s ease; }
+/* "Building…" over the one made before, while the next is: clicked, its output */
+.ed-pv-busy { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 3; display: inline-flex; align-items: center;
+  gap: 7px; padding: 4px 12px; border-radius: 14px; font-size: 12px; color: var(--ink); white-space: nowrap; cursor: pointer;
+  background: color-mix(in srgb, var(--surface) 94%, transparent); border: 1px solid var(--ring); box-shadow: 0 2px 10px rgb(0 0 0 / .2); }
+.ed-pv-busy::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--s1); flex: none;
+  animation: ed-pv-pulse .9s ease-in-out infinite alternate; }
+.ed-pv-busy .t { color: var(--muted); font-variant-numeric: tabular-nums; }
+.ed-pv-busy .o { color: var(--muted); padding-left: 7px; border-left: 1px solid var(--ring); }
+.ed-pv-busy:hover .o { color: var(--ink); }
 .ed-pv-h { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; padding: 4px 6px 4px 10px; min-height: 31px; box-sizing: border-box;
   border-bottom: 1px solid var(--ring); font-size: 12.5px; color: var(--ink-2); }
 .ed-pv-h .t { display: inline-flex; align-items: center; gap: 5px; font-weight: 600; color: var(--ink); flex: none; }
