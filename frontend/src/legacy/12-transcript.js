@@ -5,56 +5,15 @@
 const NOTES_KEY = "ag-dashboard-transcript-notes";
 let showNotes = (() => { try { return localStorage.getItem(NOTES_KEY) === "1"; } catch (e) { return false; } })();
 const RESULT_LINES = 4;                            // a result's lines shown before "+N lines"
-const mdCache = new Map();                         // a text's rendered markdown: the same text renders the same
-const escapeHtml = (t) => t.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-const markdownReady = typeof marked !== "undefined" && typeof DOMPurify !== "undefined";
-if (markdownReady) {
-  // raw HTML in a message is shown as the agent wrote it, not rendered; links open apart; code coloured (codeFence)
-  marked.use({ gfm: true, breaks: false, renderer: { html: ({ text }) => escapeHtml(text), code: ({ text, lang }) => codeFence(text, lang) } });
-  DOMPurify.addHook("afterSanitizeAttributes", (n) => { if (n.tagName === "A") { n.setAttribute("target", "_blank"); n.setAttribute("rel", "noopener noreferrer"); } });
-}
+// Text escaped for HTML, and markdown as the page draws a message (a harness's reply block in it as a card, `unplanned`
+// its words less the block's tags): src/core/ui/html.ts and md.ts (ag_dashboard/DESIGN.md, A5), reached through
+// src/bridge.ts's window.agNext.ui.
+function escapeHtml(t) { return window.agNext.ui.escapeHtml(t); }
 // Where each harness keeps its memory of a directory (harness_kit's `memory_folder`): [the folder's pattern, harness].
 const memoryFolders = () => Object.entries((state.home && state.home.harness_info) || {})
   .filter(([, h]) => h.memory_folder).map(([n, h]) => [new RegExp(`${h.memory_folder}$`), n]);
-// A block a harness's model writes in a reply that its own terminal draws apart (harness_kit's `reply_block`: codex's
-// proposed plan, between <proposed_plan> and </proposed_plan>), each tag on a line of its own (the closing one perhaps
-// not streamed yet). markdown() draws it as a card headed as the harness heads it. A tag in a sentence is only words.
-const reEscape = (s) => String(s).replace(/[.*+?^${}()|[\]\\\/]/g, "\\$&");
-let blocksOf = null, blocksFrom = null;
-function replyBlocks() {
-  const info = (state.home && state.home.harness_info) || {};
-  if (blocksFrom !== info) {
-    blocksFrom = info;
-    blocksOf = Object.values(info).map((h) => h.reply_block).filter((b) => b && b.open && b.close).map((b) => ({ ...b,
-      re: new RegExp(`^${reEscape(b.open)}[ \\t]*(?:\\r?\\n|$)([\\s\\S]*?)\\s*(?:^${reEscape(b.close)}[ \\t]*$|(?![\\s\\S]))`, "m"),
-      tags: new RegExp(`^(?:${reEscape(b.open)}|${reEscape(b.close)})[ \\t]*(?:\\r?\\n|$)`, "gm") }));
-  }
-  return blocksOf;
-}
-const unplanned = (t) => replyBlocks().reduce((s, b) => s.replace(b.tags, ""), String(t ?? ""));
-// `breaks`: each line break kept, for text written as lines rather than as markdown (a subagent's report)
-function markdown(text, breaks = false) {
-  const block = typeof text === "string" ? replyBlocks().find((b) => text.includes(b.open)) : null;
-  const plan = block ? block.re.exec(text) : null;
-  if (plan) {                                      // a harness's block: what is around it as it is, the block as a card
-    const before = text.slice(0, plan.index).trim(), after = text.slice(plan.index + plan[0].length).trim();
-    return el("div", { class: "md" }, ...[before && markdown(before, breaks),
-      el("div", { class: "proposed-plan" }, el("div", { class: "pp-head", text: block.title }), markdown(plan[1], breaks)),
-      after && markdown(after, breaks)].filter(Boolean));
-  }
-  const box = el("div", { class: "md" });
-  if (!markdownReady) { box.style.whiteSpace = "pre-wrap"; box.textContent = text; return box; }
-  const k = (breaks ? "\u0001" : "") + text;
-  let html = mdCache.get(k);
-  if (html === undefined) {
-    try { html = DOMPurify.sanitize(marked.parse(text, breaks ? { breaks: true } : undefined)); } catch (e) { html = escapeHtml(text); }
-    if (mdCache.size > 2000) mdCache.clear();
-    mdCache.set(k, html);
-  }
-  box.innerHTML = html;                            // sanitized by DOMPurify, raw HTML escaped before it
-  if (codeFolded.size) for (const b of box.querySelectorAll(".code-box[data-fold]")) if (codeFolded.has(b.dataset.fold)) foldCode(b, true);
-  return box;
-}
+function unplanned(...a) { return window.agNext.ui.unplanned(...a); }
+function markdown(...a) { return window.agNext.ui.markdown(...a); }
 const firstLine = (t, n = 160) => { const l = String(t ?? "").split("\n")[0]; return l.length > n ? l.slice(0, n) + "…" : l; };
 // a tool's output as lines, less the terminal's escape codes (colors, line clears) it may have printed
 const lines = (t) => (t ? String(t).replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, "").replace(/\n+$/, "").split("\n") : []);

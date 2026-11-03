@@ -66,7 +66,7 @@ function listButtons() {
 function drawListButtons() { document.getElementById("list-btns").replaceChildren(...listButtons().filter(Boolean)); }
 const leaveFull = () => setListMode(listFrom === "full" ? "list" : listFrom);
 document.addEventListener("keydown", (ev) => {        // first: Esc closes the settings first, if they are open
-  if (ev.key !== "Escape" || listMode !== "full" || !document.getElementById("about").hidden || !document.getElementById("cfg-file").hidden) return;
+  if (ev.key !== "Escape" || listMode !== "full" || !document.getElementById("about").hidden || window.agNext.settings.fileOpen()) return;
   ev.preventDefault();
   leaveFull();
 }, true);

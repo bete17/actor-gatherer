@@ -47,6 +47,7 @@ async function tellSeen(looked) {
 // Each actor's key, and what the reader has seen of a new home: what the server kept (everything, before
 // it kept any); the selected actor, while the page is visible.
 function takeHome(home) {
+  window.agNext.home(home);                        // the new code's store has it too (src/bridge.ts)
   for (const g of home.gatherers) for (const a of g.agents) {
     a.key = key(g.name, a.channel);
     if (dwKey(a)) a.last_user_message = dwAsked(a.last_user_message);
