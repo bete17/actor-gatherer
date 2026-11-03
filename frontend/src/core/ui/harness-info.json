@@ -1,0 +1,21 @@
+{
+  "claude": {
+    "reply_block": null
+  },
+  "codex": {
+    "reply_block": {
+      "open": "<proposed_plan>",
+      "close": "</proposed_plan>",
+      "title": "Proposed plan"
+    }
+  },
+  "antigravity": {
+    "reply_block": null
+  },
+  "pi": {
+    "reply_block": null
+  },
+  "opencode": {
+    "reply_block": null
+  }
+}
