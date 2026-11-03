@@ -339,6 +339,40 @@ class HookServerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(hook.failures, [(hook_server.HUNG_UP, hook_server.HUNG_UP_WHY)])
         self.assertEqual(hook.answers, [])
 
+    async def test_a_hook_still_running_when_the_harness_hangs_up_is_told_and_can_end_its_wait(self):
+        class Waiting(ToyHook):                              # as ag waits for the call's build
+            async def __call__(self, request):
+                request.state["kept"] = True
+                self.began = time.monotonic()
+                try:
+                    await asyncio.wait_for(self.stop.wait(), 10)
+                except asyncio.TimeoutError:
+                    pass
+                self.took = time.monotonic() - self.began
+                return await super().__call__(request)
+
+            async def hung_up(self, request):
+                self.told.append(time.monotonic() - self.began)
+                if len(self.told) == 2:                      # told again while it still runs
+                    self.stop.set()
+
+            async def failed(self, request, status, error):
+                self.failures.append((status, error))
+
+        hook, sent = Waiting(), []
+        hook.failures, hook.told, hook.stop = [], [], asyncio.Event()
+
+        async def upstream(request):
+            sent.append(await request.read())
+            return web.Response(text="{}")
+        await self._hang_up(hook, upstream, b"")
+        self.assertEqual(len(hook.told), 2)
+        self.assertLess(hook.told[0], 1)                     # within a look at the harness (WATCH_SECONDS)
+        self.assertGreaterEqual(hook.told[1] - hook.told[0], hook_server.TELL_AGAIN - 0.05)
+        self.assertLess(hook.took, 3)                        # not the 10 s it would have waited
+        self.assertEqual(sent, [])
+        self.assertEqual(hook.failures, [(hook_server.HUNG_UP, hook_server.HUNG_UP_WHY)])
+
     async def test_a_call_the_harness_hung_up_on_as_the_answer_came_is_broken_off_and_reported_stopped(self):
         class Kept(ToyHook):
             async def __call__(self, request):

@@ -617,7 +617,7 @@ const talkToEnd = () => { const n = document.querySelector("#main .fl-talk"); if
 function talkFeed(info, session, running, writable, held, afresh) {
   const h = heard(info), interrupts = canInterrupt(info);
   return { key: key(...state.selected), gatherer: state.selected[0], files: state.files, data: state.files.data,
-    picked: state.files.turn, home: state.home, info, session, running, status: statusOf(info)[0], writable, held,
+    picked: state.files.turn, home: state.home, info, session, running, status: turnStatus(info)[0], writable, held,
     canInterrupt: interrupts, interrupting: isInterrupting(), heard: h, mine: sentHereNow(h), sideFolded, earlierTurns,
     terminalView: CHAT_VIEWS.has("terminal"), afresh };
 }

@@ -13,7 +13,7 @@ function chatCard(info) {
     ? `Open in another process${info.holder ? ` (PID ${info.holder.pid})` : info.pid ? ` (PID ${info.pid})` : ""}: `
       + "close it there to message it here." : "";
   const data = feed.data() || { items: [], pending: [], earlier: false };
-  const ctx = { info, session: s, data, running: ["running", "building"].includes(statusOf(info)[0]), queued: s.queued || [], held, writable,
+  const ctx = { info, session: s, data, running: ["running", "building"].includes(turnStatus(info)[0]), queued: s.queued || [], held, writable,
     loadEarlier: async () => {                         // the view's "earlier" control: kept where the reader was
       if (!feed.loadEarlier) return;
       const n = document.getElementById("chat-list"), from = n ? n.scrollHeight - n.scrollTop : 0;
