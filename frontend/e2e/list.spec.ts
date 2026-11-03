@@ -1,6 +1,6 @@
 // The list of actors (page.html: "the agent list", "the list folded, or over the whole page").
 import { expect, test } from "./test";
-import { GATHERER, masks, open } from "./home";
+import { CLAUDE, CODEX, GATHERER, masks, open } from "./home";
 
 test("lists the gatherer's actors, each by its name alone: hovered, a card says who it is", async ({ page }) => {
   await open(page);
@@ -74,4 +74,156 @@ test("shows every actor over the whole page", async ({ page }) => {
   await expect(monitor).toContainText("Parser fixes");
   await expect(monitor).toContainText("Spawn one subagent");
   await expect(page).toHaveScreenshot("list-over-page.png", { mask: masks(page) });
+});
+
+test("lists a saved actor by its status while open, and under Saved once closed", async ({ page }) => {
+  // the home as the server has it, but both actors saved for later and the Codex one closed (its stream held back, so
+  // the server's own home, with neither, does not replace it)
+  let codexChannel = "";
+  await page.route("**/api/home", async (route) => {
+    const home = await (await route.fetch()).json();
+    const g = home.gatherers.find((x: { name: string }) => x.name === GATHERER);
+    const codex = g.agents.find((a: { harness?: string }) => a.harness === "codex");
+    codex.status = "closed";
+    codexChannel = codex.channel;
+    home.saved = {
+      [GATHERER]: Object.fromEntries(g.agents.map((a: { channel: string }) => [a.channel, "2026-10-01T00:00:00Z"])),
+    };
+    await route.fulfill({ json: home });
+  });
+  await page.route("**/api/stream*", (route) => route.abort());
+  await open(page);
+  const claude = page.locator("#agents button.agent", { hasText: CLAUDE });
+  await expect(claude).toBeVisible();
+  await expect(claude.locator(".save-btn.on")).toHaveCount(1); // still saved: its bookmark filled
+  // the open one among the idle (or finished), not under Saved; the closed one folded away under Saved: 1 there, of 2
+  const saved = page.locator("#agents .saved-line");
+  await expect(saved).toHaveText("▸ 1 of 2 saved");
+  const order = await page
+    .locator("#agents .gatherer")
+    .first()
+    .evaluate((box) =>
+      [...box.children].map((n) =>
+        n.matches(".agent-group") ? `[${n.textContent}]` : n.getAttribute("data-key") || "",
+      ),
+    );
+  const at = (key: string) => order.findIndex((x) => x === key || x.endsWith("/" + key));
+  expect(at("[Idle]") >= 0 || at("[Finished]") >= 0, order.join(" | ")).toBe(true);
+  const claudeKey = await claude.getAttribute("data-key");
+  expect(order.indexOf(claudeKey || "?"), order.join(" | ")).toBeGreaterThan(Math.max(at("[Idle]"), at("[Finished]")));
+  expect(codexChannel).not.toBe("");
+  await saved.click();
+  await expect(saved).toHaveText("▾ 1 of 2 saved");
+  const codexRow = page.locator(`#agents button.agent[data-key="${GATHERER}/${codexChannel}"]`);
+  await expect(codexRow).toBeVisible();
+});
+
+test("files saved actors in folders: made from the Saved line, filled by dragging, renamed and deleted", async ({
+  page,
+}) => {
+  await open(page);
+  type Home = {
+    gatherers: { name: string; agents: { harness?: string; channel: string }[] }[];
+    saved: Record<string, Record<string, string>>;
+    saved_folders: Record<string, Record<string, string[]>>;
+  };
+  const home = async () => (await (await page.request.get("/api/home")).json()) as Home;
+  const g = (await home()).gatherers.find((x) => x.name === GATHERER)!;
+  const channelOf = (harness: string) => g.agents.find((a) => a.harness === harness)!.channel;
+  const [claudeCh, codexCh] = [channelOf("claude"), channelOf("codex")];
+  const row = (text: string) => page.locator("#agents button.agent", { hasText: text });
+  const savedLine = page.locator("#agents .saved-line");
+  try {
+    await expect(savedLine).toHaveCount(0); // nothing saved, no folder: no Saved line
+    await row(CODEX).hover();
+    await row(CODEX).locator(".save-btn").click(); // the bookmark: saved, in no folder
+    await expect(savedLine).toHaveText("▸ 0 of 1 saved"); // idle: listed among the idle still, counted in all
+    await expect(row(CODEX).locator(".save-btn.on")).toHaveCount(1);
+    await savedLine.hover();
+    await savedLine.locator(".folder-act.new").click();
+    await expect(savedLine).toContainText("▾ 0 of 1 saved");
+    const box = page.locator("#agents .folder-box");
+    await box.fill("  Paper   revisions ");
+    await box.press("Enter");
+    const folder = page.locator("#agents .folder-line", { hasText: "Paper revisions" });
+    await expect(folder.locator(".n")).toHaveText("empty");
+    await expect(savedLine).toContainText("▾ 0 of 1 saved · 1 folder");
+    await expect.poll(async () => (await home()).saved_folders).toEqual({ [GATHERER]: { "Paper revisions": [] } });
+
+    await row(CLAUDE).dragTo(folder); // saved, and in it
+    await expect(row(CLAUDE).locator(".in-folder-chip")).toHaveText("Paper revisions"); // open: listed by its status
+    await expect(folder.locator(".n")).toHaveText("0 of 1"); // none of it listed there, of 1 in it
+    await expect(savedLine).toContainText("▾ 0 of 2 saved");
+    await expect
+      .poll(async () => (await home()).saved_folders)
+      .toEqual({ [GATHERER]: { "Paper revisions": [claudeCh] } });
+    expect(Object.keys((await home()).saved[GATHERER]).sort()).toEqual([claudeCh, codexCh].sort());
+
+    await folder.hover();
+    await folder.locator(".folder-act.rename").click();
+    await box.fill("Drafts");
+    await box.press("Enter");
+    await expect(page.locator("#agents .folder-line", { hasText: "Drafts" })).toBeVisible();
+    await expect(row(CLAUDE).locator(".in-folder-chip")).toHaveText("Drafts");
+    await expect.poll(async () => (await home()).saved_folders).toEqual({ [GATHERER]: { Drafts: [claudeCh] } });
+
+    await row(CLAUDE).dragTo(savedLine); // out of its folder, still saved
+    await expect(row(CLAUDE).locator(".in-folder-chip")).toHaveCount(0);
+    await expect(row(CLAUDE).locator(".save-btn.on")).toHaveCount(1);
+    await expect.poll(async () => (await home()).saved_folders).toEqual({ [GATHERER]: { Drafts: [] } });
+
+    const drafts = page.locator("#agents .folder-line", { hasText: "Drafts" });
+    await drafts.hover();
+    await drafts.locator(".folder-act.delete").click();
+    await expect(page.locator("#agents .folder-line")).toHaveCount(0);
+    await expect.poll(async () => (await home()).saved_folders).toEqual({}); // none left
+
+    // held over the Saved line while folded, it opens, for the folder in it to be dropped on
+    await page.request.post("/api/saved/folders", { data: { gatherer: GATHERER, do: "new", name: "Later" } });
+    await savedLine.click(); // folded
+    await expect(savedLine).toContainText("▸ 0 of 2 saved · 1 folder");
+    await row(CODEX).hover();
+    await page.mouse.down();
+    const at = await savedLine.boundingBox();
+    await page.mouse.move(at!.x + 30, at!.y + at!.height / 2, { steps: 4 });
+    await expect(savedLine).toContainText("▾ 0 of 2 saved", { timeout: 3000 });
+    const later = page.locator("#agents .folder-line", { hasText: "Later" });
+    const to = await later.boundingBox();
+    await page.mouse.move(to!.x + 40, to!.y + to!.height / 2, { steps: 4 });
+    await page.mouse.up();
+    await expect(row(CODEX).locator(".in-folder-chip")).toHaveText("Later");
+    await expect.poll(async () => (await home()).saved_folders).toEqual({ [GATHERER]: { Later: [codexCh] } });
+  } finally {
+    for (const c of [claudeCh, codexCh])
+      await page.request.post("/api/saved", { data: { gatherer: GATHERER, channel: c, saved: false } });
+    const left = ((await home()).saved_folders || {})[GATHERER] || {};
+    for (const name of Object.keys(left))
+      await page.request.post("/api/saved/folders", { data: { gatherer: GATHERER, do: "delete", name } });
+  }
+});
+
+test("lists a closed saved actor in its folder, folded till opened", async ({ page }) => {
+  await page.route("**/api/home", async (route) => {
+    const home = await (await route.fetch()).json();
+    const g = home.gatherers.find((x: { name: string }) => x.name === GATHERER);
+    const codex = g.agents.find((a: { harness?: string }) => a.harness === "codex");
+    codex.status = "closed";
+    home.saved = { [GATHERER]: { [codex.channel]: "2026-10-01T00:00:00Z" } };
+    home.saved_folders = { [GATHERER]: { Paper: [codex.channel], Empty: [] } };
+    await route.fulfill({ json: home });
+  });
+  await page.route("**/api/stream*", (route) => route.abort());
+  await open(page);
+  const savedLine = page.locator("#agents .saved-line");
+  await expect(savedLine).toHaveText("▸ 1 of 1 saved · 2 folders");
+  await savedLine.click();
+  const lines = page.locator("#agents .folder-line");
+  await expect(lines).toHaveText([/Empty\s*empty/, /Paper\s*1 of 1/]); // by name
+  const codexRow = page.locator("#agents button.agent.in-folder", { hasText: CODEX });
+  const isOpen = await codexRow.count(); // the first actor is shown, so in view under its folded folder
+  await lines.filter({ hasText: "Paper" }).click();
+  await expect(codexRow).toBeVisible();
+  await expect(codexRow.locator(".in-folder-chip")).toHaveCount(0); // listed in it: not named again
+  await lines.filter({ hasText: "Paper" }).click();
+  await expect(codexRow).toHaveCount(isOpen);
 });

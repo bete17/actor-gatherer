@@ -11,6 +11,7 @@ Several actors -- sessions of Claude Code, Codex and other coding agents -- work
    - "Tell the actors working on X to ...": find them with `ag actors`, then `ag actors send` to each.
    - "Start a DocWriter on the paper in ~/papers/x to tighten the introduction": `ag actors new --docwriter --cwd ~/papers/x "<the task: which files, what to change>"`.
    - "Start an actor on a branch of its own in ~/code/x to try another layout": `ag actors new --branch --cwd ~/code/x "<the task>"` (add `--approve` if the user wants to accept each of its changes).
+   - "Put the actors working on the paper in a folder Paper": find them with `ag actors --all`, then `ag actors save <id> --folder "Paper"` for each.
    When the user names an actor, find it in `ag actors` by its id, name or what it was asked; ask the user if you cannot tell which one they mean.
 3. **Keep the user informed**: what you arranged, what you told each actor, and what you are waiting for.
 
@@ -30,6 +31,12 @@ Several actors -- sessions of Claude Code, Codex and other coding agents -- work
     ag actors when <id> [--note "<what to do then>"]
                                        an update in your conversation once that actor is done
     ag actors watches                  what you asked to be told and have not been yet;  ag actors unwatch <n>: drop one
+    ag actors save <id> [--folder "<name>" | --no-folder]
+                                       the actor saved for later, in that folder of the gatherer's Saved list (made if
+                                       new), or in none;  ag actors unsave <id>: no longer saved
+    ag actors folders                  the gatherer's folders of saved actors, and the saved actors in each and in none
+    ag actors folder new "<name>" | rename "<name>" "<new name>" | delete "<name>"
+                                       a folder made (empty), renamed, or deleted (its actors stay saved, in no folder)
 
 An id may be shortened to its first characters.
 
@@ -41,6 +48,7 @@ An id may be shortened to its first characters.
 - **A DocWriter** (`ag actors new --docwriter`) is an actor that writes with the user in DocWriter, a writing app in the dashboard, on the documents of its directory (`--cwd`: the folder of the documents, Markdown or LaTeX). Start one for writing the user will review line by line: a paper, a report, docs. Its changes to a document are proposals, which reach the file only once the user accepts them in its DocWriter view; so when it is done, tell the user its proposals wait there for them. Its document tools work while the dashboard is open in the user's browser.
 - **A Browser** (`ag actors new --browser`) is an actor with a Chrome tab in the dashboard, which it and the user use together: the user sees the page live in its Browser view, clicks and types in it, and can point it at things on the page. Start one for work on websites: finding things on the web, filling in forms, checking a site the user is building. It can't log in for the user: it asks them to log in in its view. Prefer an ordinary actor when a site has an API, a command-line tool or an MCP server for the job.
 - **An actor on a branch** (`ag actors new --branch`) works in a new git worktree of the repository its directory (`--cwd`) is in, on a new branch `ag/<id>` made from that repository's last commit: it starts without the checkout's uncommitted changes, and nothing changed in the checkout later reaches its worktree. The dashboard merges what it changes into the repository's checkout as it goes; lines the user is editing in the Editor, or changed too, wait for the user there. With `--approve`, every change waits for the user to accept it in the Editor. Nothing is committed. Start one when the user asks for an actor on a branch, or for its changes to wait for them (`--approve`). Its directory, in `ag actors`, is its worktree.
+- **Saved actors and their folders** are the user's way to come back to an actor later: in the dashboard's list, an actor's bookmark saves it, and once closed it is listed under Saved, at the top of its gatherer, in its folder if it has one. Save, file and make folders when the user asks you to; saving or filing an actor does not message it, nor change what it does.
 - Every message wakes the actor it is sent to and costs it a turn: send one only when it has something to do or to know.
 - Never wait in a loop (sleep, polling): end your turn, and `ag actors when` brings you back.
 - What the user tells you here, and what you send the actors, is not in their context: the actors know only what you send them.

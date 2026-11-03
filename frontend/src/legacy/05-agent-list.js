@@ -74,9 +74,9 @@ async function setHidden(g, hide) {
   renderAgents();
 }
 // Actors saved for later, kept by the server (saved.py, `home.saved`: {gatherer: {channel: when}}) so every
-// dashboard on this home shows the same. One saved is listed under Saved in its gatherer while it has nothing
-// for the reader (so not running, waiting or finished), not with the idle or closed ones, and keeps its
-// gatherer from being hidden for having had nothing for a week. The channel it was saved as: a codex
+// dashboard on this home shows the same. One saved is listed under Saved in its gatherer once it is closed, not
+// with the closed ones; while open it is listed by its status (idle among the idle), its bookmark filled. It keeps
+// its gatherer from being hidden for having had nothing for a week. The channel it was saved as: a codex
 // session's, renamed to its thread since, its first.
 const savedAs = (gname, a) => {
   const kept = (state.home.saved || {})[gname] || {};
@@ -87,12 +87,86 @@ async function setSaved(gname, a, save) {
   const kept = { ...((state.home.saved || {})[gname] || {}) };
   if (save) kept[channel] = new Date().toISOString(); else delete kept[channel];
   state.home.saved = { ...(state.home.saved || {}), [gname]: kept };
+  if (!save) folderGuess(gname, (_, mine) => { for (const n of Object.keys(mine)) mine[n] = mine[n].filter((c) => c !== channel); });
   renderAgents();
   if (SNAPSHOT) return;                            // a snapshot has no server: this page only
   try { state.home.saved = await post("/api/saved", { gatherer: gname, channel, saved: save }); }
   catch (err) { setLive(`Not saved: ${err.message}`); }
   renderAgents();
 }
+// The folders of a gatherer's saved actors, kept by the server till deleted, empty or not (saved.py,
+// `home.saved_folders`: {gatherer: {folder: [the channels in it, as saved]}}). A saved actor is in one or in none:
+// once closed, it is listed in it under Saved -- each folder a fold of its own, folded till opened, kept in this
+// browser -- and while open, by its status, its folder named beside its bookmark. An actor is put in one by
+// dragging its row onto the folder's line (saved too, if it was not), and out of it onto the Saved line; the bookmark
+// saves one in none. A folder is made from the Saved line, renamed and deleted from its own (deleted, its actors stay
+// saved, in none) -- and all of it by the gatherer agent too (`ag actors save --folder`, `ag actors folder`).
+const FOLDER_CHARS = 60;
+const foldersOf = (gname) => (state.home.saved_folders || {})[gname] || {};
+const byName = (x, y) => x.localeCompare(y, undefined, { sensitivity: "base" }) || (x < y ? -1 : x > y ? 1 : 0);
+const folderNames = (gname) => Object.keys(foldersOf(gname)).sort(byName);
+const sameFolder = (mine, name) => Object.keys(mine).find((n) => n.toLowerCase() === String(name).toLowerCase());
+function folderOf(gname, a) {
+  const key = savedAs(gname, a), mine = foldersOf(gname);
+  return key ? Object.keys(mine).find((n) => mine[n].includes(key)) || null : null;
+}
+const FOLDERS_KEY = "ag-dashboard-folders-shown";
+const foldersShown = (() => {
+  try { const v = JSON.parse(localStorage.getItem(FOLDERS_KEY)); if (Array.isArray(v)) return new Set(v); } catch (e) { /* none kept */ }
+  return new Set();
+})();
+const folderKey = (gname, name) => `${gname}\u0000${String(name).toLowerCase()}`;
+function showFolder(gname, name, open) {
+  const k = folderKey(gname, name);
+  if (open) foldersShown.add(k); else foldersShown.delete(k);
+  try { localStorage.setItem(FOLDERS_KEY, JSON.stringify([...foldersShown])); } catch (e) { /* kept for this page only */ }
+}
+function toggleFolder(gname, name) {
+  showFolder(gname, name, !foldersShown.has(folderKey(gname, name)));
+  renderAgents();
+}
+// the page's own copy changed as the server will change it (`change(saved of the gatherer, its folders)`), so the
+// list shows it at once; the server's answer, or the next home, has the last word
+function folderGuess(gname, change) {
+  const saved = structuredClone(state.home.saved || {}), folders = structuredClone(state.home.saved_folders || {});
+  change(saved[gname] = saved[gname] || {}, folders[gname] = folders[gname] || {});
+  state.home.saved = saved; state.home.saved_folders = folders;
+}
+async function folderPost(gname, body, change) {
+  const before = [state.home.saved, state.home.saved_folders];
+  folderGuess(gname, change);
+  renderAgents();
+  if (SNAPSHOT) return;                            // a snapshot has no server: this page only
+  try {
+    const got = await post("/api/saved/folders", { gatherer: gname, ...body });
+    state.home.saved = got.saved; state.home.saved_folders = got.folders;
+  } catch (err) {
+    [state.home.saved, state.home.saved_folders] = before;
+    setLive(`Not done: ${err.message}`);
+  }
+  renderAgents();
+}
+// the actor saved, in `folder` (null: in none)
+function fileActor(gname, a, folder) {
+  const key = savedAs(gname, a) || a.channel;
+  return folderPost(gname, { do: "file", channel: key, name: folder || "" }, (saved, mine) => {
+    if (!saved[key]) saved[key] = new Date().toISOString();
+    for (const n of Object.keys(mine)) mine[n] = mine[n].filter((c) => c !== key);
+    if (folder) (mine[sameFolder(mine, folder) || folder] ||= []).push(key);
+  });
+}
+const makeFolder = (gname, name) => folderPost(gname, { do: "new", name }, (_, mine) => { if (!sameFolder(mine, name)) mine[name] = []; });
+function renameFolder(gname, name, to) {
+  if (foldersShown.has(folderKey(gname, name))) { showFolder(gname, name, false); showFolder(gname, to, true); }
+  return folderPost(gname, { do: "rename", name, to }, (_, mine) => {
+    const was = sameFolder(mine, name), other = sameFolder(mine, to);
+    if (!was || (other && other !== was)) return;
+    const list = mine[was];
+    delete mine[was];
+    mine[to] = list;
+  });
+}
+const deleteFolder = (gname, name) => folderPost(gname, { do: "delete", name }, (_, mine) => { delete mine[sameFolder(mine, name)]; });
 // Choices this browser kept before the server did: handed to the server once, then dropped here.
 async function moveHidingToServer() {
   let v = null;
@@ -110,7 +184,8 @@ async function moveHidingToServer() {
 // above the closed actors (SHELLS). The rail (renderRail) has them so too.
 function listGroups(g) {
   const crew = g.agents.find(isCoordinator);
-  const groups = GROUPS.map((name) => [name, g.agents.filter((a) => a !== crew && groupOf(g, a) === name)]).filter(([, list]) => list.length);
+  const groups = GROUPS.map((name) => [name, g.agents.filter((a) => a !== crew && groupOf(g, a) === name)])
+    .filter(([name, list]) => list.length || (name === "Saved" && hasSaved(g)));   // Saved: with its folders, if none in it
   for (const [name, list] of groups) if (name === "Closed") list.sort((x, y) => (y.last || 0) - (x.last || 0));
   keepOrder(g.name, groups);
   const shells = (state.home.shells || []).filter((s) => s.gatherer === g.name);
@@ -129,10 +204,12 @@ function gathererCounts(g) {
 }
 function renderAgents() {
   if (PANE) return;                                  // a frame has no list: the page around it has
+  if (listDrag && !listDrag.force) { listDrag.later = true; return; }   // an actor dragged: once it is over
   renderFolded();
   const aside = document.getElementById("agents");
   const was = listPlaces(aside);
   const typing = nameInput && document.activeElement === nameInput && [nameInput.selectionStart, nameInput.selectionEnd];
+  const folderTyping = folderInput && document.activeElement === folderInput && [folderInput.selectionStart, folderInput.selectionEnd];
   nameMoving = true;                                 // taken out and put back: not a blur that names it
   document.getElementById("home").textContent = document.getElementById("home").title = state.home.home;
   const shown = state.home.gatherers.filter((g) => !isHidden(g)), hidden = state.home.gatherers.filter(isHidden);
@@ -171,6 +248,7 @@ function renderAgents() {
         for (const s of shown ? list : []) box.append(shellRow(g, s));
         continue;
       }
+      if (name === "Saved") { box.append(...savedSection(g, list)); continue; }
       if (name in FOLD_KEYS) {
         const shown = foldOpen[name].has(g.name), what = name.toLowerCase();
         const selected = list.filter((a) => openActors().some((sel) => isAt(sel, g.name, a.channel)));
@@ -200,6 +278,12 @@ function renderAgents() {
   nameMoving = false;
   if (state.renaming && !(nameInput && nameInput.isConnected)) { state.renaming = null; nameInput = null; }   // its row folded away
   else if (typing) { nameInput.focus({ preventScroll: true }); nameInput.setSelectionRange(...typing); }
+  if (state.folderEdit && !(folderInput && folderInput.isConnected)) { state.folderEdit = null; folderInput = null; }   // folded away
+  else if (folderTyping) { folderInput.focus({ preventScroll: true }); folderInput.setSelectionRange(...folderTyping); }
+  if (listDrag) {                                    // drawn again mid-drag: the row dragged, still shown as it
+    const row = aside.querySelector(`[data-key="${CSS.escape(`${listDrag.g}/${listDrag.c}`)}"]`);
+    if (row) row.classList.add("dragging");
+  }
   const servers = state.home.hook_servers || [];     // in the dashboard's panel (the header's button)
   document.getElementById("servers").textContent = servers.length
     ? servers.map((s) => `:${s.port} → ${s.upstream}`).join("\n") : "None running.";
@@ -238,7 +322,7 @@ const crewLine = (env) => env.from === "update" ? `${env.name || `Actor ${crewId
 const isCoordinator = (a) => !!a && a.role === "coordinator";
 function agentRow(g, a, group) {
   const [cls, label] = statusOf(a);
-  const saved = !!savedAs(g.name, a);
+  const saved = !!savedAs(g.name, a), folder = saved ? folderOf(g.name, a) : null;
   const current = isAt(focusedActor(), g.name, a.channel);
   const open = !current && openActors().some((sel) => isAt(sel, g.name, a.channel));
   const size = a.real_tokens ?? a.sent_tokens;
@@ -249,7 +333,7 @@ function agentRow(g, a, group) {
     onclick: (ev) => { if (ev.metaKey || ev.ctrlKey || ev.shiftKey) return; ev.stopPropagation(); startRename(g, a); } };
   const env = envelope(a.last_user_message);         // a message from another actor: who from, and its words
   const asked = env ? crewLine(env) : a.last_user_message;
-  return el(naming ? "div" : "button", { class: "agent" + (naming ? " renaming" : "") + (isCoordinator(a) ? " coordinator" : ""),
+  const row = el(naming ? "div" : "button", { class: "agent" + (naming ? " renaming" : "") + (isCoordinator(a) ? " coordinator" : ""),
     ...(naming ? {} : { type: "button" }),
     "aria-current": current ? "true" : "false", "data-key": `${g.name}/${a.channel}`, "data-group": group,
     ...(open ? { "data-open": "true" } : {}), ...(naming ? {} : { "data-card": key(g.name, a.channel) }),
@@ -267,15 +351,22 @@ function agentRow(g, a, group) {
         text: named || (asked ? firstLine(asked, 200) : isCoordinator(a) ? "Coordinates this gatherer's actors" : "No message yet") }),
       // the list is drawn again on every change: the glyph's turn set by the clock, not restarted each time
       el("div", { class: "meta" }, el("span", { class: `dot ${cls}`, "aria-label": label, style: `--spin-at: -${Date.now() % 1200}ms` }),
-        el("span", { text: [size !== null && size !== undefined ? `${compact(size)} tokens` : null, ago(a.last)].filter(Boolean).join(" · ") }),
+        el("span", { ...(folder && group !== "Saved" ? { class: "when" } : {}),
+          text: [size !== null && size !== undefined ? `${compact(size)} tokens` : null, ago(a.last)].filter(Boolean).join(" · ") }),
         isCoordinator(a) && !SNAPSHOT ? el("span", { class: "save-btn", role: "button", tabindex: "0",     // not saved: hidden
           title: "Hide the gatherer agent from the list: its face on the gatherer's row shows it again, and opens it",
           "aria-label": "Hide the gatherer agent", onclick: (ev) => { ev.stopPropagation(); setCrewHidden(g.name, true); },
           onkeydown: (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); ev.stopPropagation(); setCrewHidden(g.name, true); } } },
           hideIcon())
-        : SNAPSHOT ? (saved ? el("span", { class: "save-btn on", title: "Saved for later" }, saveIcon(true)) : null)
+        : null,
+        // its folder, where it is not listed in it: open, it is listed by its status
+        folder && group !== "Saved" ? el("span", { class: "in-folder-chip", title: `Saved in the folder ${folder}: listed in it once closed` },
+          folderMark(), el("span", { text: folder })) : null,
+        isCoordinator(a) && !SNAPSHOT ? null
+        : SNAPSHOT ? (saved ? el("span", { class: "save-btn on", title: folder ? `Saved for later, in the folder ${folder}` : "Saved for later" }, saveIcon(true)) : null)
           : el("span", { class: "save-btn" + (saved ? " on" : ""), role: "button", tabindex: "0", "aria-pressed": saved ? "true" : "false",
-            title: saved ? "Saved for later: click to unsave" : "Save for later: kept under Saved, at the top of its gatherer",
+            title: saved ? `Saved for later${folder ? `, in the folder ${folder}` : ""}: click to unsave`
+              : "Save for later: once closed, kept under Saved, at the top of its gatherer (drag it onto one of its folders to put it there)",
             "aria-label": saved ? "Unsave" : "Save for later", onclick: (ev) => { ev.stopPropagation(); setSaved(g.name, a, !saved); },
             onkeydown: (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); ev.stopPropagation(); setSaved(g.name, a, !saved); } } },
             saveIcon(saved)),
@@ -294,6 +385,7 @@ function agentRow(g, a, group) {
       branchChip(g, a),
       (a.background || []).length ? el("div", { class: "bgline", title: a.background.map((t) => `${TASK_KINDS[t.kind] || t.kind}: ${t.label || t.id}`).join("\n") },
         `${a.background.length} in background · ${a.background.map((t) => t.label || t.id).join(", ")}`) : null));
+  return naming ? row : dragRow(row, g, a);
 }
 // Naming an actor: its top line in the list, clicked once it is the one shown, becomes a box with its name in it;
 // Enter (or a press anywhere else in the page, or Tab away) keeps what is typed, Esc leaves it as it was, and nothing
@@ -374,6 +466,160 @@ async function endRename(keep) {
   }
   redrawNamed();
 }
+// A gatherer's Saved section: its line ("N saved · K folders", folded till opened, as Closed is) -- shown while the
+// gatherer has an actor saved, open or closed, or a folder -- then, opened, its folders, each a line of its own with its
+// actors under it once opened, then the saved actors in none. Folded, the ones open in a pane stay in view. The Saved
+// line takes an actor dropped on it out of its folder; a folder's line, into it; each opens when one is held over it.
+const hasSaved = (g) => Object.keys(foldersOf(g.name)).length > 0 || g.agents.some((a) => !isCoordinator(a) && savedAs(g.name, a))
+  || !!(state.folderEdit && state.folderEdit.g === g.name);
+function savedSection(g, list) {
+  const shown = foldOpen.Saved.has(g.name), mine = foldersOf(g.name), names = folderNames(g.name);
+  const inPane = (a) => openActors().some((sel) => isAt(sel, g.name, a.channel));
+  // counted: those listed here (closed) of every one saved, those still open (listed by their status) too
+  const all = g.agents.filter((a) => !isCoordinator(a) && savedAs(g.name, a));
+  const label = `${shown ? "▾" : "▸"} ${all.length ? `${list.length} of ${all.length} saved` : "Saved"}`
+    + `${names.length ? ` · ${plural(names.length, "folder")}` : ""}`;
+  const out = [dropOn(el("button", { class: "agent-group saved-line", type: "button", "aria-expanded": shown ? "true" : "false",
+    "data-key": `${g.name}/Saved`, title: `${shown ? "Hide" : "Show"} saved actors: ${savedCount(list.length, all.length)}`,
+    onclick: () => toggleFold("Saved", g.name) },
+    el("span", { class: "label", text: label }),
+    SNAPSHOT ? null : folderAct("new", "New folder", strokeIcon(ICONS.folderNew, 13), () => startFolderEdit(g.name))),
+  g, null, () => !shown && toggleFold("Saved", g.name))];
+  const by = new Map(names.map((n) => [n, []])), loose = [], inAll = new Map(names.map((n) => [n, 0]));
+  for (const a of all) { const f = folderOf(g.name, a); if (inAll.has(f)) inAll.set(f, inAll.get(f) + 1); }
+  for (const a of list) { const f = folderOf(g.name, a); (f && by.has(f) ? by.get(f) : loose).push(a); }
+  if (!shown) return [...out, ...list.filter(inPane).map((a) => agentRow(g, a, "Saved"))];
+  const edit = state.folderEdit && state.folderEdit.g === g.name ? state.folderEdit : null;
+  if (edit && edit.name === null)
+    out.push(el("div", { class: "agent-group folder-line editing", "data-key": `${g.name}/folder\u0000new` }, folderMark(), folderBox()));
+  for (const n of names) {
+    const open = foldersShown.has(folderKey(g.name, n)), xs = by.get(n);
+    out.push(edit && edit.name === n
+      ? el("div", { class: "agent-group folder-line editing", "data-key": `${g.name}/folder\u0000${n}` }, folderMark(), folderBox())
+      : folderLine(g, n, xs.length, inAll.get(n), open));
+    for (const a of open ? xs : xs.filter(inPane)) { const row = agentRow(g, a, "Saved"); row.classList.add("in-folder"); out.push(row); }
+  }
+  return [...out, ...loose.map((a) => agentRow(g, a, "Saved"))];
+}
+const folderMark = () => el("span", { class: "folder-mark", "aria-hidden": "true" }, strokeIcon(ICONS.folder, 13));
+// a small button on a line: a span, as a line is a button already
+const folderAct = (cls, title, icon, fn) => el("span", { class: `folder-act ${cls}`, role: "button", tabindex: "0", title, "aria-label": title,
+  onclick: (ev) => { ev.stopPropagation(); fn(); },
+  onkeydown: (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); ev.stopPropagation(); fn(); } } }, icon);
+// "N listed here (closed), of M saved in it: K still open, listed by their status"
+const savedCount = (n, m) => !m ? "none" : `${n} listed here (closed), of ${m} in all`
+  + (m > n ? `: ${m - n} still open, listed by ${m - n === 1 ? "its" : "their"} status` : "");
+// a folder's line: `n` of its actors listed in it (closed), of `m` in it in all
+function folderLine(g, name, n, m, open) {
+  return dropOn(el("button", { class: "agent-group folder-line", type: "button", "aria-expanded": open ? "true" : "false",
+    "data-key": `${g.name}/folder\u0000${name}`, title: `${name}: ${m ? savedCount(n, m) : "empty"}`
+      + `${SNAPSHOT ? "" : "\nDrag an actor here to put it in"}`, onclick: () => toggleFolder(g.name, name) },
+    el("span", { class: "caret", text: open ? "▾" : "▸" }), folderMark(), el("span", { class: "fname", text: name }),
+    el("span", { class: "n", text: m ? `${n} of ${m}` : "empty" }),
+    SNAPSHOT ? null : folderAct("rename", `Rename the folder ${name}`, strokeIcon(ICONS.pencil, 13), () => startFolderEdit(g.name, name)),
+    SNAPSHOT ? null : folderAct("delete", `Delete the folder ${name}: its actors stay saved, in no folder`, closeIcon(), () => deleteFolder(g.name, name))),
+  g, name, () => { if (!open) toggleFolder(g.name, name); });
+}
+// Naming a folder, new (`state.folderEdit.name` null) or not: a box in its line, kept through the list's redraws as the
+// actor's is (`folderInput`, `nameMoving`); Enter or leaving it keeps what is typed, Esc or nothing typed leaves it.
+let folderInput = null;
+function startFolderEdit(gname, name = null) {
+  state.folderEdit = { g: gname, name, value: name || "" };
+  folderInput = null;
+  if (!foldOpen.Saved.has(gname)) toggleFold("Saved", gname); else renderAgents();
+  if (folderInput) { folderInput.focus(); folderInput.select(); }
+}
+function folderBox() {
+  if (folderInput) return folderInput;
+  const f = state.folderEdit;
+  folderInput = el("input", { class: "name-box folder-box", type: "text", maxlength: String(FOLDER_CHARS), spellcheck: "false",
+    autocomplete: "off", placeholder: "Folder name", "aria-label": f.name === null ? "The new folder's name" : `Rename the folder ${f.name}` });
+  folderInput.value = f.value;
+  folderInput.addEventListener("input", () => { f.value = folderInput.value; });
+  folderInput.addEventListener("keydown", (ev) => {
+    ev.stopPropagation();                            // the page's own keys are not this box's
+    if (ev.key === "Enter" && !ev.isComposing) { ev.preventDefault(); endFolderEdit(true); }
+    else if (ev.key === "Escape") { ev.preventDefault(); endFolderEdit(false); }
+  });
+  folderInput.addEventListener("blur", () => { if (!nameMoving && document.hasFocus() && state.folderEdit === f) endFolderEdit(true); });
+  return folderInput;
+}
+function endFolderEdit(keep) {
+  const f = state.folderEdit;
+  if (!f) return;
+  state.folderEdit = null; folderInput = null;
+  const text = f.value.replace(/\s+/g, " ").trim().slice(0, FOLDER_CHARS);
+  if (!keep || !text || text === f.name) { renderAgents(); return; }
+  const other = sameFolder(foldersOf(f.g), text);
+  if (other && (f.name === null || other.toLowerCase() !== f.name.toLowerCase())) {
+    setLive(`There is a folder "${other}" already`);
+    renderAgents();
+    return;
+  }
+  if (f.name === null) makeFolder(f.g, text); else renameFolder(f.g, f.name, text);
+}
+// Dragging an actor's row onto a folder's line, or the Saved line (dropOn): `listDrag`, the actor dragged, of its gatherer
+// only. While one is, the list is not drawn again (`later`, drawn once it is over) -- but to open the fold held over for
+// DROP_OPEN_MS (`force`) -- so the lines stay under the pointer. Over when its row says (dragend), or, its row drawn again
+// meanwhile, once the page has heard of the drag for DRAG_LOST_MS no more.
+let listDrag = null;
+const DROP_OPEN_MS = 700, DRAG_LOST_MS = 3000;
+function dragRow(row, g, a) {
+  if (SNAPSHOT || isCoordinator(a)) return row;
+  row.draggable = true;
+  row.addEventListener("dragstart", (ev) => {
+    if (listDrag) endDrag();
+    listDrag = { g: g.name, c: a.channel, later: false, force: false, seen: Date.now(), spring: null,
+      watch: setInterval(() => { if (listDrag && Date.now() - listDrag.seen > DRAG_LOST_MS) endDrag(); }, 500) };
+    ev.dataTransfer.effectAllowed = "move";
+    ev.dataTransfer.setData("text/plain", a.channel);
+    row.classList.add("dragging");
+  });
+  row.addEventListener("dragend", endDrag);
+  return row;
+}
+function endDrag() {
+  const d = listDrag;
+  if (!d) return;
+  listDrag = null;
+  clearTimeout(d.spring); clearInterval(d.watch);
+  for (const n of document.querySelectorAll("#agents :is(.dragging, .drop-on)")) n.classList.remove("dragging", "drop-on");
+  if (d.later) renderAgents();
+}
+document.addEventListener("dragover", () => { if (listDrag) listDrag.seen = Date.now(); }, true);
+document.addEventListener("drop", () => { if (listDrag) setTimeout(endDrag, 0); }, true);   // anywhere: after the line's own
+// `folder`: the folder it puts an actor in (null: none, still saved); `open`, what opens when one is held over it
+function dropOn(n, g, folder, open) {
+  if (SNAPSHOT) return n;
+  const mine = () => !!listDrag && listDrag.g === g.name;
+  n.addEventListener("dragenter", (ev) => {
+    if (!mine()) return;
+    ev.preventDefault();
+    n.classList.add("drop-on");
+    clearTimeout(listDrag.spring);
+    listDrag.spring = setTimeout(() => {
+      if (!mine()) return;
+      listDrag.force = true;
+      try { open(); } finally { if (listDrag) listDrag.force = false; }
+    }, DROP_OPEN_MS);
+  });
+  n.addEventListener("dragover", (ev) => { if (mine()) { ev.preventDefault(); ev.dataTransfer.dropEffect = "move"; } });
+  n.addEventListener("dragleave", (ev) => {
+    if (n.contains(ev.relatedTarget)) return;
+    n.classList.remove("drop-on");
+    if (listDrag) clearTimeout(listDrag.spring);
+  });
+  n.addEventListener("drop", (ev) => {
+    if (!mine()) return;
+    ev.preventDefault();
+    const c = listDrag.c, a = (state.home.gatherers.find((x) => x.name === g.name) || { agents: [] }).agents.find((x) => x.channel === c);
+    listDrag.later = false;                          // drawn by the filing, next
+    endDrag();
+    if (a && (folder ? folderOf(g.name, a) !== folder : folderOf(g.name, a) || !savedAs(g.name, a))) fileActor(g.name, a, folder);
+    else renderAgents();
+  });
+  return n;
+}
 // A shell's row (isShell): where it was opened, and when; its close button closes its terminal, as a window's does.
 const SHELLS = "Terminals";
 function shellRow(g, s) {
@@ -399,7 +645,7 @@ async function closeShell(s) {
   catch (err) { setLive(`Not closed: ${err.message}`); }
 }
 // The group an actor is listed under: those waiting on the user first, then those stopped on an error, then saved for later
-// (idle or closed, saved by the reader), then running, then those whose turn is over but something they started still runs,
+// (closed, saved by the reader: one saved but still open is listed by its status), then running, then those whose turn is over but something they started still runs,
 // then finished (not yet looked at), then idle, then closed; in the list, each in the order the data has them, newest created
 // first, so an actor stays in its place, and moves only between them -- but closed, the latest active first: nothing moves
 // there once closed
@@ -408,7 +654,7 @@ const BY_STATUS = { "Waiting for you": "Waiting for you", Error: "Error", Failed
   Starting: "Running", Background: "Background", Finished: "Finished", Closed: "Closed" };
 function groupOf(g, a) {
   const by = BY_STATUS[statusOf(a)[1]] || "Idle";
-  return (by === "Idle" || by === "Closed") && savedAs(g.name, a) ? "Saved" : by;
+  return by === "Closed" && savedAs(g.name, a) ? "Saved" : by;
 }
 // each group's mark, as the list marks its actors
 const GROUP_CLS = { "Waiting for you": "asking", Error: "error", Running: "running", Background: "background", Finished: "finished",

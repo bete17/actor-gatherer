@@ -123,3 +123,34 @@ button:disabled { opacity: .5; cursor: default; }
 @media (hover: none) { .agent .save-btn { opacity: 1; } }
 .agent .save-btn.on { color: var(--s1); }
 .agent .save-btn:hover, .agent .save-btn:focus-visible { color: var(--s1); background: var(--surface); }
+/* saved actors' folders: the Saved line's "new folder", each folder's line -- its rename and delete shown while hovered,
+   as the gatherer row's -- its actors set in under it; a line an actor is dragged over, marked; the row dragged, faint */
+.agent-group.saved-line, .agent-group.folder-line { display: flex; align-items: center; gap: 6px; }
+.agent-group.saved-line .label { flex: 1 1 auto; min-width: 0; }
+.agent-group.folder-line { text-transform: none; letter-spacing: 0; font-size: 12px; font-weight: 600; color: var(--ink-2);
+  padding: 5px 14px 3px 44px; min-height: 26px; box-sizing: border-box; }
+.agent-group.folder-line .caret { width: 10px; flex: none; color: var(--muted); }
+.agent-group.folder-line .folder-mark { display: inline-flex; color: var(--muted); flex: none; }
+.agent-group.folder-line .fname { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-group.folder-line .n { flex: 1 0 auto; color: var(--muted); font-weight: 500; font-variant-numeric: tabular-nums; }
+.agent-group.folder-line.editing { padding-top: 2px; padding-bottom: 2px; }
+.agent-group.folder-line .folder-box { flex: 1 1 auto; min-width: 0; width: auto; margin: 0; font-size: 12px; padding: 2px 6px; }
+.folder-act { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 18px; border-radius: 4px;
+  color: var(--muted); cursor: pointer; opacity: 0; flex: none; }
+:is(.saved-line, .folder-line):is(:hover, :focus-visible) .folder-act, .folder-act:focus-visible { opacity: 1; }
+.saved-line[aria-expanded="true"] .folder-act.new { opacity: 1; }
+@media (hover: none) { .folder-act { opacity: 1; } }
+.folder-act:hover, .folder-act:focus-visible { color: var(--ink); background: var(--surface); }
+.folder-act.delete:hover, .folder-act.delete:focus-visible { color: var(--critical); }
+.agent.in-folder { margin-left: 22px; width: calc(100% - 30px); }
+.agent .in-folder-chip { display: inline-flex; align-items: center; gap: 3px; min-width: 0; flex: 0 1 auto; max-width: 7.5em; color: var(--muted);
+  font-size: 11px; margin-left: auto; }
+.agent .in-folder-chip svg { flex: none; }
+.agent .meta .when { white-space: nowrap; }       /* beside a folder's name: that is cut short, not this */
+.agent .in-folder-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent .in-folder-chip + .save-btn { margin-left: 0; }
+.agent-group.drop-on { color: var(--ink); background: color-mix(in srgb, var(--s1) 14%, transparent); border-radius: 6px;
+  outline: 1.5px dashed color-mix(in srgb, var(--s1) 70%, transparent); outline-offset: -2px; }
+.agent.dragging { opacity: .45; }
+.m-folder { display: flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; color: var(--ink-2); padding: 6px 4px 2px; }
+.m-folder svg { color: var(--muted); flex: none; }

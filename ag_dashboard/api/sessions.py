@@ -146,7 +146,16 @@ def actors_op(crew: coordination.Coordination, op: str, body: dict):
         return crew.watches(me)
     if op == "unwatch":
         return crew.unwatch(me, body.get("watch"))
-    raise coordination.CoordinationError(f"no `ag actors {op}`: one of list, show, who, send, new, when, watches, unwatch")
+    if op == "save":
+        return crew.save(me, s("ref"), opt("folder"), bool(body.get("unfiled")))
+    if op == "unsave":
+        return crew.unsave(me, s("ref"))
+    if op == "folders":
+        return crew.folders(me)
+    if op == "folder":
+        return crew.folder(me, s("do"), s("name"), s("to"))
+    raise coordination.CoordinationError(f"no `ag actors {op}`: one of list, show, who, send, new, when, watches, unwatch, "
+                                         "save, unsave, folders, folder")
 
 
 @router.post("/api/actors/{op:path}")
@@ -155,5 +164,6 @@ def actors(srv: Parts, op: str, body: Body) -> Response:
     error's text for the command to print (400).
 
     list {all?}, show {ref}, who {path}, send {ref, text}, new {text, cwd?, harness?, model?, like?, name?,
-    <app>? (apps.py: docwriter?, browser?), branch?, approve?}, when {ref, note?}, watches, unwatch {watch}."""
+    <app>? (apps.py: docwriter?, browser?), branch?, approve?}, when {ref, note?}, watches, unwatch {watch},
+    save {ref, folder?, unfiled?}, unsave {ref}, folders, folder {do: new | rename | delete, name, to?}."""
     return answer(actors_op(srv.crew, op, body))

@@ -1334,6 +1334,52 @@ class EndpointTest(SessionsBase):
         self.assertEqual(self.post("/api/saved", {"gatherer": "g", "channel": "c3", "saved": True}, {"Origin": "https://evil.example"})[0], 403)
         self.post("/api/saved", {"gatherer": "g", "channel": "c2", "saved": False})
 
+    def test_saved_actors_are_put_in_folders_kept_till_deleted(self):
+        folders = lambda body: self.post("/api/saved/folders", body)       # noqa: E731
+        self.assertEqual(json.load(urllib.request.urlopen(self.url + "/api/home", timeout=10))["saved_folders"], {})
+        code, kept = folders({"gatherer": "g", "do": "new", "name": "  Paper   revisions "})
+        self.assertEqual((code, kept), (200, {"saved": {}, "folders": {"g": {"Paper revisions": []}}}))   # empty, kept
+        code, kept = folders({"gatherer": "g", "do": "file", "channel": "c1", "name": "paper REVISIONS"})   # its case
+        self.assertEqual((code, list(kept["saved"]["g"]), kept["folders"]), (200, ["c1"], {"g": {"Paper revisions": ["c1"]}}))
+        code, kept = folders({"gatherer": "g", "do": "file", "channel": "c2", "name": "Ideas"})    # a new one: made
+        self.assertEqual(kept["folders"]["g"], {"Ideas": ["c2"], "Paper revisions": ["c1"]})
+        self.post("/api/saved", {"gatherer": "g", "channel": "c3", "saved": True})               # the bookmark: in none
+        self.assertEqual(saved.folders()["g"], {"Ideas": ["c2"], "Paper revisions": ["c1"]})
+        self.post("/api/saved", {"gatherer": "g", "channel": "c1", "saved": True})               # saved again: stays in it
+        self.assertEqual(saved.folders()["g"]["Paper revisions"], ["c1"])
+        code, kept = folders({"gatherer": "g", "do": "file", "channel": "c1", "name": ""})       # out of its folder
+        self.assertEqual((kept["folders"]["g"], sorted(kept["saved"]["g"])), ({"Ideas": ["c2"], "Paper revisions": []}, ["c1", "c2", "c3"]))
+        code, kept = folders({"gatherer": "g", "do": "rename", "name": "ideas", "to": "Later"})
+        self.assertEqual(kept["folders"]["g"], {"Later": ["c2"], "Paper revisions": []})
+        self.assertEqual(folders({"gatherer": "g", "do": "rename", "name": "Later", "to": "paper revisions"}),
+                         (400, {"error": 'there is a folder "Paper revisions" in g already'}))
+        self.assertEqual(folders({"gatherer": "g", "do": "rename", "name": "Later", "to": "later"})[1]["folders"]["g"],
+                         {"later": ["c2"], "Paper revisions": []})                                # its case, changed
+        self.post("/api/saved", {"gatherer": "g", "channel": "c2", "saved": False})              # unsaved: out of it
+        self.assertEqual(saved.folders()["g"], {"later": [], "Paper revisions": []})
+        folders({"gatherer": "g", "do": "file", "channel": "c3", "name": "later"})
+        code, kept = folders({"gatherer": "g", "do": "delete", "name": "LATER"})
+        self.assertEqual((kept["folders"]["g"], sorted(kept["saved"]["g"])), ({"Paper revisions": []}, ["c1", "c3"]))  # still saved
+        self.assertEqual(data.home([])["saved_folders"], {"g": {"Paper revisions": []}})        # snapshots carry them too
+        self.assertEqual(folders({"gatherer": "g", "do": "delete", "name": "Nope"}), (400, {"error": 'no folder "Nope" in g'}))
+        self.assertEqual(folders({"gatherer": "g", "do": "new", "name": "  "}), (400, {"error": "which folder? Give it a name"}))
+        self.assertEqual(folders({"gatherer": "", "do": "new", "name": "x"})[0], 400)
+        self.assertEqual(folders({"gatherer": "g", "do": "frob", "name": "x"})[0], 400)
+        self.assertEqual(folders({"gatherer": "g", "do": "new", "name": "x"})[0], 200)
+        self.assertEqual(self.post("/api/saved/folders", {"gatherer": "g", "do": "new", "name": "y"}, {"Origin": "https://evil.example"})[0], 403)
+        self.assertEqual(sorted(saved.folders()["g"]), ["Paper revisions", "x"])
+
+    def test_a_saved_table_from_before_folders_is_given_them(self):
+        os.makedirs(os.path.dirname(sessions.db_path()), exist_ok=True)
+        conn = sqlite3.connect(sessions.db_path())
+        conn.execute("CREATE TABLE saved (gatherer TEXT NOT NULL, channel TEXT NOT NULL, at TEXT NOT NULL, PRIMARY KEY (gatherer, channel))")
+        conn.execute("INSERT INTO saved VALUES ('g', 'c1', '2026-10-25T00:00:00+00:00')")
+        conn.commit()
+        conn.close()
+        self.assertEqual((saved.stored(), saved.folders()), ({"g": {"c1": "2026-10-25T00:00:00+00:00"}}, {}))
+        self.assertEqual(saved.file("g", "c1", "Old")["folders"], {"g": {"Old": ["c1"]}})
+        self.assertEqual(saved.stored(), {"g": {"c1": "2026-10-25T00:00:00+00:00"}})            # kept from when it was first
+
     def test_a_session_that_never_started_closed_from_the_list_is_listed_no_more(self):
         sid = self.post("/api/sessions", {"gatherer": "g", "cwd": self.work})[1]["session_id"]
         self.post("/api/saved", {"gatherer": "g", "channel": sid, "saved": True})
