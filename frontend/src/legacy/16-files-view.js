@@ -346,20 +346,18 @@ function filesRender({ info, session, running, writable, held }) {
   const d = state.files && state.files.data;
   const asking = errorNote(info) || askingNote(info) || answeredNote(info);
   if (!d) return [el("div", { class: "desc", style: "padding: 10px 16px", text: SNAPSHOT ? "A snapshot has no files: run `ag dashboard` live to see them." : "Loading…" }), asking].filter(Boolean);
-  if (!d.turns.length) {                             // the first message: pending, sent from here; or sent, its turn begun
-    const h = heard(info), opens = openings(h), first = opens.length ? null : pendingTalk(info, h);
-    if (opens.length) return [el("div", { class: "fl-talk" }, ...opens.flatMap((q, i) => openedTurn(info, q, i === opens.length - 1, h))), asking];
-    // none yet: the actor waving hello, saying its line (or that there is none yet) -- under the first message while it
-    // waits to reach the agent
-    const says = writable && !held && session.status !== "starting" && info.avatar && info.avatar_hello;
-    return [el("div", { class: "fl-talk hi", "data-morph": "" }, first && el("div", { class: "fl-turn" }, first),
-      el("div", { class: "fl-hello", "data-morph": "" }, greeting(info), first ? null : says ? helloLine(info.avatar_hello)
-        : el("div", { text: session.status === "starting" ? "Starting the agent…" : writable && !held ? "No messages yet. Write one below." : "No messages yet." }))),
-      asking].filter(Boolean);
-  }
   // the view opened afresh (from another view, or the page's first draw): the conversation and the
   // commands start where they would for a new turn -- the commands at their end, the conversation at its end or at the turn picked
-  if (!document.querySelector("#main .files .fl-grid")) cmdsShown = talkShown = null;
+  const afresh = !document.querySelector("#main .files .fl-grid");
+  // the conversation, at the right: drawn by the new code (src/features/chat/) into a node of the actor's own, the same
+  // from draw to draw (agNext.chat.draw) -- before its first turn is stored, all there is (the first message: pending,
+  // sent from here; or sent, its turn begun; or none yet, the actor waving hello)
+  const talk = window.agNext.chat.draw(talkFeed(info, session, running, writable, held, afresh), CHAT_HOST);
+  if (!d.turns.length) return [talk, asking].filter(Boolean);
+  // its node, drawn before its first turn was stored at the frame's top, goes into the grid now: taken out first, so
+  // patch() does not look for it at the top once the grid has taken it in (fill)
+  if (talk.parentElement && !talk.parentElement.classList.contains("fl-right")) talk.remove();
+  if (afresh) cmdsShown = null;
   const t = d.turns[d.turn];
   const cwd = (info.cwd || "").replace(/\/$/, "");
   const home = (d.home || "").replace(/\/$/, "");
@@ -473,9 +471,12 @@ function filesRender({ info, session, running, writable, held }) {
     filesBackground(info));
   // the file view only while a file is picked: the files and the conversation have the page until then
   const pane = sel ? el("div", { class: "fl-pane", "data-keep": "files-pane" }, fileView(sel, rel, `fl-${d.turn}-${d.files.indexOf(sel)}`)) : null;
-  // patched in place to the note (data-morph): what is typed in it keeps its focus as the page draws again
-  return el("div", { class: "fl-grid" + (sel ? " open" : "") + (sideFolded ? " folded" : ""), "data-morph": "" }, side, pane,
-    el("div", { class: "fl-right", "data-morph": "" }, filesTalk(d, info, running), asking));
+  // patched in place to the note (data-morph): what is typed in it keeps its focus as the page draws again; the
+  // conversation's node held apart (`kids`, as the chat frame's), so building this does not take it from the page: patch()
+  // finds it where it is, and leaves it there
+  const right = el("div", { class: "fl-right", "data-morph": "" });
+  right.kids = [talk, asking].filter(Boolean);
+  return el("div", { class: "fl-grid" + (sel ? " open" : "") + (sideFolded ? " folded" : ""), "data-morph": "" }, side, pane, right);
 }
 let cmdsShown = null;
 // What runs in the background, under the commands: a section folded to its heading (openBackground), opened to
@@ -501,18 +502,9 @@ function filesBackground(info) {
           ": ", el("span", { text: t.event })) : null,
         meta("writes to", t.output, "p"))))));
 }
-// The conversation, at the right: each of the user's messages a turn, at the right, and under it the agent's:
-// its last message whole (a click folds it to its first line), the ones before it -- what it said on the way,
-// its thinking -- each folded to a line, the latest few shown and the earlier behind a + (and a − folds them again). The
-// latest turns shown, the earlier a few more at a time as the reader scrolls up past the top (pullEarlier). While the turn
-// runs, what the agent is doing at its end, as the
-// Transcript's status line. A button at each message, or ⌘+click on it, shows its turn's files. What the user wrote while a turn ran is
-// part of it: once sent to the agent (`more`; in the latest turn also Claude Code's queue, the agent's `typed`,
-// data.py's, from its record of the session), stacked on its first message; until then, at the latest turn's end, faded and marked pending
-// (pendingTalk) -- as is a message sent from this page's box, from the moment it is sent. A message that opened a
-// turn ag has not stored yet is that turn's, in full, the moment Claude Code has it (openedTurn).
-const MINOR_SHOWN = 2, TURNS_SHOWN = 5;
-let talkShown = null;
+// The conversation, at the right: src/features/chat/ (ag_dashboard/DESIGN.md, A5), drawn from what talkFeed hands it,
+// calling what CHAT_HOST gives it of this page. What the user wrote, sent from here and not yet had (heard, sentHere) is
+// this page's still: the message box sends from it.
 // What the selected actor's own records say the user wrote: ag's stored messages (each turn's first, and what was written
 // while it ran), Claude Code's queue less what ag has stored since (the agent's `typed`, data.py's), and the dashboard
 // agent's queue (its session's `queued`).
@@ -601,23 +593,8 @@ function interrupt(info) {
 const INTERRUPTING_MS = 10000;                      // "Interrupting…" shown at most this long, if the turn goes on
 const isInterrupting = () => !!state.interrupting && !!state.selected && state.interrupting.key === key(...state.selected)
   && Date.now() - state.interrupting.at < INTERRUPTING_MS;
-// What waits to reach the agent, at the latest turn's end, faded: sent from here and not seen yet; in Claude Code's
-// queue; in the dashboard agent's queue. Not seen for long, with its terminal open: it may be asking something there
-// first (whether to trust the folder, on a new actor's first message), and the way to it.
-function pendingTalk(info, h) {
-  const mine = sentHereNow(h);
-  const list = [...h.typed.filter((q) => q.sent === null && !q.chat).map((q) => q.text), ...h.queued, ...mine.map((m) => m.text)];
-  const chats = h.typed.filter((q) => q.chat && q.sent === null && !list.some((t) => sameWords(t, q.text)));
-  list.push(...chats.map((q) => q.text));  // sent from Chat elsewhere (or before a reload), not had yet: its `chat_sent`
-  if (!list.length) return null;
-  const unseen = mine.some((m) => Date.now() - m.at > UNSEEN_MS) || chats.some((q) => Date.now() - q.at * 1000 > UNSEEN_MS);
-  const asks = unseen && info && info.session && info.session.terminal && CHAT_VIEWS.has("terminal");
-  return el("div", { class: "fl-pending" }, ...list.map((text) => crewBand(text,
-    el("div", { class: "fl-user" + bubbleClass(text), title: "Written while it works: given to the agent at its next step" }, userWords(text)))),
-    el("span", { class: "lbl" }, unseen ? "Pending · not seen by the session yet" : "Pending",
-      asks ? "; its terminal may be asking something first. " : null,
-      asks ? el("button", { type: "button", class: "to-term", onclick: () => setChatView("terminal") }, "Open the terminal") : null));
-}
+// What waits to reach the agent, at the latest turn's end, faded (pendingTalk): src/features/chat/Pending.tsx now, from
+// heard() and sentHereNow().
 // What was sent from here to the selected actor and the session has not recorded yet (`h`: heard(info)): those it has, dropped.
 function sentHereNow(h) {
   const k = state.selected && key(...state.selected);
@@ -627,268 +604,33 @@ function sentHereNow(h) {
 }
 // The turns Claude Code has started and ag has not stored yet, each by its first message as Claude Code recorded it when
 // it went to the model (the agent's `typed`, data.py's: sent, not as part of the turn it was written in; data.py's
-// _unstored leaves out those ag has stored) -- for an actor, the selected one's (opened()).
-const openings = (h) => h.typed.filter((q) => q.sent !== null && !q.joins);
+// _unstored leaves out those ag has stored) -- for an actor, the selected one's (opened()); the conversation draws each
+// (src/features/chat/Pending.tsx's openings).
 function opened(a) {
   return !!a && !!state.selected && state.selected[1] === a.channel && !!state.agent && state.agent.channel === a.channel
     && (state.agent.typed || []).some((q) => q.sent !== null && !q.joins);
 }
-// The line under a running turn: when the actor last did something (`last`; its last try, `retrying`) and how long the
-// turn has run (since `at`), and what it does now.
-// Short of height (the `talk` container), all on one line, behind the actor's avatar small (`fl-mini`).
-const miniAvatar = (info, none) => el("span", { class: "fl-mini", "aria-hidden": "true" }, info && bareAvatar(info)
-  ? el("img", { src: bareAvatar(info), alt: "", draggable: "false" }) : none);
-const working = (info, last, at, now, retrying = false) => el("div", { class: "fl-working" },
-  miniAvatar(info, el("span", { class: "spin" })),
-  el("div", { class: "fl-times", "aria-hidden": "true" }, retrying ? "last try " : "last activity ",
-    el("span", { "data-ago": last || "", text: ago(last) }),
-    at ? " · " : null, at ? el("span", { "data-lasting": at, text: lasting(at) }) : null, at ? " so far" : null,
-    canInterrupt(info) ? " · esc to interrupt" : null),
-  el("div", { class: "now", role: "status", style: hueInk(info) }, now));
-// The latest turn over, short of height: on one line as the actor at work is -- its avatar small, "Done", and how long
-// the turn took, from its message to its last event (`end`; from a server without it, the actor's last activity) --
-// in place of the avatar done under it (.fl-done). Otherwise not shown.
-const finished = (info, t) => el("div", { class: "fl-working fl-finished" }, miniAvatar(info, el("span", { text: "✓" })),
-  el("div", { class: "fl-times" }, t.at ? `took ${spell((t.end || info.last || t.at) - t.at)}` : ""),
-  el("div", { class: "now", style: hueInk(info) }, "Done"));
-// A turn Claude Code has started that ag has not stored yet (openings): its first message, sent -- in full, as the terminal
-// shows it -- and, the latest, the actor at work under it and what waits to reach it; drawn from what ag stores once it has,
-// from when it was sent still (began: by the actor and the message's words).
-const turnsBegan = new Map();
-const began = (t) => turnsBegan.get(key(...state.selected) + "\u0000" + typedAs(t.text).slice(0, 200));
-function openedTurn(info, q, latest, h) {
-  if (turnsBegan.size > 50) turnsBegan.clear();
-  turnsBegan.set(key(...state.selected) + "\u0000" + typedAs(q.text).slice(0, 200), q.sent);
-  return [el("div", { class: "fl-turn opened" },
-    crewBand(q.text, el("div", { class: "fl-user" + bubbleClass(q.text), title: "Sent to the agent: shown here until the gatherer has stored it" },
-      userWords(q.text))),
-    latest ? working(info, Math.max(q.sent, (info && info.last) || 0), q.sent, isInterrupting() ? "Interrupting…" : "Working…") : null,
-    latest ? pendingTalk(info, h) : null),
-    latest ? el("div", { class: "fl-status", "aria-hidden": "true", "data-morph": "" }, atWork(info, { work: {} }),
-      el("span", { class: "now", style: hueInk(info), text: isInterrupting() ? "Interrupting…" : "Working…" })) : null].filter(Boolean);
-}
 const talkToEnd = () => { const n = document.querySelector("#main .fl-talk"); if (n) n.scrollTop = n.scrollHeight; };
-// Show more of the conversation above where the reader is, keeping what they look at in place.
-function showMore(change) {
-  const n = document.querySelector("#main .fl-talk"), below = n ? n.scrollHeight - n.scrollTop : 0;
-  change();
-  keepingPlace(renderMain);
-  const again = document.querySelector("#main .fl-talk");
-  if (n && again) again.scrollTop = again.scrollHeight - below;
+// What the conversation is drawn from (src/features/chat/types.ts's ChatFeed): the actor's turns and what it was
+// written, and how this page shows it now. Whether Esc would interrupt it, before sentHereNow drops what the session has
+// had since: as the line under its turn said it.
+function talkFeed(info, session, running, writable, held, afresh) {
+  const h = heard(info), interrupts = canInterrupt(info);
+  return { key: key(...state.selected), gatherer: state.selected[0], files: state.files, data: state.files.data,
+    picked: state.files.turn, home: state.home, info, session, running, status: statusOf(info)[0], writable, held,
+    canInterrupt: interrupts, interrupting: isInterrupting(), heard: h, mine: sentHereNow(h), sideFolded, earlierTurns,
+    terminalView: CHAT_VIEWS.has("terminal"), afresh };
 }
-// A turn's files and commands, or its replies, shown or folded from its message (filesTalk) -- that message kept where
-// it was on the screen, not the turn picked brought into view, as a new pick is (filesTalk's talkShown).
-async function keepTurn(n, change) {
-  const top = (x) => x.getBoundingClientRect().top, talk = document.querySelector("#main .fl-talk");
-  const turn = document.getElementById(`fl-turn-${n}`), y = talk && turn ? top(turn) - top(talk) : null;
-  await change();
-  if (state.files && state.files.data) talkShown = `${state.files.key}:${state.files.data.turn}`;
-  const now = document.querySelector("#main .fl-talk"), again = document.getElementById(`fl-turn-${n}`);
-  if (y !== null && now && again) now.scrollTop += top(again) - top(now) - y;
-}
-// Scrolled to its top, a pull further up -- the wheel, a finger drawn down, or ↑, Page Up or Home with the focus in it --
-// shows TURNS_MORE earlier turns above, the reader's place kept. Reaching the top is not one: what is drawn ends there,
-// and only a pull PULL_WAIT_MS after (of PULL_PX, so a jolt of the trackpad is not one) shows more. Chrome scrolls before
-// the page hears of the wheel, so the top is known by when the conversation got there (`topAt`), not by the event.
-const TURNS_MORE = 5, PULL_PX = 60, PULL_WAIT_MS = 300;
-let topAt = null, pulled = 0, touchedAt = null;
-const talkOf = (n) => n && n.closest ? n.closest("#main .fl-talk") : null;
-document.addEventListener("scroll", (ev) => {
-  const n = ev.target;
-  if (n && n.matches && n.matches("#main .fl-talk")) topAt = n.scrollTop > 0 ? null : topAt ?? Date.now();
-}, true);
-function pullEarlier(talk, by) {
-  if (!talk) return;
-  if (talk.scrollTop > 0 || !state.files || !state.files.first) { topAt = null; pulled = 0; return; }
-  if (topAt === null) { topAt = Date.now(); pulled = 0; return; }       // at the top only now: drawn up to here
-  if (Date.now() - topAt < PULL_WAIT_MS || (pulled += by) < PULL_PX) return;
-  pulled = 0; topAt = null;
-  showMore(() => { state.files.first = Math.max(0, state.files.first - TURNS_MORE); });
-}
-document.addEventListener("wheel", (ev) => {
-  if (ev.deltaY < 0) pullEarlier(talkOf(ev.target), -ev.deltaY * (ev.deltaMode ? 20 : 1));   // lines or pages: a pull each
-}, { passive: true });
-document.addEventListener("touchstart", (ev) => { touchedAt = talkOf(ev.target) ? ev.touches[0].clientY : null; }, { passive: true });
-document.addEventListener("touchmove", (ev) => {
-  if (touchedAt === null) return;
-  const by = ev.touches[0].clientY - touchedAt;
-  if (by > 0) { touchedAt = ev.touches[0].clientY; pullEarlier(talkOf(ev.target), by); }
-}, { passive: true });
-document.addEventListener("keydown", (ev) => {
-  if (["ArrowUp", "PageUp", "Home"].includes(ev.key) && !ev.defaultPrevented && !(ev.target && ev.target.closest && ev.target.closest("input, textarea, [contenteditable]")))
-    pullEarlier(talkOf(ev.target), PULL_PX);
+// What the conversation calls of this page (src/features/chat/types.ts's ChatHost), until those parts move too: the actor's
+// stage, a call as the commands show it, an actor's face, a Browser's message, a message's words as matched, the icons;
+// and this page's redraw, its files and commands, its views, its Esc.
+const CHAT_HOST = Object.freeze({
+  atWork, atRest, greeting, callView, callLabel, bareAvatar, hueInk, envelope, typedAs, sameWords, icons: ICONS, beside: BESIDE_KEY,
+  crewFace: (a, coordinator) => crewFace(a, coordinator ? MANAGER : null),
+  appWords: (text) => BW_BLOCK.test(text) ? bwWords(text) : null,
+  redraw: () => keepingPlace(renderMain), foldSide, setFilesTurn, setChatView,
+  interruptOver: () => { state.interrupting = null; },
 });
-// Drawn again (renderMain's `patch`), the conversation is patched in place, turn by turn (data-morph): only what changed
-// is replaced -- a turn's new reply, the times under it -- and the rest kept, the actor at work among it, its
-// animations running on (its data-sig, what it shows). Replaced whole, the actor restarted at every redraw, every pause
-// in the reader's typing while it worked.
-function filesTalk(d, info, running) {
-  const box = el("div", { class: "fl-talk", "data-keep": "files-talk", "data-follow": "1", "data-morph": "" });
-  const closed = state.files.closed || (state.files.closed = new Set());   // the last messages folded by a click
-  const opened = state.files.opened || (state.files.opened = new Set());   // the turns whose earlier messages are all shown
-  const flips = state.files.flips || (state.files.flips = new Map());      // the turns before the latest a click showed (true) or folded
-  const fold = (ev) => { const n = ev.currentTarget; if (n.open) closed.delete(n.id); else closed.add(n.id); };
-  // the first turn drawn: the latest few, at first; then where the reader pulled it to (pullEarlier), or the turn they
-  // picked. Kept as the conversation grows: a new turn is drawn at the end, none taken from the top.
-  const first = state.files.first = Math.max(0, Math.min(d.turn, state.files.first ?? d.turns.length - TURNS_SHOWN));
-  if (first) box.append(el("div", { class: "fl-earlier" }, `${plural(first, "earlier turn")} · scroll up for more`));
-  // what was written while it worked and sent as part of its turn, not yet stored by ag: stacked on its first message
-  const h = heard(info), joined = h.typed.filter((q) => q.sent !== null && q.joins), opens = openings(h);
-  // the turns before the latest, folded as the setting has them (below) -- all but the latest two the agent answered in
-  // (a message, a thought or a call), and any after them it has yet to answer: the one before those two folds once a
-  // newer turn has its first answer. Never by the actor's status, nor by a message sent and not yet stored (opens), so a
-  // turn is not folded and shown again as the next starts.
-  const answered = d.turns.filter((t) => (t.replies || []).length || t.calls).map((t) => t.n);
-  const folds = answered.length < 2 ? 0 : answered[answered.length - 2];   // the turns before this one fold
-  for (const t of d.turns.slice(first)) {
-    const on = t.n === d.turn;
-    const live = running && !opens.length && t.n === d.turns.length - 1;
-    if (!live && t.n === d.turns.length - 1 && isInterrupting()) state.interrupting = null;   // its turn over: interrupted
-    // its messages, by their place in the turn (their ids keep it); thinking that is encrypted has nothing to read
-    const said = (t.replies || []).map((r, i) => [r, i])
-      .filter(([r]) => r.kind === "text" || NOTED[r.kind] || (r.kind === "thinking" && (r.texts || []).length));
-    const last = said.map(([r]) => r.kind).lastIndexOf("text");
-    const before = last < 0 ? said : said.slice(0, last), after = last < 0 ? [] : said.slice(last + 1);
-    const extra = before.length <= MINOR_SHOWN + 1 ? 0 : before.length - MINOR_SHOWN;   // behind the +, or shown under the −
-    const hidden = opened.has(t.n) ? 0 : extra;
-    // a message; or a run of thinking, drawn as one with "Thought:" before its first line
-    const reply = ([r, i], main) => {
-      const id = `fl-${main ? "m" : "r"}-${t.n}-${i}`;   // apart: the last, once a message follows it, starts folded
-      if (NOTED[r.kind]) return notedReply(r, id);
-      const thought = r.kind !== "text", text = thought ? r.texts.join("\n\n") : r.text;
-      return el("details", { class: "fl-reply" + (main ? " main" : "") + (thought ? " thought" : ""), id,
-        open: main && !closed.has(id) ? "" : null, ontoggle: main ? fold : null },
-        el("summary", { title: thought ? "Fold or show what it thought" : "Fold or show the whole message" },
-          el("span", { class: "dot", text: "●" }), thought ? el("span", { class: "lbl", text: "Thought:" }) : null,
-          el("span", { class: "first", text: firstLine(unplanned(text).replace(/`|\*\*|^#{1,6}\s+/gm, ""), 200) })),   // its first line, less the markdown's marks
-        markdown(text));
-    };
-    const toggle = () => { opened.has(t.n) ? opened.delete(t.n) : opened.add(t.n); keepingPlace(renderMain); };
-    // a call under way is drawn above, as the turn's latest call: the line under it only says the agent works
-    const now = !live ? "" : isInterrupting() ? "Interrupting…" : info && info.failing ? "Retrying…"
-      : t.now && t.now.kind === "thinking" ? "Thinking…" : "Working…";
-    const done = !live && t.n === d.turns.length - 1 && !opens.length && !!info && ["idle", "finished", "closed"].includes(statusOf(info)[0]);
-    const starts = live ? [t.at, began(t)].filter(Boolean) : [];
-    const from = starts.length ? Math.min(...starts) : null;      // when it began: sent (began), or stored
-    // apart from each other: its files and commands at the left (the turn picked; folded away when they already show), by
-    // the button at its message's right or ⌘+click; and before the latest, its replies shown or folded -- folded at first
-    // under the setting "Messages only" (earlierTurns) those before `folds`, shown under "Whole"; a click on its message
-    // the other way, kept so as the turns move on (flips), until a click puts it back
-    const earlier = t.n < d.turns.length - 1, atFirst = !earlier || t.n >= folds || earlierTurns === "whole";
-    const whole = flips.has(t.n) ? flips.get(t.n) : atFirst;
-    const showing = on && !sideFolded;
-    const flip = () => keepTurn(t.n, () => { !whole === atFirst ? flips.delete(t.n) : flips.set(t.n, !whole); keepingPlace(renderMain); });
-    const side = () => keepTurn(t.n, () => {
-      if (showing) return foldSide(true);
-      if (sideFolded) foldSide(false, on);
-      if (!on) return setFilesTurn(t.n);
-    });
-    const sideTip = showing ? "Fold this turn's files and commands" : "Show this turn's files and commands";
-    const foldTip = whole ? "Fold this turn to your message" : "Show this turn's replies";
-    // the user's message: a click on it before the latest shows or folds the turn's replies (the first message's chevron
-    // says which); ⌘+click (Ctrl+click) shows or folds its files and commands at the left, as its button does
-    const click = (ev) => ev.metaKey || ev.ctrlKey ? side() : earlier ? flip() : null;
-    const sideClick = `${BESIDE_KEY}+click: ${sideTip[0].toLowerCase()}${sideTip.slice(1)}`;
-    const said1 = (text, kind, cls, title, ...end) => !earlier
-      ? el("div", { class: cls, title: (title ? title + ". " : "") + sideClick, onclick: click }, userWords(text, kind), ...end)
-      : el("button", { type: "button", class: cls, "aria-expanded": String(whole), title: `${title ? title + ". " : ""}${foldTip}. ${sideClick}`,
-        onclick: click }, userWords(text, kind), ...end);
-    // at the first message's end, how much the turn holds: what the agent said and thought (as shown under it), and its
-    // calls (files.py's `calls`, as its commands at the left list them)
-    const held = said.length + (t.calls || 0);
-    const count = held ? el("span", { class: "fl-count", title: `${plural(said.length, "message")} from the agent, ${plural(t.calls || 0, "command")}` },
-      plural(held, "message")) : null;
-    box.append(el("div", { class: "fl-turn" + (on ? " on" : "") + (whole ? "" : " folded")
-      + (whole && !atFirst ? " shown" : ""), id: `fl-turn-${t.n}`, "data-morph": "" },
-      el("div", { class: "fl-head" },
-        crewBand(t.text, bashBubble(t, said1(t.text, t.kind, "fl-user" + bubbleClass(t.text), null, count,
-          earlier ? el("span", { class: "fold-mark", "aria-hidden": "true" }, strokeIcon(ICONS.chevron, 14)) : null))),
-        el("span", { class: "fl-btns" },
-          el("button", { type: "button", class: "fl-side-btn", "aria-pressed": String(showing), title: sideTip, "aria-label": sideTip,
-            onclick: side }, strokeIcon(ICONS.sidebar, 14)))),
-      ...[...(t.more || []), ...(t.n === d.turns.length - 1 ? joined : [])].map((m) =>
-        crewBand(m.text, said1(m.text, m.kind, "fl-user joined" + bubbleClass(m.text), "Written while it worked, and given to the agent in this turn"))),
-      ...(!whole ? [] : [before.length ? el("div", { class: "fl-minor" },
-        extra ? el("button", { type: "button", class: "fl-more", "aria-expanded": hidden ? "false" : "true", onclick: toggle,
-          title: hidden ? "Show everything the agent said and thought in this turn" : "Fold the earlier messages again" },
-          el("span", { class: "sg", "aria-hidden": "true", text: hidden ? "+" : "−" }), plural(extra, "earlier message")) : null,
-        ...before.slice(hidden).map((x) => reply(x, false))) : null,
-      ...(t.sent || []).map(sentBubble),
-      last < 0 ? null : reply(said[last], true),
-      after.length ? el("div", { class: "fl-minor" }, ...after.map((x) => reply(x, false))) : null,
-      t.last ? el("div", { class: "fl-minor" }, lastCall(t, live, info ? statusOf(info)[0] : "")) : null,
-      live ? working(info, info.failing ? info.failing.at : Math.max(info.last || 0, from || 0) || null, from, now, !!info.failing)
-        : stoppedLine(info, t, t.n === d.turns.length - 1),
-      done ? finished(info, t) : null,
-      t.n === d.turns.length - 1 && !opens.length ? pendingTalk(info, h) : null])));
-    // under the latest turn's box: the actor at work; or, its turn over, the actor done
-    if (live) box.append(el("div", { class: "fl-status", "aria-hidden": "true", "data-morph": "" }, atWork(info, t),
-      el("span", { class: "now", style: hueInk(info), text: now })));
-    else if (done) box.append(el("div", { class: "fl-done", title: `Done · ${ago(info.last)}` }, atRest(info, t.row_id)));
-  }
-  box.append(...opens.flatMap((q, i) => openedTurn(info, q, i === opens.length - 1, h)));
-  const at = `${state.files && state.files.key}:${d.turn}`;
-  if (talkShown !== at) requestAnimationFrame(() => {   // the turn shown brought into view, once per pick: the latest at its end
-    if (talkShown === at) return;                        // already (keepTurn: kept where the reader had it)
-    const cur = document.querySelector(".fl-talk .fl-turn.on");
-    if (!cur) return;
-    talkShown = at;
-    cur.parentElement.scrollTop = state.files.turn === null ? cur.parentElement.scrollHeight : cur.offsetTop;   // .fl-talk is its offset parent
-  });
-  requestAnimationFrame(watchCrew);
-  return box;
-}
-// How a turn stopped short, under it, as its harness says it there (files.py's `stopped`), in its own words (harness_kit's
-// `stopped_says`): interrupted (Esc), and what it asks then -- or the error it gave up on, or another reason it gives.
-// E.g. Claude Code: "⎿ Interrupted · What should Claude do instead?", dim; its error in red. Not the latest turn's error
-// while the actor is stopped on it: its note says that in full. Null for a turn that ended as turns do.
-const STOPPED_ANY = { lead: "⎿", interrupted: "Interrupted", error: "Error" };
-function stoppedLine(info, t, latest) {
-  const s = t.stopped;
-  if (!s || (s.kind === "error" && latest && info && info.status === "error")) return null;
-  const says = (harnessInfo((info && info.harness) || (state.home || {}).harness_default) || {}).stopped || STOPPED_ANY;
-  const reason = s.kind !== "error" && s.reason && (says.reasons || {})[s.reason];
-  const red = s.kind === "error" || !!reason;
-  const said = s.kind === "error" ? s.text || (s.status && says.error_status ? says.error_status.replace("{status}", s.status) : says.error)
-    : reason || says.interrupted;
-  return el("div", { class: "fl-stopped" + (red ? " error" : ""), role: "note" },
-    el("span", { class: "lead", "aria-hidden": "true", text: says.lead }), el("span", { text: said }));
-}
-// Claude Code's own notes in a turn (files.py's `_note`), each a line among the messages, folded to it: a subagent's
-// report handed back, by its task; another session's message, by its first line, the session named (opened: the
-// whole). A skill it loaded is with the turn's commands, not here.
-const NOTED = { report: "Subagent's report:", peer: "Message from another session:" };
-function notedReply(r, id) {
-  const peer = r.kind === "peer";
-  return el("details", { class: `fl-reply noted ${r.kind}`, id },
-    el("summary", { title: peer ? "Show or fold the message" : "Show or fold the report" },
-      el("span", { class: "dot", text: "●" }),
-      el("span", { class: "lbl", text: peer && r.name ? `Message from ${r.name}:` : NOTED[r.kind] }),
-      el("span", { class: "first", text: firstLine(peer ? r.text : r.name || r.text, 200) })),
-    r.text ? markdown(r.text, true) : el("div", { class: "fl-none", text: "Empty." }));
-}
-// A turn's first bubble; a command the user ran with `!` in a bash bubble: the command at its top, and under a rule
-// what it printed (files.py's `output`: stdout, then stderr) -- "no output" for none.
-function bashBubble(t, bubble) {
-  if (!isBash(t.text) || t.output === undefined || t.output === null) return bubble;
-  const out = el("pre", { class: "fl-bash-out" + (t.output ? "" : " none"), title: "What it printed" });
-  out.innerHTML = t.output ? outputHtml(t.output, String(t.text).replace(/^\s*!\s*/, "")) : "no output";
-  return el("div", { class: "fl-bash" }, bubble, out);
-}
-// The turn's latest call, while the agent has said and thought nothing readable since: under its messages,
-// above the line saying it works -- running, or how it went, and what it was; opened, its call and its output.
-// A call with no result once the actor no longer runs: waiting on the user (a question, a plan), or stopped --
-// interrupted, its process gone -- not run.
-function lastCall(t, live, status) {
-  const c = t.last;
-  const [cls, word] = c.error ? ["err", "Failed:"] : !c.running ? ["ok", "Ran:"] : live ? ["run", "Running:"]
-    : status === "asking" ? ["wait", "Waiting for you:"] : ["stop", "Stopped:"];
-  return el("details", { class: "fl-reply call", id: `fl-c-${t.n}-${c.id || ""}` },
-    el("summary", { title: "Show or fold the call and its output" },
-      el("span", { class: "dot " + cls, text: "●" }), el("span", { class: "lbl " + cls, text: word }),
-      el("span", { class: "first" }, callLabel(c, 200))),
-    callView(c.call, c));
-}
 addChatView({
   // "files": named so once, and kept as its id, with the readers' choices of it
   id: "files", name: "Chat", feed: "files", frame: "files", icon: ICONS.bubble,

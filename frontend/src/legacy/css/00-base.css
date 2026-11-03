@@ -89,6 +89,9 @@ header .about-btn .gear .state-dot { position: absolute; right: -2px; bottom: -1
 .cfg-harnesses { display: grid; gap: 2px; font-size: 11px; color: var(--ink-2); }
 .cfg-harnesses code, .about code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
 .cfg-logins, .cfg-logins-pick { display: grid; gap: 6px; }
+/* hidden, hidden: the display above would show them anyway (the picker before Chrome was read, the read button
+   when Browsers run in the user's own Chrome) */
+.cfg-logins[hidden], .cfg-logins-pick[hidden], .about .row[hidden] { display: none; }
 .cfg-logins-list { max-height: 180px; overflow: auto; display: grid; gap: 1px; padding: 4px 6px; border: 1px solid var(--ring); border-radius: 6px; background: var(--page); }
 .cfg-logins-list label { display: flex !important; align-items: center; gap: 6px; color: var(--ink); font-size: 12px; cursor: pointer; }
 .cfg-logins-list label .n { margin-left: auto; color: var(--muted); font-size: 11px; }

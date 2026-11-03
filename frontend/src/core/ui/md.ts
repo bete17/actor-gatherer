@@ -1,0 +1,169 @@
+// Markdown, as the page draws a message: marked (GFM) and DOMPurify, the vendored scripts index.html loads before the
+// page (window.marked, window.DOMPurify); raw HTML in a message shown as the agent wrote it, not rendered; links
+// opening apart; fenced code coloured (codeFence). And a block a harness's model writes in a reply that its own
+// terminal draws apart (harness_kit's `reply_block`), drawn as a card. Without the vendored scripts, the text as it is.
+import { useDashboard } from "../store";
+import { escapeHtml } from "./html";
+import { codeFence, foldKept } from "./highlight/fence";
+
+/** As much of marked and DOMPurify as the page uses. */
+interface Marked {
+  use(options: {
+    gfm: boolean;
+    breaks: boolean;
+    renderer: {
+      html: (token: { text: string }) => string;
+      code: (token: { text: string; lang?: string }) => string;
+    };
+  }): void;
+  parse(text: string, options?: { breaks: boolean }): string;
+}
+interface Purify {
+  sanitize(html: string): string;
+  addHook(hook: "afterSanitizeAttributes", run: (node: Element) => void): void;
+}
+declare global {
+  interface Window {
+    marked?: Marked;
+    DOMPurify?: Purify;
+  }
+}
+
+let ready: boolean | undefined;
+/** marked and DOMPurify set up as the page uses them, once: whether they are there. */
+function setUp(): boolean {
+  if (ready === undefined) {
+    const { marked, DOMPurify } = window;
+    ready = !!marked && !!DOMPurify;
+    if (marked && DOMPurify) {
+      marked.use({
+        gfm: true,
+        breaks: false,
+        renderer: { html: ({ text }) => escapeHtml(text), code: ({ text, lang }) => codeFence(text, lang) },
+      });
+      DOMPurify.addHook("afterSanitizeAttributes", (n) => {
+        if (n.tagName === "A") {
+          n.setAttribute("target", "_blank");
+          n.setAttribute("rel", "noopener noreferrer");
+        }
+      });
+    }
+  }
+  return ready;
+}
+
+// A block a harness's model writes in a reply that its own terminal draws apart (harness_kit's `reply_block`: codex's
+// proposed plan, between <proposed_plan> and </proposed_plan>), each tag on a line of its own (the closing one perhaps
+// not streamed yet). markdown() draws it as a card headed as the harness heads it. A tag in a sentence is only words.
+export interface ReplyBlock {
+  open: string;
+  close: string;
+  title: string;
+}
+interface Block extends ReplyBlock {
+  re: RegExp;
+  tags: RegExp;
+}
+const reEscape = (s: string) => String(s).replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+let blocksOf: Block[] = [],
+  blocksFrom: unknown = null;
+
+/** The harnesses' reply blocks, from the home's harness_info (the store's: the stream's last home). */
+export function replyBlocks(): Block[] {
+  const info = useDashboard.getState().home?.harness_info || {};
+  if (blocksFrom !== info) {
+    blocksFrom = info;
+    blocksOf = Object.values(info)
+      .map((h) => h.reply_block)
+      .filter((b): b is ReplyBlock => !!(b && b.open && b.close))
+      .map((b) => ({
+        ...b,
+        re: new RegExp(
+          `^${reEscape(b.open)}[ \\t]*(?:\\r?\\n|$)([\\s\\S]*?)\\s*(?:^${reEscape(b.close)}[ \\t]*$|(?![\\s\\S]))`,
+          "m",
+        ),
+        tags: new RegExp(`^(?:${reEscape(b.open)}|${reEscape(b.close)})[ \\t]*(?:\\r?\\n|$)`, "gm"),
+      }));
+  }
+  return blocksOf;
+}
+
+/** A reply less its blocks' tags: its words, as a summary line shows them. */
+export const unplanned = (t: unknown): string => replyBlocks().reduce((s, b) => s.replace(b.tags, ""), String(t ?? ""));
+
+/** A reply with a harness's block in it: what is around the block, its heading, and what is in it. */
+export interface Reply {
+  before: string;
+  title: string;
+  inner: string;
+  after: string;
+}
+
+export function splitReply(text: string): Reply | null {
+  const block = typeof text === "string" ? replyBlocks().find((b) => text.includes(b.open)) : null;
+  const plan = block ? block.re.exec(text) : null;
+  if (!block || !plan) return null;
+  return {
+    before: text.slice(0, plan.index).trim(),
+    title: block.title,
+    inner: plan[1],
+    after: text.slice(plan.index + plan[0].length).trim(),
+  };
+}
+
+const mdCache = new Map<string, string>(); // a text's rendered markdown: the same text renders the same
+
+/**
+ * `text` as HTML, sanitized: what a message's box holds. `breaks`: each line break kept, for text written as lines
+ * rather than as markdown (a subagent's report). null: no marked or DOMPurify, so no markdown.
+ */
+export function markdownHtml(text: string, breaks = false): string | null {
+  if (!setUp()) return null;
+  const k = (breaks ? "\u0001" : "") + text;
+  let html = mdCache.get(k);
+  if (html === undefined) {
+    try {
+      html = window.DOMPurify!.sanitize(window.marked!.parse(text, breaks ? { breaks: true } : undefined));
+    } catch {
+      html = escapeHtml(text);
+    }
+    if (mdCache.size > 2000) mdCache.clear();
+    mdCache.set(k, html);
+  }
+  return html;
+}
+
+const div = (cls: string, ...kids: Node[]) => {
+  const n = document.createElement("div");
+  n.className = cls;
+  n.append(...kids);
+  return n;
+};
+
+/** `text` drawn as markdown into a box of its own (.md): a harness's block in it as a card (.proposed-plan). */
+export function markdown(text: string, breaks = false): HTMLDivElement {
+  const reply = splitReply(text);
+  if (reply) {
+    // a harness's block: what is around it as it is, the block as a card
+    const head = div("pp-head");
+    head.textContent = reply.title;
+    return div(
+      "md",
+      ...[
+        reply.before && markdown(reply.before, breaks),
+        div("proposed-plan", head, markdown(reply.inner, breaks)),
+        reply.after && markdown(reply.after, breaks),
+      ].filter((n): n is HTMLDivElement => !!n),
+    );
+  }
+  const box = div("md");
+  const html = markdownHtml(text, breaks);
+  if (html === null) {
+    box.style.whiteSpace = "pre-wrap";
+    box.textContent = text;
+    return box;
+  }
+  box.innerHTML = html; // sanitized by DOMPurify, raw HTML escaped before it
+  foldKept(box);
+  return box;
+}

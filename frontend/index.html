@@ -19,34 +19,7 @@
               fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M2 4.5h6.75M12.25 4.5H14M2 11.5h1.75M7.25 11.5H14"/>
               <circle cx="10.5" cy="4.5" r="1.75"/><circle cx="5.5" cy="11.5" r="1.75"/></svg><span class="state-dot" id="state-dot"></span></span></button>
           <div class="about" id="about" hidden>
-            <section class="cfg" id="cfg" hidden>
-              <h3>ag</h3>
-              <form id="cfg-model"><h4>Gatherer model</h4>
-                <div class="row"><input id="cfg-model-name" list="cfg-models" placeholder="claude-code/sonnet" spellcheck="false" autocomplete="off" aria-label="Gatherer model">
-                  <button class="primary" type="submit">Set</button></div>
-                <datalist id="cfg-models"><option value="claude-code/sonnet"><option value="claude-code/haiku"><option value="claude-code/opus">
-                  <option value="codex/gpt-5-mini"><option value="gemini/gemini-3.8-flash"></datalist>
-                <details class="cfg-more"><summary>API base and key (LiteLLM models only)</summary>
-                  <label>API base<input id="cfg-api-base" placeholder="the provider's own API" spellcheck="false"></label>
-                  <label>Key variable<input id="cfg-key-env" placeholder="the provider's own, e.g. GEMINI_API_KEY" spellcheck="false"></label></details>
-                <div class="cfg-note" id="cfg-model-note"></div></form>
-              <form id="cfg-defaults"><h4>Gatherer defaults</h4>
-                <label>Policy<select id="cfg-policy"></select></label>
-                <div class="cfg-label">Pollers<span class="cfg-checks" id="cfg-pollers"></span></div>
-                <label title="[cli] gatherer: where `ag claude` files a run that names no --gatherer (&quot;.&quot;: one per session)"><span>Gatherer for <code>ag &lt;harness&gt;</code> runs</span><input id="cfg-gatherer" spellcheck="false" placeholder="default"></label>
-                <div class="row"><span class="cfg-note" id="cfg-defaults-note"></span><button type="submit">Save</button></div></form>
-              <div><h4>Harnesses</h4><div class="cfg-harnesses" id="cfg-harnesses"></div></div>
-              <div class="cfg-logins" id="cfg-logins" hidden><h4>Browser logins</h4>
-                <div class="cfg-note" id="cfg-logins-note"></div>
-                <div class="row"><span></span><button type="button" id="cfg-logins-read">Import from your Chrome…</button></div>
-                <div class="cfg-logins-pick" id="cfg-logins-pick" hidden>
-                  <input id="cfg-logins-filter" placeholder="Filter sites" spellcheck="false" autocomplete="off" aria-label="Filter sites">
-                  <div class="cfg-logins-list" id="cfg-logins-list" role="group" aria-label="Sites"></div>
-                  <div class="row"><span class="cfg-note" id="cfg-logins-count"></span>
-                    <button class="primary" type="button" id="cfg-logins-import" disabled>Import</button></div></div></div>
-              <div class="row"><span class="cfg-path" id="cfg-path"></span><button type="button" id="cfg-edit">Edit config.toml…</button></div>
-              <h3>This page</h3>
-            </section>
+            <section class="cfg" id="cfg" hidden></section>
             <div><h4>Updates</h4>
               <div class="row"><span class="live"><span class="state-dot" id="state-dot-2"></span><span id="live" role="status"></span></span>
                 <button id="pause" type="button" title="Stop updating this page; the agents and the server go on">Pause</button></div></div>
@@ -84,15 +57,6 @@
     </section>
   </div>
   </div>
-</div>
-<!-- config.toml, edited over the whole page: outside the header, whose layer would keep it under the page -->
-<div class="cfg-file" id="cfg-file" hidden role="dialog" aria-modal="true" aria-labelledby="cfg-file-title">
-  <form class="cfg-file-box" id="cfg-file-form">
-    <div class="row"><h3 id="cfg-file-title">config.toml</h3><span class="cfg-path" id="cfg-file-path"></span></div>
-    <textarea id="cfg-file-text" spellcheck="false" aria-label="config.toml"></textarea>
-    <div class="row"><span class="err" id="cfg-file-err"></span>
-      <span><button type="button" id="cfg-file-cancel">Cancel</button> <button class="primary" type="submit">Save</button></span></div>
-  </form>
 </div>
 <!--VENDOR-->
 <script>window.AG_SNAPSHOT = /*SNAPSHOT*/null;</script>

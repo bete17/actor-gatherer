@@ -252,7 +252,7 @@ const EARLIER_KEY = "ag-dashboard-chat-earlier";
 let earlierTurns = "messages";
 function setEarlierTurns(pick, keep, draw = true) {
   earlierTurns = pick === "whole" ? "whole" : "messages";
-  if (state.files && state.files.flips) state.files.flips.clear();   // in place: the messages' clicks kept from a draw use it
+  window.agNext.chat.clearFlips();                   // the turns' clicks: Chat's turns (src/features/chat/store.ts)
   for (const b of document.querySelectorAll("[data-earlier-pick]")) b.setAttribute("aria-pressed", b.dataset.earlierPick === earlierTurns ? "true" : "false");
   if (keep) { try { localStorage.setItem(EARLIER_KEY, earlierTurns); } catch (e) { /* this page only */ } }
   for (const p of panes.others) p.call("earlier", earlierTurns);
@@ -271,12 +271,12 @@ document.getElementById("theme").addEventListener("click", (ev) => {
 document.getElementById("about-btn").addEventListener("click", () => {
   const open = document.getElementById("about").hidden;
   setAbout(open);
-  if (open) loadSettings().catch(() => {});
+  if (open) window.agNext.settings.load().catch(() => {});
 });
 document.addEventListener("click", (ev) => { if (!ev.target.closest(".about-wrap, .cfg-file, .r-about")) setAbout(false); });
 document.addEventListener("keydown", (ev) => {
   if (ev.key !== "Escape") return;
-  if (!document.getElementById("cfg-file").hidden) { document.getElementById("cfg-file").hidden = true; return; }
+  if (window.agNext.settings.fileOpen()) { window.agNext.settings.closeFile(); return; }
   setAbout(false);
 });
 
