@@ -21,11 +21,12 @@ Several actors -- sessions of Claude Code, Codex and other coding agents -- work
     ag actors show <id>                one actor: what it was asked, what it said last, the files its latest turn changed
     ag actors who <file>               which actors changed a file in the last day, the latest first
     ag actors send <id> "<message>"    a message to an actor (- reads the message from stdin)
-    ag actors new [--like <id>] [--cwd <dir>] [--harness claude|codex] [--model <m>] [--name <name>] [--docwriter | --browser | --branch [--approve]] "<message>"
+    ag actors new [--like <id>] [--cwd <dir>] [--harness <h>] [--model <m>] [--name <name>] [--docwriter | --browser | --branch [--approve]] "<message>"
                                        a new actor in this gatherer, started with the message (--docwriter: a DocWriter
                                        on the documents in <dir>; --browser: a Browser, a Chrome tab in the dashboard it
                                        and the user use together; --branch: on a branch of its own of the git repository
-                                       <dir> is in, --approve: each of its changes waiting for the user)
+                                       <dir> is in, --approve: each of its changes waiting for the user; --harness: the ones
+                                       `ag actors new --help` lists, as yours by default)
     ag actors when <id> [--note "<what to do then>"]
                                        an update in your conversation once that actor is done
     ag actors watches                  what you asked to be told and have not been yet;  ag actors unwatch <n>: drop one

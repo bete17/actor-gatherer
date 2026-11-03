@@ -198,6 +198,7 @@ class Coordination:
         self.lock = threading.RLock()
         self.stop = threading.Event()
         self.marked: set = set()                 # the gatherer agents' channels marked private by this dashboard
+        self.unnamed: Dict[str, Tuple[str, str]] = {}   # a new actor's id, its harness's still to come -> (gatherer, name)
         if watch:
             threading.Thread(target=self._run, name="ag-watches", daemon=True).start()
 
@@ -375,7 +376,10 @@ class Coordination:
                 row, on = self._new_on_branch(g, cwd or "", harness, model, mode, approve)
             else:
                 row = self.started.create(g, cwd or "", mode, harness, model)
-            if name and not sessions.picks_id(harness):   # one whose harness picks its id: named once it has it
+            if name and sessions.picks_id(harness):       # one whose harness picks its id: named once it has it
+                with self.lock:
+                    self.unnamed[row["session_id"]] = (g, name)
+            elif name:
                 threading.Thread(target=_name_it, args=(g, row["session_id"], name), daemon=True).start()
         to = {"channel": row["session_id"], "session": row, "harness": harness, "cwd": row["cwd"], "status": data.IDLE,
               "name": {"text": name} if name else None}
@@ -602,9 +606,25 @@ class Coordination:
             actions.record(r["gatherer"], r["session_id"], [{"type": ROLE, "id": f"{ROLE}:{r['session_id']}:{COORDINATOR}",
                                                              "payload": {"role": COORDINATOR, "private": True}}], wait=True)
 
+    def _name_later(self) -> None:
+        """The names given to new actors whose harness picks the session's id (`new`), each recorded in the channel of
+        that id once the session has it (sessions.py's `_rename`) -- forgotten if the session is gone before."""
+        with self.lock:
+            if not self.unnamed:
+                return
+        rows = {r.get("started_as"): r for r in self.started.list() if r.get("started_as")}   # each one's, made before
+        with self.lock:
+            due = {k: (v, rows[k]["session_id"] if k in rows else None) for k, v in self.unnamed.items()
+                   if k not in rows or rows[k]["session_id"] != k}
+            for k in due:
+                del self.unnamed[k]
+        for (g, name), now in due.values():
+            if now:
+                threading.Thread(target=_name_it, args=(g, now, name), daemon=True).start()
+
     def _run(self) -> None:
         while not self.stop.wait(WATCH_CHECK):
-            for step in (self._mark_private, self.check):
+            for step in (self._mark_private, self._name_later, self.check):
                 try:
                     step()
                 except Exception:  # noqa: BLE001 - never stop looking

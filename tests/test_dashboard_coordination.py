@@ -265,6 +265,27 @@ class CoordinationTest(CoordinationBase):
                          "Take over the docs: README.md is half done.")
         self.assertEqual(self.kept[-1][2][0]["payload"]["kind"], "new")
 
+    def test_a_new_actors_name_is_recorded_in_its_channel_once_its_harness_gave_it_its_id(self):
+        named = []
+        with unittest.mock.patch.object(coordination, "_name_it", lambda g, channel, name: named.append((g, channel, name))):
+            mine = self.crew.new(self.a, "Write the tests.", name="Tests")["actor"]["channel"]         # its id ours: at once
+            self.until(lambda: named)
+            self.assertEqual(named, [("g", mine, "Tests")])
+            started_as = self.crew.new(self.a, "Port the parser.", harness="codex", name="Parser")["actor"]["channel"]
+            gone = self.crew.new(self.a, "Port the lexer.", harness="codex", name="Lexer")["actor"]["channel"]
+            self.crew._name_later()
+            self.assertEqual(len(named), 1)                  # its channel is its thread's, not known yet: not named
+            thread = "019a43c1-0000-7000-8000-00000000a11d"
+            with self.s.lock:
+                self.assertEqual(self.s._rename(started_as, thread), thread)
+            conn = self.s._db()
+            conn.execute("DELETE FROM sessions WHERE session_id = ?", (gone,))     # gone before it had its thread
+            conn.close()
+            self.crew._name_later()
+            self.until(lambda: len(named) > 1)
+            self.assertEqual(named[1:], [("g", thread, "Parser")])   # once it has it; the one gone before: forgotten
+            self.assertEqual(self.crew.unnamed, {})
+
     def test_a_new_docwriter_is_a_docwriters_actor_on_the_folder_started_with_the_message(self):
         if not docwriter.AVAILABLE:
             self.skipTest("pycrdt is not installed")

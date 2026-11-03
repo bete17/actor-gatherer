@@ -152,7 +152,8 @@ TOY = textwrap.dedent(r'''
         def own_folders(self, env=None):
             return [os.path.join(os.environ["TOY_TMP"], ".toy")]
 
-        def command(self, session, resume=False, model=None, permission_mode=None, fullscreen=True, instructions=None):
+        def command(self, session, resume=False, model=None, permission_mode=None, fullscreen=True, instructions=None,
+                    cwd=None):
             return ["--session", session, *(["--resume"] if resume else [])]
 
         def headless_args(self, session, resume=False, model=None, permission_mode=None, instructions=None, extra=()):

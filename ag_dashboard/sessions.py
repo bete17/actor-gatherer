@@ -1224,7 +1224,7 @@ class Sessions:
         told = instructions(s)
         argv = [*ag_command(), "--quiet", "--gatherer", s["gatherer"], s["harness"],     # quiet: ag's notes not on its screen
                 *extra_args(s), *h.command(sid, resume=resume, model=s.get("model"), permission_mode=s["permission_mode"],
-                           fullscreen=fullscreen, instructions=told), *first]
+                           fullscreen=fullscreen, instructions=told, cwd=s["cwd"]), *first]
         screen = h.screen_env(fullscreen)            # its screen as asked, whatever the dashboard's own environment says
         env = {**{k: v for k, v in actor_env(s, agent_env()).items() if k not in OUTER_TERMINAL and k not in screen},
                "TERM": "xterm-256color", "COLORTERM": "truecolor", **{k: v for k, v in screen.items() if v is not None}}

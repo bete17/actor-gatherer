@@ -34,6 +34,8 @@ import urllib.error
 import urllib.request
 from typing import List, Optional
 
+import harness_kit
+
 from . import config
 
 ACTOR_VARS = ("CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "AG_ACTOR")   # the asker's id: its harness's, else the dashboard's
@@ -104,7 +106,7 @@ def parser() -> argparse.ArgumentParser:
     new = sub.add_parser("new", help="a new actor in the gatherer, started with a message")
     new.add_argument("--like", help="in the directory, harness and model of this actor")
     new.add_argument("--cwd", help="the directory it works in")
-    new.add_argument("--harness", choices=("claude", "codex"))
+    new.add_argument("--harness", choices=harness_kit.runnable(), help="the harness it runs on (default: the --like actor's, else yours)")
     new.add_argument("--model")
     new.add_argument("--name", help="its name in the dashboard")
     new.add_argument("--docwriter", action="store_true",

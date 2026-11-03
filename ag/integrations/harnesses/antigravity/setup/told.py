@@ -5,20 +5,37 @@ instruction of each of the run's calls.
 
     <home>/runs/antigravity/<run>.txt
 
-A run's file stays while its process does; the next launch clears those whose process is gone (`tidy`). The hook
+The run's directory is kept the same way, beside them, for the hook to use when agy names none: agy states its
+`Command Working Directory:` only when it has a workspace, and run in a folder it does not trust yet, with its first
+message given (`--prompt-interactive`), it has none.
+
+    <home>/runs/antigravity/<run>.cwd
+
+A run's files stay while its process does; the next launch clears those whose process is gone (`tidy`). The hook
 reads them (ag_orchestrator/told.py, which has its own copy of `path`: the two sides share nothing else).
 """
 
 import os
+from typing import Optional
 
 
-def path(home: str, run: str) -> str:
-    return os.path.join(home, "runs", "antigravity", f"{run}.txt")
+KINDS = ("txt", "cwd")                  # its instructions, its directory
 
 
-def keep(home: str, run: str, text: str) -> None:
-    """`text` kept as the run's instructions."""
-    p = path(home, run)
+def path(home: str, run: str, kind: str = "txt") -> str:
+    return os.path.join(home, "runs", "antigravity", f"{run}.{kind}")
+
+
+def keep(home: str, run: str, text: Optional[str], kind: str = "txt") -> None:
+    """`text` kept as the run's instructions (`kind` "txt") or its directory ("cwd"); None: the run has none (a file
+    left by an earlier process of the same id removed)."""
+    p = path(home, run, kind)
+    if text is None:
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+        return
     os.makedirs(os.path.dirname(p), exist_ok=True)
     with open(p + ".tmp", "w", encoding="utf-8") as fh:
         fh.write(text)
@@ -26,15 +43,15 @@ def keep(home: str, run: str, text: str) -> None:
 
 
 def tidy(home: str) -> None:
-    """The instructions of runs whose process is gone, removed."""
+    """The files of runs whose process is gone, removed."""
     folder = os.path.dirname(path(home, "0"))
     try:
         names = os.listdir(folder)
     except OSError:
         return
     for name in names:
-        run = name[:-len(".txt")] if name.endswith(".txt") else None
-        if not run or not run.isdigit():
+        run, _, kind = name.partition(".")
+        if kind not in KINDS or not run.isdigit():
             continue
         try:
             os.kill(int(run), 0)
