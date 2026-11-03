@@ -20,7 +20,7 @@ import harness_kit  # noqa: E402
 import page_source  # noqa: E402
 from harness_kit.base import Box  # noqa: E402
 from ag.cli import actors as cli  # noqa: E402
-from ag_dashboard import branches, browser, coordination, data, docwriter, editor, files, server, sessions  # noqa: E402
+from ag_dashboard import branches, browser, coordination, data, docwriter, editor, files, saved, server, sessions  # noqa: E402
 from test_dashboard_sessions import FAKE_AG, SessionsBase  # noqa: E402
 
 # the fake ag, also saying who the dashboard told it it is, and where the dashboard is
@@ -533,6 +533,39 @@ class CommandTest(CoordinationBase):
         code, _, err = self.run_cli("new", "--approve", "--cwd", repo, "Go.")
         self.assertEqual(code, 1)
         self.assertIn("--approve is for an actor on a branch", err)
+
+    def test_the_gatherer_agent_saves_actors_in_folders_from_its_shell(self):
+        code, out, err = self.run_cli("folder", "new", "Paper")
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(out.splitlines()[:3], ['Folder "Paper" made.', "Saved actors of the gatherer g:", '- folder "Paper" (empty)'])
+        code, out, err = self.run_cli("save", self.b[:8], "--folder", "paper")         # the folder of that name, its case
+        self.assertEqual((code, err, out.strip()), (0, "", f'Actor {self.b} ("Write the docs") is saved for later, in the folder "Paper".'))
+        self.assertEqual(saved.folders(), {"g": {"Paper": [self.b]}})
+        code, out, _ = self.run_cli()
+        self.assertIn(f'{self.b} "Write the docs" (saved in "Paper") -- idle, claude, in', out)
+        self.assertIn(f'{self.a} "Fix the editor" (you) -- idle', out)                # not saved: no mark
+        self.run_cli("save", self.a, "--folder", "Ideas")                                 # a new one: made
+        self.run_cli("save", self.a)                                                      # saved again: stays in it
+        code, out, _ = self.run_cli("folders")
+        self.assertEqual(out.splitlines(), ["Saved actors of the gatherer g:", '- folder "Ideas"', f'    {self.a} "Fix the editor" (you) -- idle, claude, in {cli._short(self.work)}',
+                                            '- folder "Paper"', f'    {self.b} "Write the docs" -- idle, claude, in {cli._short(self.work)}'])
+        code, out, _ = self.run_cli("save", self.a, "--no-folder")
+        self.assertIn("is saved for later, in no folder.", out)
+        code, out, _ = self.run_cli("folder", "rename", "Paper", "Thesis")
+        self.assertEqual(out.splitlines()[0], 'Folder "Paper" renamed "Thesis".')
+        self.assertEqual(saved.folders()["g"], {"Ideas": [], "Thesis": [self.b]})
+        code, out, _ = self.run_cli("folder", "delete", "Thesis")
+        self.assertEqual(out.splitlines()[0], 'Folder "Thesis" deleted: its actors are still saved, in no folder.')
+        self.assertEqual((saved.folders()["g"], sorted(saved.stored()["g"])), ({"Ideas": []}, sorted([self.a, self.b])))
+        code, out, _ = self.run_cli("unsave", self.b)
+        self.assertEqual(out.strip(), f'Actor {self.b} ("Write the docs") is no longer saved.')
+        self.assertEqual(list(saved.stored()["g"]), [self.a])
+        code, _, err = self.run_cli("folder", "delete", "Nope")
+        self.assertEqual((code, err.strip()), (1, 'ag actors: no folder "Nope" in g'))
+        code, _, err = self.run_cli("save", self.b, "--folder", "  ")
+        self.assertEqual((code, err.strip()), (1, "ag actors: which folder? Give it a name"))
+        code, _, err = self.run_cli("save", "gatherer")
+        self.assertEqual((code, err.strip()), (1, "ag actors: the gatherer has no gatherer agent yet"))
 
     def test_its_errors_are_said_plainly(self):
         code, _, err = self.run_cli("send", "nobody", "hi")

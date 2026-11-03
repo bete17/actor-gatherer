@@ -49,6 +49,29 @@ def save(srv: Parts, body: Body) -> Response:
     return answer(kept)
 
 
+@router.post("/api/saved/folders")
+def saved_folders(srv: Parts, body: Body) -> Response:
+    """{gatherer, do, ...}: a folder of the gatherer's saved actors made (`new` {name}), renamed (`rename` {name, to})
+    or deleted (`delete` {name}: its actors still saved), or an actor put in one (`file` {channel, name}: "", in
+    none; saved too) (saved.py) -> {saved, folders}, every one saved and every folder."""
+    g, do = str(body.get("gatherer") or ""), str(body.get("do") or "")
+    name = str(body.get("name") or "")
+    if not g:
+        raise ValueError("which gatherer?")
+    if do == "file":
+        kept = saved.file(g, str(body.get("channel") or ""), name or None)
+    elif do == "new":
+        kept = saved.make_folder(g, name)
+    elif do == "rename":
+        kept = saved.rename_folder(g, name, str(body.get("to") or ""))
+    elif do == "delete":
+        kept = saved.delete_folder(g, name)
+    else:
+        raise ValueError("do what? One of file, new, rename, delete")
+    srv.hub.ring(None, what="list")
+    return answer(kept)
+
+
 @router.post("/api/name")
 def name(srv: Parts, body: Body) -> Response:
     """{gatherer, channel, name, harness?, cwd?}: the reader's name for the actor ("": none) -> {name, store, error,

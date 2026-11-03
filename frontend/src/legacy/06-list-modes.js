@@ -98,11 +98,15 @@ function renderRail() {
       if (crew && !crewHidden.has(g.name)) sec.append(railActor(g, crew));
       for (const [name, items] of groups) {
         if (name === SHELLS) continue;                  // terminals: in the list only
+        if (name === "Saved" && !items.length) continue;  // its folders alone (or those saved still open): in the list
         if (name in FOLD_KEYS) {
           const unfolded = foldOpen[name].has(g.name), what = name.toLowerCase();
+          // Saved: those listed there (closed) of every one saved, as the list counts them
+          const all = name === "Saved" ? g.agents.filter((a) => !isCoordinator(a) && savedAs(g.name, a)).length : items.length;
           sec.append(el("button", { class: "r-fold", type: "button", "aria-expanded": unfolded ? "true" : "false",
-            title: unfolded ? `Hide ${what} actors` : `Show ${what} actors`, onclick: () => toggleFold(name, g.name) },
-            `${unfolded ? "▾" : "▸"} ${items.length} ${what}`));
+            title: `${unfolded ? "Hide" : "Show"} ${what} actors${name === "Saved" ? `: ${savedCount(items.length, all)}` : ""}`,
+            onclick: () => toggleFold(name, g.name) },
+            `${unfolded ? "▾" : "▸"} ${name === "Saved" ? `${items.length} of ${all}` : items.length} ${what}`));
           for (const a of unfolded ? items : items.filter((a) => openActors().some((sel) => isAt(sel, g.name, a.channel)))) sec.append(railActor(g, a));
           continue;
         }
@@ -299,9 +303,16 @@ function renderMonitor() {
     s.node.classList.toggle("folded", !open);
     s.head.setAttribute("aria-expanded", open ? "true" : "false");
     s.head.title = open ? `Fold ${n.toLowerCase()}` : `Show ${n.toLowerCase()}`;
-    s.head.replaceChildren(el("span", { class: "caret", text: "▶" }), groupMark(n), n, el("span", { class: "n", text: String(list.length) }));
+    const savedAll = n === "Saved" ? shown.reduce((k, g) => k + g.agents.filter((a) => !isCoordinator(a) && savedAs(g.name, a)).length, 0) : 0;
+    s.head.replaceChildren(el("span", { class: "caret", text: "▶" }), groupMark(n), n,
+      el("span", { class: "n", text: n === "Saved" ? `${list.length} of ${savedAll}` : String(list.length) }));
+    if (n === "Saved") s.head.title += `: ${savedCount(list.length, savedAll)}`;
     if (open !== (s.body.parentNode === s.node)) { if (open) s.node.append(s.body); else s.body.remove(); }
-    if (open) placeAll(s.body, list.map(([g, a]) => { want.add(key(g.name, a.channel)); return monCard(g, a, many); }));
+    if (open) placeAll(s.body, monRows(n, list, many).map(([g, a, head]) => {
+      if (head) return head;
+      want.add(key(g.name, a.channel));
+      return monCard(g, a, many);
+    }));
     columns.push(s.node);
   }
   for (const [k, c] of mon.cards) if (!want.has(k)) { if (mon.seen) mon.seen.unobserve(c.node); mon.visible.delete(k); mon.cards.delete(k); }
@@ -310,6 +321,31 @@ function renderMonitor() {
   placeAll(mon.box, columns);
   placeAll(box, [top, mon.box]);
   monFetch();
+}
+// A column's cards in order, Saved's under a heading for each folder (its gatherer's, by name), those in none last:
+// [g, a] for a card, [g, null, heading] for a heading -- each kept, so it is not drawn again.
+const monHeads = new Map();
+function monRows(n, list, many) {
+  if (n !== "Saved") return list;
+  const at = new Map(state.home.gatherers.map((g, i) => [g.name, i]));
+  const of = list.map(([g, a]) => [g, a, folderOf(g.name, a)]);
+  of.sort(([g, , f], [h, , e]) => (at.get(g.name) - at.get(h.name)) || (!f - !e) || byName(String(f || ""), String(e || "")));
+  const out = [];
+  let last = null;
+  for (const [g, a, f] of of) {
+    const k = f ? `${g.name}\u0000${f}` : `${g.name}\u0000`;
+    if (k !== last && (f || of.some(([h, , e]) => h === g && e))) {   // "In no folder" only after some folder
+      const text = `${f || "In no folder"}${many ? ` · ${titleOf(g)}` : ""}`;
+      let head = monHeads.get(k);
+      if (!head) monHeads.set(k, head = el("div", { class: "m-folder" }, folderMark(), el("span")));
+      head.lastChild.textContent = text;
+      head.firstChild.style.visibility = f ? "" : "hidden";
+      out.push([g, null, head]);
+    }
+    last = k;
+    out.push([g, a]);
+  }
+  return out;
 }
 // A card, drawn again only when what it shows changed.
 function monCard(g, a, many) {

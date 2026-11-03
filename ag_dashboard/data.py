@@ -268,6 +268,7 @@ def home(started: Optional[List[dict]] = None, kept: Optional["Kept"] = None) ->
     gatherers.sort(key=lambda g: g.get("created") or 0, reverse=True)
     return {"home": paths.HOME, "now": now, "running_seconds": RUNNING_SECONDS, "gatherers": gatherers,
             "hook_servers": _hook_servers(), "hiding": hiding.stored(), "titles": titles.stored(), "saved": saved.stored(),
+            "saved_folders": saved.folders(),
             "seen": looked.stored(), "harness_info": harness_info(), "harness_default": harness_kit.DEFAULT}
 
 
