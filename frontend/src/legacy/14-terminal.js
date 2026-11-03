@@ -110,7 +110,7 @@ function termListen(sid) {
   es.addEventListener("none", ended);
 }
 async function termOpen(info) {
-  const t = termFor(info.channel);
+  const t = termFor(info.channel), xterm = t.xterm;
   t.tried = true;
   const dims = (t.fit && t.fit.proposeDimensions()) || { cols: 120, rows: 32 };
   t.error = ""; t.exited = null;
@@ -118,6 +118,9 @@ async function termOpen(info) {
     await post("/api/terminal", { ...(info.session ? { session_id: info.session.session_id } : { gatherer: state.selected[0], channel: info.channel }),
       cols: dims.cols, rows: dims.rows, fullscreen: fullscreenFor(info) });
     t.xterm.reset();
+    // listened to at once, not once the list says it runs: one that ends straight away (its harness refusing to
+    // start) shows what it printed and its end, with "Open again", rather than "Opening the terminal…" for good
+    if (term.xterm === xterm) termListen(info.channel);
   } catch (err) { t.error = err.message; }
   await refresh();
   if (termRunning(info.channel) && (t.xterm.cols !== dims.cols || t.xterm.rows !== dims.rows))   // fitted again meanwhile
