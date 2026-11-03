@@ -321,6 +321,8 @@ class TerminalTest(SessionsBase):
         run = self.logged()[0]
         self.assertEqual(run["argv"][3], "antigravity")
         self.assertEqual(run["argv"][-1], "--prompt-interactive=hello")  # agy takes no prompt after `--`
+        i = run["argv"].index("--add-dir")                               # its directory its workspace, trusted or not
+        self.assertEqual(run["argv"][i + 1], self.session(sid)["cwd"])
 
     def test_a_terminal_asked_for_full_screen_runs_the_screen_its_settings_choose(self):
         sid = self.s.create("g", self.work)["session_id"]

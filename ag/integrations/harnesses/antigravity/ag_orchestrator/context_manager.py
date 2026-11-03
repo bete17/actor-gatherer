@@ -15,7 +15,9 @@ What it decides, by Antigravity's rules (harness_kit/antigravity.py):
                        turn yet, not kept
     gatherer       the request's label (/h/<label>/ in the URL agy was pointed at), each conversation a channel
                    in it; without one, the conversation id, and the channel the conversation id too
-    cwd            its system instruction's `Command Working Directory:`
+    cwd            its system instruction's `Command Working Directory:`; agy states it only when it has a
+                   workspace (none in a folder it does not trust yet), else the directory the run was
+                   started in, as ag's launcher kept it (told.py), else the `cwd` option
 
 Then one model call through routing (ag/integrations/tools/ag_orchestrator/call_ag.py) with Antigravity's adaptor
 (adaptor/adaptor.py, or the one named by the `adaptor` option), each gatherer with a context manager server of its
@@ -125,7 +127,7 @@ class AntigravityContextManager(ProxyHook):
         told = self.told.of(run)
         if told:
             body = with_instructions(body, told)
-        cwd = call.cwd or self.cwd
+        cwd = call.cwd or self.told.cwd(run) or self.cwd      # agy, given no workspace, names none (setup/told.py)
         if call.kind == CallKind.COMPACTION:
             self.following(request, gatherer, channel, call)
             self.called(gatherer, channel, call)

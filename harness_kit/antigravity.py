@@ -617,11 +617,18 @@ class Antigravity(Harness):
 
     def command(self, session: str, resume: bool = False, model: Optional[str] = None,
                 permission_mode: Optional[str] = None, fullscreen: bool = True,
-                instructions: Optional[str] = None) -> List[str]:
-        """Its own options: `--model`, the permission mode (PERMISSIONS), the run's instructions (`instruction_args`),
-        and `--conversation <id>` to resume. It takes no id for a new conversation: the id is known from its first
-        call."""
-        return [*(["--model", model] if model else []), *PERMISSIONS.get(permission_mode or "", []),
+                instructions: Optional[str] = None, cwd: Optional[str] = None) -> List[str]:
+        """Its own options: `--add-dir <cwd>`, `--model`, the permission mode (PERMISSIONS), the run's instructions
+        (`instruction_args`), and `--conversation <id>` to resume. It takes no id for a new conversation: the id is known
+        from its first call.
+
+        `--add-dir`: the directory it is started in made its workspace. agy has one otherwise only in a folder the user
+        has trusted it with (its settings' `trustedWorkspaces`); in another, it asks first -- and given its first
+        message (`first_prompt`), sends that while it asks, telling its model it has no workspace, and naming no
+        `Command Working Directory` in its calls. So the session's own directory is trusted, without asking (nothing
+        is saved to its settings); it asks as before of any other."""
+        return [*(["--add-dir", cwd] if cwd else []), *(["--model", model] if model else []),
+                *PERMISSIONS.get(permission_mode or "", []),
                 *(self.instruction_args(instructions) if instructions else []),
                 *(["--conversation", session] if resume else [])]
 

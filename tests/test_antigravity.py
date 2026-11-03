@@ -83,6 +83,15 @@ class ReadTest(unittest.TestCase):
                          ["--model", "m", "--mode", "accept-edits", "--conversation", "s1"])
         self.assertEqual(AGY.command("s1", instructions="be brief"), ["--append-system-prompt", "be brief"])
 
+    def test_the_directory_it_starts_in_is_its_workspace(self):
+        # agy has a workspace only in a folder it trusts, else none: its directory named in no call (context_manager.py)
+        self.assertEqual(AGY.command("s1", resume=True, cwd="/w/new folder"),
+                         ["--add-dir", "/w/new folder", "--conversation", "s1"])
+        self.assertNotIn("--add-dir", AGY.command("s1"))
+        for name in ("claude", "codex"):                     # theirs: as they were, the directory not an option
+            h = harness_kit.get(name)
+            self.assertEqual(h.command("s1", model="m", cwd="/w"), h.command("s1", model="m"))
+
 
 class AdaptorTest(unittest.TestCase):
     def test_events_and_back(self):
@@ -408,6 +417,40 @@ class InstructionsTest(unittest.TestCase):
         told.tidy(home)                                   # 12345 is no process of this test: gone; ours stays
         self.assertEqual((reader.of("12345"), reader.of(str(os.getpid()))), (None, "mine"))
 
+    def test_the_runs_directory_kept_beside_them(self):
+        import tempfile
+        from ag.integrations.harnesses.antigravity.ag_orchestrator import told as read
+        from ag.integrations.harnesses.antigravity.setup import told
+        home = tempfile.mkdtemp()
+        self.assertEqual(told.path(home, "1", "cwd"), read.path(home, "1", "cwd"))
+        told.keep(home, "12345", "/w/proj", "cwd")
+        reader = read.Told(home)
+        self.assertEqual((reader.cwd("12345"), reader.of("12345"), reader.cwd("999"), reader.cwd(None)),
+                         ("/w/proj", None, None, None))
+        told.keep(home, "12345", "be brief")
+        told.keep(home, "12345", None)                   # a later run of the same id, told nothing: none, not the old
+        self.assertEqual((reader.of("12345"), reader.cwd("12345")), (None, "/w/proj"))
+        told.keep(home, str(os.getpid()), "/w/mine", "cwd")
+        told.tidy(home)                                   # 12345 is no process of this test: gone; ours stays
+        self.assertEqual((reader.cwd("12345"), reader.cwd(str(os.getpid()))), (None, "/w/mine"))
+
+    def test_the_launcher_keeps_the_runs_directory(self):
+        import tempfile
+        from types import SimpleNamespace
+        from unittest import mock
+        from ag.cli.launch import Run
+        from ag.integrations.harnesses.antigravity.ag_orchestrator import told as read
+        from ag.integrations.harnesses.antigravity.setup.launch import AntigravityLauncher
+        home, work = tempfile.mkdtemp(), tempfile.mkdtemp()
+        launcher = AntigravityLauncher({"command": ["agy"], "port": 4213, "env": {}}, home)
+        with mock.patch.object(launcher.servers, "running", return_value=[]), \
+                mock.patch.object(launcher.servers, "start", return_value=SimpleNamespace(url="http://127.0.0.1:9")):
+            got = launcher.launch(Run(["--add-dir", work, "--mode", "auto"], ["agy"], {"GEMINI_API_KEY": "k"}, "g", work))
+        self.assertIn(f"/r/{os.getpid()}", got.env["GOOGLE_GEMINI_BASE_URL"])
+        self.assertEqual(got.argv[-4:], ["--add-dir", work, "--mode", "auto"])        # agy's own: passed on
+        reader = read.Told(home)
+        self.assertEqual((reader.cwd(str(os.getpid())), reader.of(str(os.getpid()))), (work, None))
+
 
 class FakeClient:
     """A gatherer's server client: each request kept; a rewrite answered with its events, an `ag` note first."""
@@ -475,6 +518,17 @@ class HookTest(unittest.TestCase):
         self.assertEqual(got["systemInstruction"]["parts"][-1], {"text": "\n\nYou coordinate the actors."})
         got, _ = self.call([USER], run="78")
         self.assertNotIn("You coordinate", json.dumps(got["systemInstruction"]))
+
+    def test_a_call_naming_no_directory_has_the_runs(self):
+        # agy in a folder it does not trust, its first message given: no workspace, no `Command Working Directory`
+        from ag.integrations.harnesses.antigravity.setup import told
+        told.keep(self.home, "77", "/started/here", "cwd")
+        none_named = SYSTEM.replace("Command Working Directory: /work/here\n",
+                                    "The user does not have any active workspace.\n")
+        self.call([USER], none_named, run="77")
+        self.call([USER], SYSTEM, run="77")                 # one it names: that one
+        self.call([USER], none_named, run="78")             # a run that kept none (an older ag's): none
+        self.assertEqual([b["cwd"] for _, b in self.clients["g"].requests], ["/started/here", "/work/here", None])
 
     def test_what_a_calls_new_pieces_say_is_recorded(self):
         self.call([USER, RUN, BACKGROUNDED, FINISHED])

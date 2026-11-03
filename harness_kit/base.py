@@ -447,12 +447,13 @@ class Harness(ABC):
 
     def command(self, session: str, resume: bool = False, model: Optional[str] = None,
                 permission_mode: Optional[str] = None, fullscreen: bool = True,
-                instructions: Optional[str] = None) -> List[str]:
+                instructions: Optional[str] = None, cwd: Optional[str] = None) -> List[str]:
         """Its own arguments for `session` run in a terminal, after its name on ag's command line (`ag ... <name>`):
         `resume`, a session it has had before; `model`, None its own default; `permission_mode`, what it may do
         unasked ("auto", "acceptEdits", "plan", "bypassPermissions", as Claude Code names them); `fullscreen`, its
         full-screen interface where it has another; `instructions`, added to its own system prompt for this run
-        (`instruction_args`). The message it starts with goes after them, after `--`."""
+        (`instruction_args`); `cwd`, the directory it is started in (and runs in), for a harness that must be told it.
+        The message it starts with goes after them, after `--`."""
         raise NotImplementedError(f"{self.label or self.name or 'this harness'} is not run in a terminal here")
 
     # ---- its own files: what it keeps for itself, and where a reader saves what it reads

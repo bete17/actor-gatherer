@@ -13,7 +13,9 @@ agy's title call names no conversation: the run (`/r/<run>`, this process's id, 
 for. A conversation resumed by id (`--conversation <id>`) is claimed by ag (`Launch.session`); a new one is not.
 
 `--append-system-prompt <text>` is ag's, not agy's (harness_kit's `instruction_args`: agy has no option for it):
-taken out of agy's arguments and kept for the run (told.py), for agy's hook to add to each of the run's calls.
+taken out of agy's arguments and kept for the run (told.py), for agy's hook to add to each of the run's calls. The
+run's directory is kept there too: agy names it in its calls only when it has a workspace, which it has not in a folder
+it does not trust yet.
 """
 
 import json
@@ -112,7 +114,7 @@ class AntigravityLauncher(Launcher):
         server_url += (f"/h/{run.gatherer}" if run.gatherer else "") + ("" if run.dry_run else f"/r/{os.getpid()}")
         if not run.dry_run:
             told_of.tidy(self.home)
-            if told:
-                told_of.keep(self.home, str(os.getpid()), told)
+            told_of.keep(self.home, str(os.getpid()), told or None)
+            told_of.keep(self.home, str(os.getpid()), os.path.abspath(run.cwd or os.getcwd()), "cwd")
         return Launch([*run.command, *args], {**run.env, BASE_URL: server_url + path},
                       [f"{BASE_URL}={server_url + path} -> {origin}{path}"], session)
