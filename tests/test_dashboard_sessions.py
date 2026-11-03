@@ -80,8 +80,9 @@ class SessionsBase(unittest.TestCase):
         with open(fake, "w") as fh:
             fh.write(FAKE_AG)
         self.log = os.path.join(self.tmp.name, "fake.log")
+        self.claude = os.path.join(self.tmp.name, "claude")       # Claude Code's own folder: its records (none, unless put)
         self.env = unittest.mock.patch.dict(os.environ, {"AG_COMMAND": f"{sys.executable} {fake}", "FAKE_AG_LOG": self.log,
-                                                         "FAKE_AG_DELAY": "0"})
+                                                         "FAKE_AG_DELAY": "0", "CLAUDE_CONFIG_DIR": self.claude})
         self.env.start()
         self.chat("headless")                     # a message to the agent with no screen; ChatTerminalTest: the default
         self.s = sessions.Sessions()
@@ -310,6 +311,24 @@ class TerminalTest(SessionsBase):
         self.assertEqual(run["argv"][-2:], ["--session-id", sid])
         self.assertEqual(os.path.realpath(run["cwd"]), os.path.realpath(self.work))   # macOS: /var is /private/var
         self.assertEqual(self.session(sid)["status"], "terminal")
+
+    def test_one_closed_before_its_first_call_is_resumed_once_its_harness_has_kept_it(self):
+        """Claude Code keeps its record of a session once its first message is entered, before any call reaches ag, and
+        then refuses that session's id as a new one ("Session ID ... is already in use"): a terminal closed in that
+        moment, opened again, resumes it -- else it would exit at once, each time it is opened."""
+        sid = self.s.create("g", self.work)["session_id"]
+        self.started(sid)
+        self.s.stop(sid)
+        self.started(sid)                                    # no record yet: a new session still
+        self.s.stop(sid)
+        record = os.path.join(self.claude, "projects", harness_kit.claude.project_key(self.work), sid + ".jsonl")
+        os.makedirs(os.path.dirname(record))
+        with open(record, "w") as fh:
+            fh.write(json.dumps({"type": "user", "sessionId": sid}) + "\n")
+        self.assertEqual(self.session(sid)["turns"], 0)      # no turn ended, no call: resumed for its record alone
+        self.started(sid)
+        argvs = [x["argv"] for x in self.logged() if "argv" in x]
+        self.assertEqual([a[-2:] for a in argvs], [["--session-id", sid], ["--session-id", sid], ["--resume", sid]])
         self.assertTrue(self.session(sid)["terminal"])
         self.assertEqual(self.session(sid)["pid"], self.s.terms[sid].pid)
 
