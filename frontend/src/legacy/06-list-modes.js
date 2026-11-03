@@ -74,44 +74,166 @@ document.addEventListener("keydown", (ev) => {        // first: Esc closes the s
 function renderFolded() {
   if (listMode === "folded") renderRail();
   else if (listMode === "full") renderMonitor();
+  if (hover.from === "rail" && listMode !== "folded") cardHide();
 }
-// The rail: those waiting on the reader, stopped on an error, running, with work in the background, or finished, in that
-// order, a rule between each kind; then those open in the panes, if not among them. Each its avatar, its status's dot at
-// its corner; a click shows it, as in the list.
-const RAIL = ["Waiting for you", "Error", "Running", "Background", "Finished"];
+// The rail: the list, small. Each gatherer not hidden, its name over its actors -- a button folding it, as the list's
+// does (folded, the counts the list shows for it) -- and its actors in the list's order (listGroups), its Saved and Closed
+// folded as the list folds them, to a line here too that opens them (the one shown staying in view). Each its avatar, its
+// status's dot at its corner, and its name in small under it; hovered (or in focus from the keys), a card beside the rail
+// says who it is (actorCard). A click shows it, as in the list.
 function renderRail() {
-  const shown = state.home.gatherers.filter((g) => !isHidden(g)), rows = [];
-  for (const name of RAIL) for (const g of shown) for (const a of g.agents) if (groupOf(g, a) === name) rows.push([name, g, a]);
-  for (const [gname, c] of openActors()) {
-    const g = state.home.gatherers.find((x) => x.name === gname), a = g && g.agents.find((x) => x.channel === c);
-    if (a && !rows.some(([, h, b]) => h === g && b === a)) rows.push(["Open", g, a]);
-  }
+  const shown = state.home.gatherers.filter((g) => !isHidden(g));
   const list = el("div", { class: "r-actors" });
-  rows.forEach(([name, g, a], i) => {
-    if (i && rows[i - 1][0] !== name) list.append(el("hr"));
-    list.append(railActor(g, a));
-  });
-  if (!rows.length) list.append(el("div", { class: "r-none", text: "None at work" }));
+  for (const g of shown) {
+    const open = !collapsed.has(g.name), { crew, groups } = listGroups(g);
+    const sec = el("section", { class: "r-gatherer", "aria-label": titleOf(g) },
+      el("button", { class: "r-gname", type: "button", "aria-expanded": open ? "true" : "false",
+        title: `${titleOf(g)}${titleOf(g) !== g.name ? ` (${g.name})` : ""}: ${open ? "fold it" : "show its actors"}`,
+        onclick: () => toggleGatherer(g.name) }, el("span", { class: "caret", text: "▶" }), el("span", { class: "tx" }, ...breakable(titleOf(g)))));
+    if (!open) {                                      // folded: its counts, and those of its actors open in the panes
+      const counts = gathererCounts(g);
+      if (counts.length) sec.append(el("div", { class: "r-counts" }, ...counts));
+      for (const a of g.agents) if (openActors().some((sel) => isAt(sel, g.name, a.channel))) sec.append(railActor(g, a));
+    } else {
+      if (crew && !crewHidden.has(g.name)) sec.append(railActor(g, crew));
+      for (const [name, items] of groups) {
+        if (name === SHELLS) continue;                  // terminals: in the list only
+        if (name in FOLD_KEYS) {
+          const unfolded = foldOpen[name].has(g.name), what = name.toLowerCase();
+          sec.append(el("button", { class: "r-fold", type: "button", "aria-expanded": unfolded ? "true" : "false",
+            title: unfolded ? `Hide ${what} actors` : `Show ${what} actors`, onclick: () => toggleFold(name, g.name) },
+            `${unfolded ? "▾" : "▸"} ${items.length} ${what}`));
+          for (const a of unfolded ? items : items.filter((a) => openActors().some((sel) => isAt(sel, g.name, a.channel)))) sec.append(railActor(g, a));
+          continue;
+        }
+        for (const a of items) sec.append(railActor(g, a));
+      }
+    }
+    list.append(sec);
+  }
+  if (!shown.length) list.append(el("div", { class: "r-none", text: state.home.gatherers.length ? "Every gatherer is hidden" : "No gatherers" }));
   const gear = document.querySelector("#about-btn .gear svg").cloneNode(true);
   const live = document.getElementById("state-dot").dataset.state || "";
-  document.getElementById("rail").replaceChildren(
+  const rail = document.getElementById("rail"), was = rail.querySelector(".r-actors");
+  const top = was ? was.scrollTop : 0, across = was ? was.scrollLeft : 0;
+  rail.replaceChildren(
     el("button", { class: "list-btn", type: "button", title: "Every actor over the whole page: what each is doing", "aria-label": "Full screen",
       onclick: () => setListMode("full") }, strokeIcon(LIST_ICONS.full)),
     list,
     el("button", { class: "list-btn r-about", type: "button", title: document.getElementById("about-btn").title, "aria-label": "Settings",
       onclick: () => document.getElementById("about-btn").click() }, gear, el("span", { class: "state-dot", "data-state": live })));
+  list.scrollTop = top; list.scrollLeft = across;       // drawn again where the reader had scrolled it
+  if (hover.from === "rail") cardDraw();
+}
+// A name in a narrow column, broken after its _, - or . where it must break: "making_" over "ag", not "making_a" over "g".
+const breakable = (text) => String(text).split(/(?<=[_\-.])/).flatMap((part, i) => i ? [el("wbr"), part] : [part]);
+// What the rail writes under an actor's avatar, and its card at its top: its name, else what it was last asked (a message
+// from another actor, as the list says it), else that it has had none.
+function railName(a) {
+  if (a.name && a.name.text) return { text: a.name.text, cls: "" };
+  const env = envelope(a.last_user_message), asked = env ? crewLine(env) : a.last_user_message;
+  if (asked) return { text: firstLine(asked, 160), cls: "unnamed" };
+  return { text: isCoordinator(a) ? "Gatherer agent" : "No message yet", cls: "none" };
 }
 function railActor(g, a) {
   const [cls, label] = statusOf(a);
   const current = isAt(focusedActor(), g.name, a.channel);
   const open = !current && openActors().some((sel) => isAt(sel, g.name, a.channel));
-  const words = (a.name && a.name.text) || a.last_user_message || "No message yet";
-  return el("button", { class: "r-actor", type: "button", "aria-current": current ? "true" : "false", ...(open ? { "data-open": "true" } : {}),
-    "aria-label": `${firstLine(words, 120)}: ${label}`,
-    title: `${firstLine(words, 120)}\n${label} · ${ago(a.last)} · ${g.name}${SNAPSHOT ? "" : `\n${BESIDE_KEY}+click: open beside the one shown`}`,
-    onclick: (ev) => pick(g.name, a.channel, ev), oncontextmenu: (ev) => pickBeside(g.name, a.channel, ev) },
-    actorLogo(a), el("i", { class: `rd ${cls}`, "aria-hidden": "true", style: `--spin-at: -${Date.now() % 1200}ms` }));
+  const nm = railName(a);
+  return el("button", { class: "r-actor", type: "button", "data-card": key(g.name, a.channel), "aria-current": current ? "true" : "false",
+    ...(open ? { "data-open": "true" } : {}), "aria-label": `${nm.text}, in ${titleOf(g)}: ${label}`,
+    // where there is no hovering (a touch screen), the card's words as its title
+    ...(HOVERS.matches ? {} : { title: `${nm.text}\n${label} · ${ago(a.last)} · ${titleOf(g)}` }),
+    onclick: (ev) => { cardHide(); pick(g.name, a.channel, ev); }, oncontextmenu: (ev) => pickBeside(g.name, a.channel, ev) },
+    el("span", { class: "r-pic" }, actorLogo(a), el("i", { class: `rd ${cls}`, "aria-hidden": "true", style: `--spin-at: -${Date.now() % 1200}ms` })),
+    el("span", { class: "r-name" + (nm.cls === "none" ? " none" : ""), "aria-hidden": "true", text: nm.text }));
 }
+// The card an actor shows while hovered, in the rail or the list (or in focus from the keys): its avatar and name, its
+// gatherer and harness, its directory, its status, when it last did something and its size, what it was last asked
+// (under its name, if it has one), its recap, what runs in the background, its branch. Beside the rail or the list (under
+// the actor, where there is no room beside: the rail across a phone's top, the list as wide as the page), level with the
+// actor, inside the window; the pointer passes through it. It waits a moment the first time (HOVER_WAIT), then follows
+// the pointer from actor to actor at once; none over an actor's own buttons, which say what they do. Kept by where it
+// came from and the actor's key (data-card): the rail or the list drawn again under it, the card is said again from the
+// new data, at the actor's new place. Where there is no hovering (a touch screen), the actor's title says it instead.
+const HOVERS = matchMedia("(hover: hover)");
+const HOVER_WAIT = 250, hover = { from: null, key: null, shown: false, timer: null, node: null };
+const HOVER_FROM = { rail: () => listMode === "folded", agents: () => listMode === "list" };
+function hoverTo(from, k) {
+  clearTimeout(hover.timer);
+  if (!k) { hover.timer = setTimeout(cardHide, 120); return; }
+  if (k === hover.key && from === hover.from && hover.shown) return;
+  const go = () => { hover.from = from; hover.key = k; hover.shown = true; cardDraw(); };
+  if (hover.shown) go(); else hover.timer = setTimeout(go, HOVER_WAIT);
+}
+function cardHide() {
+  clearTimeout(hover.timer);
+  hover.from = null; hover.key = null; hover.shown = false;
+  if (hover.node) hover.node.hidden = true;
+}
+function cardDraw() {
+  const box = hover.from && document.getElementById(hover.from);
+  const at = box && [...box.querySelectorAll("[data-card]")].find((n) => n.dataset.card === hover.key);
+  const [gname, channel] = (hover.key || "").split("\u0000");
+  const g = state.home && state.home.gatherers.find((x) => x.name === gname), a = g && g.agents.find((x) => x.channel === channel);
+  if (!at || !a || !HOVER_FROM[hover.from]()) { cardHide(); return; }
+  if (!hover.node) {
+    hover.node = el("div", { class: "actor-card", id: "actor-card", role: "tooltip" });
+    document.body.append(hover.node);
+  }
+  const card = hover.node;
+  card.replaceChildren(...actorCard(g, a, hover.from === "agents" && isAt(focusedActor(), g.name, a.channel)));
+  card.hidden = false;
+  at.setAttribute("aria-describedby", "actor-card");
+  const r = at.getBoundingClientRect(), side = box.getBoundingClientRect();
+  const w = card.offsetWidth, h = card.offsetHeight, clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  if (side.width > side.height || side.right + 8 + w > innerWidth) {      // no room beside it: under the actor
+    card.style.left = `${clamp(r.left + r.width / 2 - w / 2, 8, innerWidth - w - 8)}px`;
+    card.style.top = `${clamp(hover.from === "rail" ? side.bottom + 6 : r.bottom + 4, 8, innerHeight - h - 8)}px`;
+  } else {
+    card.style.left = `${side.right + 8}px`;
+    card.style.top = `${clamp(r.top + r.height / 2 - h / 2, 8, innerHeight - h - 8)}px`;
+  }
+}
+// a path's end, where it tells one actor's from another's: its worktree, its project
+const tail = (t, n) => t.length > n ? "…" + t.slice(-(n - 1)) : t;
+// `shown`: the one shown, in the list, whose name is renamed by clicking it -- said at its foot
+function actorCard(g, a, shown = false) {
+  const [cls, label] = statusOf(a), nm = railName(a), size = a.real_tokens ?? a.sent_tokens;
+  const env = envelope(a.last_user_message), asked = env ? crewLine(env) : a.last_user_message;
+  const bg = a.background || [], dir = cwdOf(a);
+  const hint = [SNAPSHOT ? "Click to show it" : `Click to show it · ${BESIDE_KEY}+click: beside the one shown`];
+  if (shown && !SNAPSHOT) hint.splice(0, 1, `${nameNote(g, a).trim() ? `${nameNote(g, a).trim()} · ` : ""}Click its name (or F2) to ${a.name && a.name.text ? "rename" : "name"} it`);
+  return [
+    el("div", { class: "c-who" }, actorLogo(a),
+      el("div", { class: "tx" }, el("div", { class: "c-nm" + (nm.cls ? ` ${nm.cls}` : ""), text: nm.text }),
+        el("div", { class: "c-sub", text: `${titleOf(g)} · ${harnessName(a.harness)}` }))),
+    dir ? el("div", { class: "c-dir", title: dir, text: tail(tildePath(dir, state.home.home_dir), 44) }) : null,
+    el("div", { class: "c-st" }, el("span", { class: `status ${cls}` }, el("i", { "aria-hidden": "true" }), label),
+      el("span", { text: [ago(a.last), size !== null && size !== undefined ? `${compact(size)} tokens` : null].filter(Boolean).join(" · ") })),
+    asked && nm.cls !== "unnamed" ? el("div", { class: "c-asked" }, el("span", { class: "lbl", text: "Asked" }), firstLine(asked, 400)) : null,
+    a.recap && a.recap.text ? el("div", { class: "c-recap" }, el("span", { class: "lbl", text: "Recap" }), a.recap.text) : null,
+    bg.length ? el("div", { class: "c-bg", text: `${bg.length} in background · ${bg.map((t) => t.label || t.id).join(", ")}` }) : null,
+    branchChip(g, a),
+    el("div", { class: "c-hint", text: hint.join(" · ") }),
+  ].filter(Boolean);
+}
+for (const from of Object.keys(HOVER_FROM)) {
+  const box = document.getElementById(from);
+  box.addEventListener("pointerover", (ev) => {
+    if (ev.pointerType === "touch") return;
+    const at = ev.target.closest("[data-card]");
+    hoverTo(from, at && !ev.target.closest(".save-btn, .close-btn, .chat-icon, .branchline") ? at.dataset.card : null);
+  });
+  box.addEventListener("pointerleave", () => hoverTo(from, null));
+  box.addEventListener("focusin", (ev) => {
+    const at = ev.target.closest("[data-card]");
+    if (at && ev.target === at && at.matches(":focus-visible")) { hover.shown = true; hoverTo(from, at.dataset.card); }
+  });
+  box.addEventListener("focusout", () => hoverTo(from, null));
+  box.addEventListener("scroll", () => { if (hover.shown && hover.from === from) cardDraw(); }, true);   // kept level with its actor
+}
+addEventListener("resize", () => { if (hover.shown) cardDraw(); });
 // The monitor: every actor of the gatherers not hidden, a column for each group of the list that has any, side by side
 // -- those wanting the reader first, then those at work, then those at rest (MON_ORDER), Closed last; Saved and Closed folded
 // to a strip until opened, each column's fold kept in this browser -- and in each, a card for each actor: who it is, its status,

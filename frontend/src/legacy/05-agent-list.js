@@ -104,6 +104,29 @@ async function moveHidingToServer() {
   try { localStorage.removeItem(HIDDEN_KEY); } catch (e) { /* stays; the server's choices win */ }
   renderAgents();
 }
+// A gatherer's actors as the list has them: its gatherer agent (isCoordinator), apart from the groups, the actor the reader
+// arranges the others through; and each group that has any (GROUPS), in that order -- the closed newest first, so drawn
+// first; from then on, each group in the order its actors were last in (keepOrder) -- and its shells, oldest first, just
+// above the closed actors (SHELLS). The rail (renderRail) has them so too.
+function listGroups(g) {
+  const crew = g.agents.find(isCoordinator);
+  const groups = GROUPS.map((name) => [name, g.agents.filter((a) => a !== crew && groupOf(g, a) === name)]).filter(([, list]) => list.length);
+  for (const [name, list] of groups) if (name === "Closed") list.sort((x, y) => (y.last || 0) - (x.last || 0));
+  keepOrder(g.name, groups);
+  const shells = (state.home.shells || []).filter((s) => s.gatherer === g.name);
+  if (shells.length) {
+    const at = groups.findIndex(([name]) => name === "Closed");
+    groups.splice(at < 0 ? groups.length : at, 0, [SHELLS, shells]);
+  }
+  return { crew, groups };
+}
+// how many of its actors wait on the user, how many stopped on an error, and how many run now; nothing while none does
+function gathererCounts(g) {
+  const n = (group) => g.agents.filter((a) => groupOf(g, a) === group).length, of = plural(g.agents.length, "actor");
+  const count = (k, cls, what) => k ? el("span", { class: "count" + cls, title: `${k} of ${of} ${what}` }, el("i", { "aria-hidden": "true" }), String(k)) : null;
+  return [count(n("Waiting for you"), " asking", "waiting for you"), count(n("Error"), " error", "stopped on an error"),
+    count(n("Running"), "", "running")].filter(Boolean);
+}
 function renderAgents() {
   if (PANE) return;                                  // a frame has no list: the page around it has
   renderFolded();
@@ -121,12 +144,7 @@ function renderAgents() {
   else if (!shown.length) aside.append(el("div", { class: "servers", text: "Every gatherer is hidden." }));
   for (const g of shown) {
     const open = !collapsed.has(g.name);
-    // its gatherer agent (isCoordinator) first, apart from the groups: the actor the reader arranges the others through
-    const crew = g.agents.find(isCoordinator);
-    const groups = GROUPS.map((name) => [name, g.agents.filter((a) => a !== crew && groupOf(g, a) === name)]).filter(([, list]) => list.length);
-    const live = g.agents.filter((a) => groupOf(g, a) === "Running").length;
-    const waiting = g.agents.filter((a) => groupOf(g, a) === "Waiting for you").length;
-    const failed = g.agents.filter((a) => groupOf(g, a) === "Error").length;
+    const { crew, groups } = listGroups(g);
     const box = el("div", { class: "gatherer" },
       el("div", { class: "gatherer-row", "data-key": g.name },
         el("button", { class: "name", type: "button", "aria-expanded": open ? "true" : "false", onclick: () => toggleGatherer(g.name),
@@ -139,23 +157,10 @@ function renderAgents() {
         el("button", { class: "act hide", type: "button", title: `Hide ${g.name}`, "aria-label": `Hide ${g.name}`, onclick: () => setHidden(g, true) },
           hideIcon()),
         // how many of its actors wait on the user, how many stopped on an error, and how many run now; nothing while none does
-        el("span", { class: "fill", onclick: () => toggleGatherer(g.name) },
-          waiting ? el("span", { class: "count asking", title: `${waiting} of ${plural(g.agents.length, "actor")} waiting for you` },
-            el("i", { "aria-hidden": "true" }), String(waiting)) : null,
-          failed ? el("span", { class: "count error", title: `${failed} of ${plural(g.agents.length, "actor")} stopped on an error` },
-            el("i", { "aria-hidden": "true" }), String(failed)) : null,
-          live ? el("span", { class: "count", title: `${live} of ${plural(g.agents.length, "actor")} running` },
-            el("i", { "aria-hidden": "true" }), String(live)) : null),
+        el("span", { class: "fill", onclick: () => toggleGatherer(g.name) }, ...gathererCounts(g)),
         ...(SNAPSHOT ? [] : startButtons(g))));
     if (state.adding && state.adding.gatherer === g.name) box.append(newForm());
     if (g.error) box.append(el("div", { class: "servers", text: `Database unreadable: ${g.error}` }));
-    for (const [name, list] of groups) if (name === "Closed") list.sort((x, y) => (y.last || 0) - (x.last || 0));
-    keepOrder(g.name, groups);   // so drawn first; from then on, each group in the order its actors were last in
-    const shells = (state.home.shells || []).filter((s) => s.gatherer === g.name);
-    if (shells.length) {         // its shells, oldest first, just above the closed actors
-      const at = groups.findIndex(([name]) => name === "Closed");
-      groups.splice(at < 0 ? groups.length : at, 0, [SHELLS, shells]);
-    }
     if (open && crew && !crewHidden.has(g.name)) box.append(agentRow(g, crew, CREW_GROUP));
     for (const [name, list] of open ? groups : []) {
       if (name === SHELLS) {
@@ -191,6 +196,7 @@ function renderAgents() {
     aside.append(list);
   }
   slideList(aside, was);
+  if (hover.from === "agents") cardDraw();           // its card, said again from the new data
   nameMoving = false;
   if (state.renaming && !(nameInput && nameInput.isConnected)) { state.renaming = null; nameInput = null; }   // its row folded away
   else if (typing) { nameInput.focus({ preventScroll: true }); nameInput.setSelectionRange(...typing); }
@@ -239,25 +245,26 @@ function agentRow(g, a, group) {
   const naming = !!state.renaming && isAt([state.renaming.g, state.renaming.c], g.name, a.channel);
   const named = a.name && a.name.text;
   // its top line -- its name, else what it was last asked -- clicked once it is the one shown: named there
-  const nameIt = SNAPSHOT || !current ? {} : { title: `${nameNote(g, a)}Click to ${named ? "rename" : "name"} it`,
+  const nameIt = SNAPSHOT || !current ? {} : { ...(HOVERS.matches ? {} : { title: `${nameNote(g, a)}Click to ${named ? "rename" : "name"} it` }),
     onclick: (ev) => { if (ev.metaKey || ev.ctrlKey || ev.shiftKey) return; ev.stopPropagation(); startRename(g, a); } };
   const env = envelope(a.last_user_message);         // a message from another actor: who from, and its words
   const asked = env ? crewLine(env) : a.last_user_message;
   return el(naming ? "div" : "button", { class: "agent" + (naming ? " renaming" : "") + (isCoordinator(a) ? " coordinator" : ""),
     ...(naming ? {} : { type: "button" }),
     "aria-current": current ? "true" : "false", "data-key": `${g.name}/${a.channel}`, "data-group": group,
-    ...(open ? { "data-open": "true" } : {}),
-    title: `${harnessName(a.harness)} · ${label} · ${a.channel}${a.cwd ? "\n" + a.cwd : ""}${SNAPSHOT ? "" : `\n${BESIDE_KEY}+click: open beside the one shown`}`,
+    ...(open ? { "data-open": "true" } : {}), ...(naming ? {} : { "data-card": key(g.name, a.channel) }),
+    // hovered, the card (actorCard) says who it is; where there is no hovering, its title
+    ...(HOVERS.matches ? {} : { title: `${harnessName(a.harness)} · ${label} · ${a.channel}${a.cwd ? "\n" + a.cwd : ""}`
+      + (asked && named ? `\nAsked: ${firstLine(asked, 300)}` : "") + (a.recap && a.recap.text ? `\nRecap, ${ago(a.recap.at)}: ${a.recap.text}` : "")
+      + (SNAPSHOT ? "" : `\n${BESIDE_KEY}+click: open beside the one shown`) }),
     ...(naming ? {} : { onclick: (ev) => pick(g.name, a.channel, ev), oncontextmenu: (ev) => pickBeside(g.name, a.channel, ev),
       onkeydown: (ev) => { if (ev.key === "F2" && !SNAPSHOT) { ev.preventDefault(); startRename(g, a); } } }) },
     actorLogo(a),
     el("div", {},
-      naming ? nameBox() : named ? el("div", { class: "name", ...nameIt },
-        named) : null,
-      el("div", { class: "asked" + (asked ? "" : " none"), ...(naming || named ? {} : nameIt),
-        text: asked || (isCoordinator(a) ? "Coordinates this gatherer's actors: ask it to arrange their work" : "No message yet") }),
-      a.recap && a.recap.text ? el("div", { class: "recap", title: `Recap, ${ago(a.recap.at)}:\n${a.recap.text}` },
-        el("span", { class: "lbl", text: "Recap" }), a.recap.text) : null,
+      // just its name, else what it was last asked, on one line: what it was asked and its recap, in its title (and over
+      // the whole page, the monitor's card)
+      naming ? nameBox() : el("div", { class: "name" + (named ? "" : asked ? " unnamed" : " none"), ...nameIt,
+        text: named || (asked ? firstLine(asked, 200) : isCoordinator(a) ? "Coordinates this gatherer's actors" : "No message yet") }),
       // the list is drawn again on every change: the glyph's turn set by the clock, not restarted each time
       el("div", { class: "meta" }, el("span", { class: `dot ${cls}`, "aria-label": label, style: `--spin-at: -${Date.now() % 1200}ms` }),
         el("span", { text: [size !== null && size !== undefined ? `${compact(size)} tokens` : null, ago(a.last)].filter(Boolean).join(" · ") }),
