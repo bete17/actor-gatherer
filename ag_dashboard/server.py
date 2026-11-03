@@ -30,13 +30,11 @@ from typing import Optional
 
 import harness_kit
 
-from . import (actions, apps, avatars, branches, coordination, data, editor, home, live, migrating, preview, saved,
-               sessions)
+from . import (actions, apps, avatars, branches, coordination, data, editor, home, live, migrating, page_build, preview,
+               saved, sessions)
 
-STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")     # frontend/'s build (vite.config.ts)
-INDEX = os.path.join(STATIC, "index.html")
-FRONT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "frontend")   # in a checkout only
-BUILD = "cd frontend && corepack pnpm install && corepack pnpm build"
+STATIC, INDEX = page_build.STATIC, page_build.INDEX   # frontend/'s build (vite.config.ts), built by page_build.py
+BUILD = page_build.COMMAND
 ASSET_TYPES = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".map": "application/json",
                ".svg": "image/svg+xml", ".png": "image/png", ".woff2": "font/woff2"}
 _VENDOR_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vendor")
@@ -59,16 +57,8 @@ MAX_HEAD = 1 << 20          # the largest request line and headers taken (a long
 
 def built() -> Optional[str]:
     """What is wrong with the page's build, said for a person: None, nothing (or no source here to compare it with)."""
-    if not os.path.exists(INDEX):
-        return f"the dashboard's page is not built: run `{BUILD}` in the repository, then reload"
-    if not os.path.isdir(FRONT):
-        return None
-    newest = max((os.path.getmtime(os.path.join(d, f)) for top in ("src", "index.html")
-                  for d, _, fs in (os.walk(os.path.join(FRONT, top)) if top == "src" else [(FRONT, None, [top])])
-                  for f in fs), default=0)
-    if newest > os.path.getmtime(INDEX):
-        return f"the dashboard's page is older than its source in frontend/: run `{BUILD}`, then reload"
-    return None
+    wrong = page_build.wrong()
+    return wrong and f"{wrong}: run `{BUILD}` in the repository, then reload"
 
 
 def asset(name: str) -> Optional[bytes]:

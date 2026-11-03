@@ -7,6 +7,7 @@ one's methods, path, and the first paragraph of its handler's docstring (what it
 
 import argparse
 import errno
+import importlib.util
 import json
 import os
 import signal
@@ -15,7 +16,10 @@ import urllib.request
 import webbrowser
 from typing import List, Optional
 
-from . import data, home, live, server
+from . import data, home, live, page_build, server
+
+NEEDED = ["fastapi", "uvicorn", "sse_starlette"]   # what of pyproject.toml's `dashboard` extra it can't start without
+                                                  # (pycrdt it can: the Editor is left out), missing when ag is alone
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -28,6 +32,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--out", help="write the page, its data inside it, to this file and stop")
     ap.add_argument("--routes", action="store_true", help="list the server's routes, each with what it answers, and stop")
     args = ap.parse_args(argv)
+    missing = [name for name in NEEDED if importlib.util.find_spec(name) is None]
+    if missing:
+        print(f"ag dashboard: the dashboard's packages are not installed ({', '.join(missing)} missing): "
+              "pip install 'actor-gatherer[dashboard]', or from a checkout: pip install -e '.[dashboard]'",
+              file=sys.stderr)
+        return 1
     if args.routes:
         from . import app
         listed = app.routes()
@@ -37,7 +47,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 0
     if args.home:
         home.HOME = os.path.abspath(os.path.expanduser(args.home))
-    wrong = server.built()                         # the page not built, or older than its source in frontend/
+    page_build.ensure(lambda said: print(f"ag dashboard: {said}", file=sys.stderr))   # built, in a checkout, if it
+    wrong = server.built()                         # is missing or older than frontend/ (a pull); else what is wrong
     if wrong:
         print(f"ag dashboard: {wrong}", file=sys.stderr)
     if args.out:
