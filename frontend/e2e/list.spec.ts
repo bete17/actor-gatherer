@@ -1,5 +1,5 @@
 // The list of actors (page.html: "the agent list", "the list folded, or over the whole page").
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./test";
 import { GATHERER, masks, open } from "./home";
 
 test("lists the gatherer's actors, each with its harness, name, recap and last request", async ({ page }) => {

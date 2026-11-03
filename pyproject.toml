@@ -22,12 +22,14 @@ dependencies = [
     "backports.zstd>=1.0; python_version < '3.14'",   # for aiohttp: Codex on a ChatGPT login sends zstd requests
     "tiktoken>=0.7",         # counting tokens
     "litellm>=1.60",         # every LLM call the policies make, to any provider
-    "pycrdt>=0.12",          # the dashboard's Editor panel: a file edited by several at once (Yjs's CRDT, ag_dashboard/editor.py)
     "watchdog>=4; sys_platform == 'darwin'",   # the files a session's calls change, as macOS reports them (FSEvents);
                                                # Linux's inotify needs nothing (ag/integrations/tools/file_touches/watch.py)
 ]
 
 [project.optional-dependencies]
+dashboard = [                     # the dashboard (`ag`, `ag dashboard`): what ag alone doesn't need
+    "pycrdt>=0.12",          # its Editor panel: a file edited by several at once (Yjs's CRDT, ag_dashboard/editor.py)
+]
 codex = ["openai-codex>=0.163"]   # codex/<model> as the Gatherer's LLM, on your Codex login (CLIClient)
 
 [project.urls]
@@ -48,4 +50,4 @@ include = ["ag*", "harness_kit*"]
 # dashboard's page and its actors' avatars and what they say
 ag = ["cli/harnesses.toml", "integrations/**/*.ts"]
 harness_kit = ["marks/*.svg"]
-ag_dashboard = ["page.html", "gatherer_agent.md", "vendor/*", "examples/*.js", "avatars/*/*.svg", "avatars/hello.toml"]
+ag_dashboard = ["static/*", "static/assets/*", "gatherer_agent.md", "vendor/*", "examples/*.js", "avatars/*/*.svg", "avatars/hello.toml"]

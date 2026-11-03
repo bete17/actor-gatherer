@@ -41,7 +41,7 @@ The messages it and the actors send one another are not shown to the others eith
 
 Each message is kept in its sender's channel as an `actor_message` event (actions.py's `record`) -- {to, to_name, text,
 kind: "send" or "new"} -- which Chat shows in the sender's turn; the message itself is the receiver's, in its
-conversation, where Chat knows it by its envelope (page.html's `envelope`, ENVELOPE here).
+conversation, where Chat knows it by its envelope (the page's `envelope`, ENVELOPE here).
 
 WATCHES, table `watches` in the dashboard's database (<home>/dashboard.db, beside sessions.py's), one row per watch:
 
@@ -100,7 +100,7 @@ INSTRUCTIONS = os.path.join(os.path.dirname(os.path.abspath(__file__)), INSTRUCT
 
 # The envelope a message goes in, its first line saying who it is from and how to answer, then a blank line, then the
 # message: from the gatherer agent, or from another actor (its id, and its name as JSON). ENVELOPE reads it back (as
-# page.html's `envelope` does, the same pattern) -- also with its lines made one, as data.py's `last_user_message` has
+# the page's `envelope` does, the same pattern) -- also with its lines made one, as data.py's `last_user_message` has
 # a message. A watch's news (`update`) is no one's message: its first line says which watch and what became of the
 # actor watched, then what it was asked and said last, and the watcher's note (UPDATE reads it back).
 FROM_COORDINATOR = 'Message from the gatherer agent (answer it with: ag actors send gatherer "..."):'

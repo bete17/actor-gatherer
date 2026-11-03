@@ -1,6 +1,6 @@
 """When the reader last looked at each actor, kept in the dashboard's own database (<home>/dashboard.db,
 next to sessions.py's, hiding.py's and saved.py's tables), so every dashboard on this home shows the same
-actors FINISHED (page.html: done since the reader last looked) -- at either address the page is opened at
+actors FINISHED (the page: done since the reader last looked) -- at either address the page is opened at
 (localhost, 127.0.0.1: each a browser storage of its own), in any browser, after a restart. Table `seen`,
 one row per actor looked at:
 

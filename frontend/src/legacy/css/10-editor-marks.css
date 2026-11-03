@@ -1,0 +1,76 @@
+/* LaTeX (assets/src/editor/latex.mjs): titles larger, math tinted, emphasis as it prints, braces and options faint */
+.ed-body .hl-tex-h1 { font-size: 1.3em; font-weight: 700; } .ed-body .hl-tex-h2 { font-size: 1.15em; font-weight: 700; }
+.ed-body .hl-tex-h3 { font-size: 1.04em; font-weight: 650; }
+.ed-body .hl-tex-math { color: var(--hl-num); background: color-mix(in srgb, var(--hl-num) 10%, transparent); }
+.ed-body .hl-tex-mcmd { font-weight: 600; }
+.ed-body .hl-tex-em { font-style: italic; } .ed-body .hl-tex-ul { text-decoration: underline; text-underline-offset: 2px; }
+.ed-body .hl-tex-tt { background: color-mix(in srgb, var(--ink) 7%, transparent); border-radius: 3px; }
+.ed-body .hl-tex-url { color: var(--hl-fn); text-decoration: underline; text-underline-offset: 2px; }
+.ed-body .hl-tex-verb { color: var(--hl-str); }
+.ed-body .hl-tex-special { color: var(--hl-kw); font-weight: 600; }
+.ed-body .hl-tex-opt { color: var(--muted); }
+.ed-body .hl-tex-brace { color: var(--muted); font-weight: 400; font-style: normal; }
+.ed-body .ed-disk { background: color-mix(in srgb, var(--who, var(--s2)) 26%, transparent); }
+/* the conflict zone: the lines edited here since the file was opened, tinted very lightly */
+.ed-body .ed-zone { background: color-mix(in srgb, var(--s1) 7%, transparent); }
+.ed-zone-chip { display: inline-flex; align-items: center; gap: 2px; font-size: 11.5px; color: var(--ink-2); white-space: nowrap;
+  padding: 1px 2px 1px 8px; border-radius: 9px; background: color-mix(in srgb, var(--s1) 13%, transparent); }
+.ed-zone-chip button { border: 0; background: none; font: inherit; color: var(--s1); padding: 0 6px; cursor: pointer; border-radius: 7px; }
+.ed-zone-chip button:hover { background: color-mix(in srgb, var(--s1) 16%, transparent); }
+/* a conflict with the file on disk: the lines kept here, and under them the file's, with what to do about them */
+.ed-body .ed-cf-mine { background: color-mix(in srgb, var(--warning) 14%, transparent); box-shadow: inset 3px 0 0 var(--warning); }
+.ed-body .ed-cf { margin: 2px 0 6px; border: 1px solid color-mix(in srgb, var(--critical) 45%, var(--ring)); border-radius: 6px;
+  background: var(--surface); font-family: system-ui, -apple-system, "Segoe UI", sans-serif; overflow: hidden; white-space: normal;
+  position: sticky; left: 0; max-width: min(100%, 900px); box-sizing: border-box; }
+.ed-body .ed-cf-head .what { min-width: 0; overflow-wrap: anywhere; }
+.ed-body .ed-cf-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 5px 8px; font-size: 12px; color: var(--ink-2);
+  background: color-mix(in srgb, var(--critical) 8%, var(--surface)); }
+.ed-body .ed-cf-head .grow { flex: 1; }
+.ed-body .ed-cf-head button { font-size: 12px; padding: 2px 9px; }
+.ed-body .ed-cf-label { padding: 5px 8px 0 12px; font-size: 11px; color: var(--muted);
+  background: color-mix(in srgb, var(--critical) 6%, transparent); box-shadow: inset 3px 0 0 var(--critical); }
+.ed-body .ed-cf-theirs { margin: 0; padding: 4px 8px 6px 12px; font: 12.5px/1.55 var(--mono); white-space: pre; overflow-x: auto;
+  color: var(--ink); background: color-mix(in srgb, var(--critical) 6%, transparent); box-shadow: inset 3px 0 0 var(--critical); }
+button.ed-status { border: 0; cursor: pointer; font: inherit; font-size: 11.5px; }
+.ed-unmark { border: 0; background: none; color: var(--muted); font-size: 14px; line-height: 1; padding: 0 3px; margin-left: 3px; }
+.ed-unmark:hover { color: var(--ink); background: var(--wash); }
+.ed-row .mk.cf { font-size: 10.5px; font-weight: 700; color: #fff; background: var(--critical); border-radius: 7px; padding: 0 5px; line-height: 14px; }
+.ed-body .ed-disk-line { box-shadow: inset 3px 0 0 var(--who, var(--s2)); }
+/* an actor's lines from its branch, as long as it is not closed: tinted in its hue */
+.ed-body .ed-agent { background: color-mix(in srgb, var(--who, var(--s2)) 9%, transparent); box-shadow: inset 2px 0 0 color-mix(in srgb, var(--who, var(--s2)) 70%, transparent); }
+/* an actor's change from its branch, waiting for the reader: the box in its hue, not the conflict's red */
+.ed-body .ed-cf.from-branch { border-color: color-mix(in srgb, var(--who, var(--s1)) 55%, var(--ring)); }
+.ed-body .ed-cf.from-branch .ed-cf-head { background: color-mix(in srgb, var(--who, var(--s1)) 9%, var(--surface)); }
+.ed-body .ed-cf.from-branch .ed-cf-label, .ed-body .ed-cf.from-branch .ed-cf-theirs {
+  background: color-mix(in srgb, var(--who, var(--s1)) 7%, transparent); box-shadow: inset 3px 0 0 var(--who, var(--s1)); }
+.ed-body .ed-cf-head .ed-avs img { width: 16px; height: 16px; margin: 0; }
+.ed-body.wrap .ed-cf-theirs { white-space: pre-wrap; overflow-wrap: anywhere; overflow-x: hidden; }
+/* within a box's change: the words it adds (in its lines), and those it takes out (in the lines here) */
+.ed-body .ed-add { background: color-mix(in srgb, var(--good) 30%, transparent); border-radius: 2px; }
+.ed-body .ed-cf-label .ed-add, .ed-body .ed-cf-label .ed-del { padding: 0 3px; }
+.ed-body .ed-chg .ed-del + .ed-add { margin-left: 2px; }
+.ed-body .ed-del { background: color-mix(in srgb, var(--critical) 24%, transparent); border-radius: 2px;
+  text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--critical) 75%, transparent); }
+.ed-body .ed-cf-mine.from-branch { background: color-mix(in srgb, var(--who, var(--s1)) 12%, transparent); box-shadow: inset 3px 0 0 var(--who, var(--s1)); }
+.ed-brs:not(:empty) { padding: 0 8px 6px; }
+.ed-row .mk.br { font-size: 10.5px; font-weight: 700; color: var(--warning); border: 1px solid color-mix(in srgb, var(--warning) 60%, transparent);
+  border-radius: 7px; padding: 0 5px; line-height: 13px; }
+/* above the tree: the actors on branches of the project shown, each with its changes waiting */
+.ed-brs { display: grid; gap: 4px; }
+.ed-br { border: 1px solid color-mix(in srgb, var(--who, var(--s1)) 40%, var(--ring)); border-radius: 6px; padding: 4px 6px;
+  background: color-mix(in srgb, var(--who, var(--s1)) 5%, var(--page)); display: grid; gap: 3px; font-size: 12px; }
+.ed-br .hd { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.ed-br .hd img, .ed-br .hd .ed-noav { width: 15px; height: 15px; border-radius: 50%; flex: none; }
+.ed-br .hd .nm { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.ed-br .rt { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ed-br .rt code { font: 10.5px var(--mono); color: var(--ink-2); }
+.ed-br .ap { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 11.5px; cursor: pointer; }
+.ed-br .ap input { margin: 0; }
+.ed-br .f { display: flex; align-items: center; gap: 2px 4px; min-width: 0; flex-wrap: wrap; }
+.ed-br .f > button.go { flex: 1 1 110px; min-width: 0; border: 0; background: none; padding: 1px 2px; text-align: left; font: 11.5px var(--mono);
+  color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; border-radius: 4px; }
+.ed-br .f > button.go:hover { background: var(--wash); }
+.ed-br .f .k { color: var(--warning); font-size: 11px; white-space: nowrap; }
+.ed-br .f .pick { flex: none; font-size: 11px; padding: 0 6px; }
+.ed-br .none { color: var(--muted); font-size: 11.5px; }
+@media (max-width: 760px) { .ed-tree { width: 140px; } }

@@ -3,6 +3,7 @@ one agent over time, what a read held, the Gatherer's own model calls -- and the
 served on localhost or written with its data inside it."""
 import json
 import os
+import re
 import sqlite3
 import sys
 import tempfile
@@ -21,6 +22,7 @@ from ag.ag_policies.proactive_context_manager import ProactiveContextManager  # 
 from ag.ag_policies.proactive_context_manager import tables  # noqa: E402
 from ag_dashboard import data, server  # noqa: E402
 from ag_dashboard import home as dashboard_home  # noqa: E402
+import page_source  # noqa: E402
 from channels import ch  # noqa: E402
 from test_core import PREAMBLE, ScriptedLLM, agent, conversation, long_turn, user  # noqa: E402
 import codex_items  # noqa: E402
@@ -455,11 +457,14 @@ class HarnessTest(unittest.TestCase):
         self.assertIsNone(shape_of([user]))                 # a lone user message tells nothing
 
 
+@unittest.skipUnless(os.path.exists(server.INDEX), "the page is not built: python -m ag_dashboard.page_build")
 class PageTest(HomeBase):
     def test_a_snapshot_stands_alone(self):
         text = server.page(data.snapshot())
         self.assertNotIn("/*SNAPSHOT*/null", text)
-        embedded = text.split("const SNAPSHOT = ", 1)[1].split(";\n", 1)[0]
+        self.assertNotIn('src="/assets/', text)                            # its script and styles inside it
+        self.assertEqual(text.count('<script type="module">'), 1)
+        embedded = text.split("window.AG_SNAPSHOT = ", 1)[1].split(";</script>", 1)[0]
         snap = json.loads(embedded.replace("<\\/", "</"))
         self.assertIn("g\u0000c1", snap["agents"])
         self.assertIn(f"g\u0000{self.reads[-1]}", snap["reads"])     # the last read's contents, inside
@@ -470,13 +475,21 @@ class PageTest(HomeBase):
         self.assertNotIn("<!--VENDOR-->", text)
         self.assertIn("marked v15", text)
         self.assertIn("DOMPurify", text)
-        self.assertEqual(text.count("<script>"), 6)          # the two libraries, xterm.js and its fit and WebGL add-ons, then the page's own
+        self.assertEqual(text.count("<script>"), 6)          # the two libraries, xterm.js and its fit and WebGL add-ons, the snapshot's line
+        self.assertRegex(text, r'<script type="module" crossorigin src="/assets/[\w.-]+\.js">')   # then the page's own
         self.assertIn(".xterm-helper-textarea", text)                       # xterm.js's stylesheet
 
     def test_a_snapshot_has_no_terminal(self):
         text = server.page(data.snapshot())
         self.assertEqual(text.count("<script>"), 3)
         self.assertNotIn(".xterm-helper-textarea", text)
+
+    def test_the_build_s_files_are_served_and_nothing_beside_them(self):
+        name = re.search(r'src="/assets/([\w.-]+\.js)"', server.page()).group(1)
+        self.assertTrue(server.asset(name))
+        self.assertIsNone(server.asset("../index.html"))
+        self.assertIsNone(server.asset(".hidden"))
+        self.assertIsNone(server.asset("no-such.js"))
 
     def test_a_snapshot_cannot_close_its_script(self):
         text = server.page({"home": {"x": "</script><script>alert(1)</script>"}})
@@ -491,10 +504,9 @@ class PageTest(HomeBase):
         self.assertEqual([n for n, i in info.items() if i["runs"]], harness_kit.runnable())
         self.assertFalse(info["codex"]["fullscreen"])
         self.assertEqual(info["claude"]["stopped"]["lead"], "⎿")
-        snap = server.page(data.snapshot()).split("const SNAPSHOT = ", 1)[1].split(";\n", 1)[0]
+        snap = server.page(data.snapshot()).split("window.AG_SNAPSHOT = ", 1)[1].split(";</script>", 1)[0]
         self.assertIn("harness_info", json.loads(snap.replace("<\\/", "</"))["home"])       # a snapshot's, too
-        with open(server.PAGE, encoding="utf-8") as fh:
-            page = fh.read()
+        page = page_source.script()
         for gone in ("const HARNESS =", "BADGES", "ANTIGRAVITY_ARCH", "CHAT_HARNESSES", "STOPPED_SAYS", '!== "codex"'):
             self.assertNotIn(gone, page)                  # each harness's look and screen: harness_kit's
 
@@ -505,7 +517,8 @@ class PageTest(HomeBase):
         self.addCleanup(httpd.shutdown)
         url = f"http://127.0.0.1:{httpd.server_port}"
         get = lambda path: urllib.request.urlopen(url + path, timeout=10)  # noqa: E731
-        self.assertIn("ag dashboard", get("/").read().decode())
+        self.assertIn("<title>ag</title>", get("/").read().decode())       # the page, built or saying how to build it
+        self.assertIn(b"marked v15", get("/vendor/marked.min.js").read(300))   # a vendored script, on its own
         self.assertEqual(json.load(get("/api/home"))["gatherers"][0]["name"], "g")
         self.assertEqual(len(json.load(get("/api/agent?gatherer=g&channel=c1"))["reads"]), 3)
         self.assertTrue(json.load(get(f"/api/read?gatherer=g&read_id={self.reads[0]}"))["groups"])

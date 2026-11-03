@@ -224,7 +224,7 @@ class UnstoredTest(unittest.TestCase):
         self.store("user_message", ago=1, channel="another")                                   # another session's
         self.assertEqual(self.left(typed), ["waiting", "mid-turn", "next turn"])
         self.store("user_message", ago=1)                                                      # its own: stored
-        self.assertEqual(self.left(typed), ["waiting", "mid-turn"])                            # the rest, by their words (page.html)
+        self.assertEqual(self.left(typed), ["waiting", "mid-turn"])                            # the rest, by their words (the page)
 
 
 class TurnTest(RecordBase):

@@ -1,7 +1,9 @@
-"""The dashboard's local server: the page (page.html) and the JSON it reads, from the
+"""The dashboard's local server: the page (frontend/, built into static/) and the JSON it reads, from the
 context manager's home (data.py), read-only. Standard library only.
 
-    GET /                                 the page
+    GET /                                 the page: static/index.html, the vendored scripts in it (page()); or, not
+                                          built yet, how to build it
+    GET /assets/<name>                    what the page's build made (static/assets/): its script and styles
     GET /api/home                         data.home(), each actor with its avatar (avatars.py's `assign`), and the
                                           shells open (sessions.py's `shells`)
     GET /avatars/<kind>/<name>.svg        an avatar's picture (ag_dashboard/avatars/); ?bare=1: without its circle
@@ -32,6 +34,9 @@ context manager's home (data.py), read-only. Standard library only.
         a full screen then drawn all again, sessions.py's `redraw`)}, then `exit` {code} when its process
         ends; `none` when it has no terminal
     GET /api/views                        the reader's own chat views: <home>/dashboard/views/*.js, by name
+    GET /vendor/<file>                    a vendored script or stylesheet the page has inside it (marked, DOMPurify,
+                                          xterm.js and its add-ons), on its own, for the page in development
+                                          (frontend/'s `vite`)
     GET /vendor/editor.js                 the Editor panel's editor (CodeMirror and Yjs, assets/src/editor), loaded the
                                           first time the page shows the view
     GET /api/edit/list?dir=D&root=R       editor.listing(D, R): a directory under R, each entry with who edits it
@@ -57,7 +62,7 @@ context manager's home (data.py), read-only. Standard library only.
         {update, disk (true: the file's own change on disk)}, `aware` {update}, `left` {client} and `state`
         {dirty, missing, error, changed, saved, editors, conflicts: [{id, from, to (UTF-16), base, theirs, at, zone}],
         zone: [[from, to], ...] (the conflict zone)} as they come; `failed` {error} when it cannot be opened
-    GET /views/<name>.js                  one of them, which the page loads (page.html: chat views)
+    GET /views/<name>.js                  one of them, which the page loads (the page: chat views)
     POST /api/gatherers {name}            a new gatherer (`ag new`), no session yet -> {name}
     POST /api/projects {gatherer, add | remove, dirs?}   a project set for the gatherer (a folder in a repository, or a
                                           GitHub repository: cloned), or no longer -> as GET /api/projects
@@ -202,22 +207,62 @@ from urllib.parse import parse_qs, unquote, urlsplit
 import harness_kit
 
 from . import (actions, avatars, branches, browser, coordination, data, docwriter, editor, files, hiding, history, home,
-               live, mcp, migrating, monitor, naming, preview, saved, seen, sessions, settings, titles)
+               live, mcp, migrating, monitor, naming, page_build, preview, saved, seen, sessions, settings, titles)
 
-PAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "page.html")
+STATIC, INDEX = page_build.STATIC, page_build.INDEX   # frontend/'s build (vite.config.ts), built by page_build.py
+BUILD = page_build.COMMAND
+ASSET_TYPES = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".map": "application/json",
+               ".svg": "image/svg+xml", ".png": "image/png", ".woff2": "font/woff2"}
 _VENDOR_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vendor")
 VENDOR = [os.path.join(_VENDOR_DIR, n) for n in ("marked.min.js", "purify.min.js")]
 TERMINAL = [os.path.join(_VENDOR_DIR, n) for n in ("xterm.js", "addon-fit.js", "addon-webgl.js", "xterm.css")]
 EDITOR = os.path.join(_VENDOR_DIR, "editor.js")
+_VENDOR_FILES = {"/vendor/" + os.path.basename(p): p for p in VENDOR + TERMINAL}
 LLM_SECONDS = 10.0          # how long the Gatherer's call log is reused before it is read again
 KEEPALIVE = 15.0            # the most a stream stays silent
 COALESCE = 0.03             # after a wake, how long to wait for the rest of a burst (a call stores many events)
 SHARED_SECONDS = 2.0        # a home read for one stream given to another woken by the same change: at most this old
 
 
+def built() -> Optional[str]:
+    """What is wrong with the page's build, said for a person: None, nothing (or no source here to compare it with)."""
+    wrong = page_build.wrong()
+    return wrong and f"{wrong}: run `{BUILD}` in the repository, then reload"
+
+
+def asset(name: str) -> Optional[bytes]:
+    """A file the page's build made (static/assets/<name>), or None: none such, or a name that leaves the folder."""
+    if not re.fullmatch(r"[\w.-]+", name) or name.startswith("."):
+        return None
+    path = os.path.join(STATIC, "assets", name)
+    if not os.path.isfile(path):
+        return None
+    with open(path, "rb") as fh:
+        return fh.read()
+
+
+def _inlined(text: str) -> str:
+    """The page with its build's script and styles in it, not fetched: a snapshot is one file, opened with no server."""
+    def script(m):
+        code = (asset(m.group(1)) or b"").decode("utf-8")
+        code = re.sub(r"\n//# sourceMappingURL=\S+\s*$", "\n", code)
+        return '<script type="module">' + code.replace("</script", "<\\/script") + "</script>"
+
+    def style(m):
+        return "<style>" + (asset(m.group(1)) or b"").decode("utf-8").replace("</style", "<\\/style") + "</style>"
+
+    text = re.sub(r'<script type="module" crossorigin src="/assets/([\w.-]+)"></script>', script, text)
+    text = re.sub(r'<link rel="stylesheet" crossorigin href="/assets/([\w.-]+)">', style, text)
+    return re.sub(r'<link rel="modulepreload"[^>]*>', "", text)
+
+
 def page(snapshot: Optional[dict] = None) -> str:
-    """The page; with `snapshot`, its data inside it."""
-    with open(PAGE, encoding="utf-8") as fh:
+    """The page; with `snapshot`, its data inside it, and all it needs in it. Not built: a page saying how."""
+    if not os.path.exists(INDEX):
+        return ("<!doctype html><meta charset=utf-8><title>ag</title><p style=\"font: 14px system-ui; margin: 40px\">"
+                f"The ag dashboard's page is not built here. In the repository, run <code>{BUILD}</code>, then reload. "
+                "(ag from PyPI comes with it built.)</p>")
+    with open(INDEX, encoding="utf-8") as fh:
         text = fh.read()
     scripts = []
     for path in VENDOR + (TERMINAL if snapshot is None else []):
@@ -230,7 +275,7 @@ def page(snapshot: Optional[dict] = None) -> str:
     if snapshot is None:
         return text
     embedded = json.dumps(snapshot).replace("</", "<\\/")      # never closes the script it sits in
-    return text.replace("/*SNAPSHOT*/null", embedded, 1)
+    return _inlined(text.replace("/*SNAPSHOT*/null", embedded, 1))
 
 
 class _Calls:
@@ -322,11 +367,11 @@ def handler(calls: _Calls, hub: live.Hub, started: sessions.Sessions, editors: e
         def log_message(self, fmt, *args):      # quiet: one line per request is noise
             pass
 
-        def send(self, status: int, body: bytes, kind: str) -> None:
+        def send(self, status: int, body: bytes, kind: str, cache: str = "no-store") -> None:
             self.send_response(status)
             self.send_header("Content-Type", kind)
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-store")
+            self.send_header("Cache-Control", cache)
             self.end_headers()
             self.wfile.write(body)
 
@@ -339,6 +384,13 @@ def handler(calls: _Calls, hub: live.Hub, started: sessions.Sessions, editors: e
             try:
                 if url.path in ("/", "/index.html"):
                     return self.send(200, page().encode("utf-8"), "text/html; charset=utf-8")
+                if url.path.startswith("/assets/"):
+                    name = unquote(url.path[len("/assets/"):])
+                    got = asset(name)
+                    if got is None:
+                        return self.send(404, b"not found", "text/plain")
+                    return self.send(200, got, ASSET_TYPES.get(os.path.splitext(name)[1], "application/octet-stream"),
+                                     cache="public, max-age=31536000, immutable")   # named by its content: never changes
                 if url.path == "/api/stream":
                     return self.stream(q.get("gatherer"), q.get("channel"), _pairs(q.get("also")))
                 if url.path == "/api/home":
@@ -356,6 +408,10 @@ def handler(calls: _Calls, hub: live.Hub, started: sessions.Sessions, editors: e
                 if url.path.startswith("/vendor/pdfjs/"):
                     got = preview.viewer_file(unquote(url.path[len("/vendor/pdfjs/"):]))
                     return self.send(200, *got) if got else self.send(404, b"not found", "text/plain")
+                if url.path in _VENDOR_FILES:              # each on its own: a page in development (frontend/'s
+                    path = _VENDOR_FILES[url.path]           # `vite`) loads them so; the dashboard's has them inside
+                    with open(path, "rb") as fh:
+                        return self.send(200, fh.read(), ASSET_TYPES.get(os.path.splitext(path)[1], "text/plain"))
                 if url.path == "/vendor/editor.js":
                     with open(EDITOR, "rb") as fh:
                         return self.send(200, fh.read(), "text/javascript; charset=utf-8")

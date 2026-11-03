@@ -1,7 +1,7 @@
 """DocWriter (github.com/docwriter-org/docwriter, MIT) in the dashboard: its page -- a writing app where the author
 and an agent edit the same draft, the agent's edits proposed beside the text until the author accepts them -- built
 against the dashboard (assets/src/docwriter -> vendor/docwriter/), and its agent an ACTOR of the gatherer: an ordinary
-session started from the dashboard (sessions.py), in the list, whose view DocWriter is (page.html's "docwriter" chat view,
+session started from the dashboard (sessions.py), in the list, whose view DocWriter is (the page's "docwriter" chat view,
 beside its Terminal, Chat and History), that the page sends its requests to as messages. What DocWriter's own server did
 is done here, or in the page:
 
@@ -26,7 +26,7 @@ is done here, or in the page:
                           an MCP server the actor reaches at /docwriter/w/<key>/mcp, each call passed to a page with
                           the DocWriter open, which runs DocWriter's own code on its document and answers -- a call
                           made while none has, waiting PAGE_WAIT for one: the dashboard's page opens the DocWriter of
-                          an actor at work (page.html's `dwTell`), a moment after its turn starts. Claude Code
+                          an actor at work (the page's `dwTell`), a moment after its turn starts. Claude Code
                           is kept from editing an open document with its own tools by a PreToolUse hook
                           (docwriter_guard.py, asking `guard`); codex is told to
     what the author does  `record`: an event of the dashboard's in the actor's channel (`ag home insert`), as naming.py's

@@ -13,8 +13,8 @@ sys.path.insert(0, ROOT)
 
 import harness_kit  # noqa: E402
 from ag_dashboard import data  # noqa: E402
+import page_source  # noqa: E402
 
-PAGE = os.path.join(ROOT, "ag_dashboard", "page.html")
 START = "// Whether the message Claude Code took back is in its input box untouched"
 END = "// What waits to reach the agent, at the latest turn's end"
 # what the section uses of the page, stood in for; each case runs on a fresh page: [steps], each [name, ...arguments]
@@ -51,8 +51,7 @@ process.stdin.on("data", (d) => { input += d; }).on("end", () =>
 
 
 def section() -> str:
-    with open(PAGE, encoding="utf-8") as fh:
-        text = fh.read()
+    text = page_source.script()
     return text[text.index(START):text.index(END)]
 
 
@@ -128,8 +127,7 @@ class StoppedTest(unittest.TestCase):
     codex's; a harness that says none its own, plain ones."""
 
     def lines(self, *cases):
-        with open(PAGE, encoding="utf-8") as fh:
-            text = fh.read()
+        text = page_source.script()
         code = text[text.index(STOPPED[0]):text.index(STOPPED[1])]
         home = {"harness_info": data.harness_info(), "harness_default": harness_kit.DEFAULT}
         got = subprocess.run(["node", "-e", RUN_STOPPED % (json.dumps(home), code)], input=json.dumps(cases),

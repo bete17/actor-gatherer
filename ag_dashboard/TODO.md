@@ -42,7 +42,7 @@ Not covered yet:
 
 - [ ] **"Yes, clear context and implement"** (the plan's choice 2) starts another thread: left to the terminal.
 - [x] **Codex's wrappers in the Chat view**: a `<proposed_plan>` is drawn as a card headed "Proposed plan"
-  (page.html's `markdown`), and the answers to what codex asked as it worked as "question → answer" (`asked`), part
+  (the page's `markdown`), and the answers to what codex asked as it worked as "question → answer" (`asked`), part
   of the turn that asked (files.py, harness_kit.codex's `replies`).
 - [ ] **A question in a codex terminal outside the dashboard** is shown but not answerable, as Claude Code's are.
 - The keys are codex 0.164's. As for Claude Code, what codex records is checked against what was picked
@@ -82,7 +82,7 @@ the harness would otherwise get a bare 500. The actor shows Running with a note 
 (`stopped`), or no try comes for GIVE_UP_SECONDS -- Esc while Claude Code waits to try again stops it without a word
 in its record. The same record shows a turn the user
 interrupted (Esc) as Idle, where ag's record would go on running. Chat says under each turn how it stopped short, in
-its harness's own words (files.py's `stopped`, page.html's STOPPED_SAYS): Claude Code's "⎿ Interrupted · What should
+its harness's own words (files.py's `stopped`, the page's STOPPED_SAYS): Claude Code's "⎿ Interrupted · What should
 Claude do instead?", codex's "■ Conversation interrupted" (less its pointer to its /feedback; and its "■ Goal
 budget reached - the turn was stopped.", by its record's `reason`) -- from that record or from the note the harness
 sends the model with the next message ("[Request interrupted by user]", codex's `<turn_aborted>`); or the error it gave
@@ -316,7 +316,7 @@ Not covered yet:
 
 ## The Editor panel
 
-The Editor (editor.py, page.html's "the Editor") opens from a pane's header above the panes: the actors' views are
+The Editor (editor.py, the page's "the Editor") opens from a pane's header above the panes: the actors' views are
 below it, shorter while it is open, and Cmd/Ctrl+click in the list opens more of them side by side. On its left, a
 folder's tree, any folder: the one above, one typed, or an actor's working directory. A file opens as a shared document
 (Yjs, kept by pycrdt on the dashboard's side): every page with the file open sees the others' edits and cursors as they
@@ -363,7 +363,7 @@ Not done yet:
 
 ### The preview (Execute)
 
-The Editor's Execute button (preview.py, page.html's "the project's preview") runs a git project's preview -- a shell
+The Editor's Execute button (preview.py, the page's "the project's preview") runs a git project's preview -- a shell
 command, in the checkout of the file open -- and shows what it makes beside the file: a file of the checkout (image,
 SVG, PDF, HTML, Markdown, text), the page of a server it starts (a URL: kept running until Stop, the panel closed, or
 IDLE with no page watching), or its output. One preview per repository, in dashboard.db's `previews`, shared by its

@@ -17,6 +17,7 @@ from contextlib import redirect_stderr, redirect_stdout
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import harness_kit  # noqa: E402
+import page_source  # noqa: E402
 from harness_kit.base import Box  # noqa: E402
 from ag.cli import actors as cli  # noqa: E402
 from ag_dashboard import branches, browser, coordination, data, docwriter, editor, files, server, sessions  # noqa: E402
@@ -26,7 +27,6 @@ from test_dashboard_sessions import FAKE_AG, SessionsBase  # noqa: E402
 FAKE = FAKE_AG.replace('"claudecode": os.environ.get("CLAUDECODE")}',
                        '"claudecode": os.environ.get("CLAUDECODE"), "actor": os.environ.get("AG_ACTOR"), '
                        '"dashboard": os.environ.get("AG_DASHBOARD")}')
-PAGE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ag_dashboard", "page.html")
 
 
 def git(cwd, *args):
@@ -66,8 +66,7 @@ class EnvelopeTest(unittest.TestCase):
         self.assertIsNone(coordination.opened("just a message"))
 
     def test_the_page_reads_envelopes_by_the_same_patterns(self):
-        with open(PAGE) as fh:
-            page = fh.read()
+        page = page_source.script()
         for name in ("ENVELOPE", "UPDATE"):
             js = re.search(rf"^const {name} = /(.*)/;$", page, re.M).group(1)
             self.assertEqual(js, getattr(coordination, name).pattern, name)

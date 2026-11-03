@@ -1,6 +1,6 @@
 # The dashboard on a standard stack: plan
 
-Status: A0, A1 and A2 built. A1's build step, the server serving it and `publish.yml` building it come with A3, the
+Status: A0–A3 built. A1's build step, the server serving it and `publish.yml` building it come with A3, the
 first step with something to build. It moves the
 dashboard to the tools most web front ends and Python APIs are built with now, in steps that keep it working.
 
@@ -48,9 +48,9 @@ dashboard to the tools most web front ends and Python APIs are built with now, i
 - **Node for development.** Each worktree runs `pnpm install` (one shared store, so it's quick) and either the Vite
   dev server or a build.
 - **A build after a pull.** The built front end goes to `ag_dashboard/static/`, which is not in git. `publish.yml`
-  builds it before `python -m build`, so the PyPI package carries it. Your ag is an editable install from the main
-  checkout (`.venv`), so after a pull it needs `pnpm -C frontend build`. A git `post-merge` hook can run that, and
-  `ag dashboard` says so when the build is older than the source.
+  builds it before `python -m build`, so the PyPI package carries it. From a checkout, `ag dashboard` builds it
+  when it starts and the build is missing or older than `frontend/` (`ag_dashboard/page_build.py`), so a pull
+  needs nothing more than a restart.
 - **The dashboard stops being standard-library only:** it adds fastapi, uvicorn, pydantic and sse-starlette.
   ag itself doesn't change.
 - **Views are rewritten, not moved.** That is where the risk is. Each view gets its Playwright tests before it is
@@ -79,7 +79,7 @@ frontend/                  the dashboard's front end: Vite, TypeScript, React
       editor/              CodeMirror and Yjs, Tree, Changes, Conflicts, Preview
     apps/                  index.ts (APPS), docwriter/, browser/
     compat/                agDashboard.chatView, for <home>/dashboard/views/*.js
-    legacy/                page.html's code split into modules (step A3); empties as views move to React
+    legacy/                page.html's script and styles, cut at its sections (A3); empties as views move to React
   tests/                   Vitest
   e2e/                     Playwright: a spec per view, screenshots (tests/web_home.py builds and serves its home)
 ag_dashboard/
@@ -112,6 +112,15 @@ Checked by ESLint and tests in CI:
 6. No file over 500 lines (ESLint's `max-lines`).
 7. `test_harness_untouched.py` stays: the dashboard names no harness.
 
+## Working on the page
+
+```
+cd frontend && corepack pnpm install     # once per checkout or worktree (one package store for all of them)
+corepack pnpm build                      # the page the dashboard serves (ag_dashboard/static/)
+AG_DASHBOARD_URL=http://127.0.0.1:4200 corepack pnpm dev   # the page from source, reloading on each change
+corepack pnpm test && corepack pnpm e2e  # unit tests; browser tests (AG_PYTHON, PW_CHANNEL: playwright.config.ts)
+```
+
 ## Order of work
 
 There are two tracks. They touch different files, so separate actors can run them at the same time.
@@ -139,20 +148,49 @@ All files are new, so this conflicts with nothing.
 `chatSend` and `interrupting` (the other `cfg`s were local `const`s). A module can't assign another's, so they
 moved into `state`. A3's script checks the same at its finer cuts, where a section splits into several files.
 
-**A3. The split: `page.html` into modules under `src/legacy/`, by a script.**
-- The script cuts the page along its section dividers, and the CSS along its comments.
-- Each file's body stays byte for byte: imports are added at the top and an `export { … }` list at the bottom.
-- So the same script ports a diff of `page.html` onto the new files, and open branches (#211, #212, the worktrees)
-  move across with it.
-- Vite builds the result and `page.html` goes.
+**A3. The split: `page.html` into `frontend/`, by a script (`frontend/scripts/split.mjs`).**
+- **Where it went:** the markup into `frontend/index.html`; the styles into `src/legacy/css/` (12 files, cut at the
+  comments that open each feature's rules); the script into `src/legacy/` (22 files, one per section divider). Every
+  line is as it was in `page.html`, apart from the line that reads a snapshot's data.
+- **One module, not 22:** `vite-plugin-legacy.ts` joins the script's files, in the order of `src/legacy/order.json`,
+  into one module (`virtual:legacy`), with a source map back to each file. The sections share one scope and run top
+  to bottom, as they did in one `<script>`. Turned into modules that import each other, they would run in import
+  order instead, and a section's code that runs at load would reach another's values before they are set. The
+  files are temporary: each goes as its view is rewritten (A5, A6), and new code is ordinary modules.
+- **The server** serves the build (`ag_dashboard/static/`: `index.html` and `/assets/`, the assets cached for good
+  since their names change with their content), and the vendored scripts each on its own too, for `vite` in
+  development. A snapshot inlines the build's script and styles, so it is still one file. With no build, the page
+  and `ag dashboard`'s start say how to build; `ag dashboard` also says when the build is older than `frontend/`.
+- **Porting a branch begun before the split:** since the lines are unchanged, `split.mjs --port` rewrites a diff of
+  `page.html` as a diff of the new files:
 
-When: on the latest `main`, at a quiet time. The open `page.html` PRs are merged first, and the gatherer agent asks
-actors to hold page work that day.
+  ```
+  base=$(git merge-base HEAD origin/main)
+  git show $base:ag_dashboard/page.html > /tmp/page.html
+  git diff $base -- ag_dashboard/page.html > /tmp/page.diff
+  node frontend/scripts/split.mjs --port /tmp/page.diff /tmp/page.html | git apply
+  ```
+- **Tests** that read the page (`test_dashboard_code`, `_plan`, `_esc`, `_coordination`, `_avatars`,
+  `test_harness_untouched`) read it through `tests/page_source.py`, which puts `page.html`'s text back together.
+  `split.test.ts` checks the split and the port.
+- **Installing and pulling.** The dashboard is an extra, `actor-gatherer[dashboard]` (its Python packages), so
+  ag alone needs neither them nor Node. `ag_dashboard/page_build.py` builds the page (pnpm through Node's
+  corepack, a pnpm of one's own, or npx), and `ag dashboard` runs it when it starts and the build is missing or
+  older than `frontend/`: the first start in an editable install, and the first after a pull. So only those who
+  use the dashboard need Node, and after a pull a restart is enough. A wheel built from a checkout builds it too
+  (`setup.py`'s one build step; with no Node, the wheel goes without it), and `publish.yml` builds it before
+  `python -m build`, whose wheel then takes it from the sdist. A git hook was the first choice for pulls; it
+  needed turning on in each clone, and it rebuilt the page under a dashboard still running the old server.
 
-Check: A0's suite, plus a DOM comparison before and after, which must be identical since nothing was rewritten.
+Left open: the production build carries no source maps. `build.sourcemap` is set to no effect with this setup
+(a small project gets them; this one did not, and why is not found yet), so it is off; in development
+`vite` maps each line to its file.
+
+Checks: the browser tests pass against the screenshots taken of `page.html` (A0), now failing on any error thrown in
+the page; the page also runs under `vite` in development with no errors.
 
 **A4. React and the store.** The Zustand store is fed by `stream.ts`, and `legacy/` reads from it. The ESLint rules go
-in, with allow-lists for `legacy/` that shrink.
+in for the new code; `src/legacy/` stays outside them, as outside formatting, until it is gone.
 
 **A5. The views in React, one PR each.** Each PR:
 - adds the view's Playwright specs if A0 didn't have them;
@@ -211,7 +249,8 @@ Not built now. Each becomes a change in one place, given the steps above:
 - **React** (recommended) or another framework (Vue, Svelte). React for its libraries and because the agents
   write it most fluently.
 - **FastAPI** (recommended), so the dashboard is no longer standard-library only.
-- **The build after a pull** in your editable install: a git hook (recommended), or by hand.
+- **The build after a pull** in your editable install: a git hook, or by hand. (Built: `ag dashboard`'s start
+  builds it, `page_build.py`.)
 - **When to run A3:** the open `page.html` work has to be merged first, or ported that day.
 
 ## Projects built this way

@@ -1,0 +1,125 @@
+/* the list's head, held at its top as it scrolls: its buttons always at hand */
+.aside-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 14px 16px 6px; margin: -12px 0 0;
+  position: sticky; top: -12px; z-index: 3; background: var(--side); }
+.aside-head h2 { margin: 0 auto 0 0; }
+.gatherer-row .act.add { font-size: 16px; }
+.gatherer-row .act:disabled { cursor: default; opacity: .45; }
+.gatherer-row .act:disabled:hover { background: none; color: var(--muted); }
+/* a shell's mark: a terminal's window, in the terminal's colours -- in the list, its pane's head */
+.logo.shell-logo { width: 28px; height: 28px; margin-top: 1px; border-radius: 7px; display: grid; place-items: center;
+  background: var(--term-bg); color: var(--term-ink); box-shadow: inset 0 0 0 1px var(--ring); }
+.pane-who .shell-logo { width: 20px; height: 20px; border-radius: 5px; margin: 0; flex: none; }
+.pane-who .shell-logo svg { width: 14px; height: 14px; }
+/* a start button: "+" and its harness's mark, the tooltip the button's (not the mark's own) */
+.gatherer-row .act.start { gap: 1px; padding: 0 4px; font-size: 14px; }
+.gatherer-row .act.start + .act.start { margin-left: 2px; }
+.gatherer-row .act.start .badge { width: 16px; height: 16px; display: block; pointer-events: none; }
+.gatherer-row .act.start.busy { opacity: 1; }
+.gatherer-row .act.start.busy .badge { animation: term-blink 1s ease-in-out infinite; }
+.gatherer-row .act.start:is(.new-actor, .new-more) svg { display: block; pointer-events: none; }
+.gatherer-row .act.start.new-more svg { stroke-width: 2.4; }
+.gatherer-row .act.start:is(.new-actor, .new-more).busy svg { animation: term-blink 1s ease-in-out infinite; }
+/* the gatherer agent's button: its face, the manager's (crewFace); hidden from the list, its status at its corner */
+.gatherer-row .act.start.crew { position: relative; }
+.gatherer-row .act.start.crew .crew-face { width: 18px; height: 18px; display: block; pointer-events: none; }
+.gatherer-row .act.start.crew .crew-dot { position: absolute; right: 0; top: 2px; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--axis); box-shadow: 0 0 0 1.5px var(--side); pointer-events: none; }
+.gatherer-row .act.start.crew .crew-dot:is(.running, .background) { background: var(--good); }
+.gatherer-row .act.start.crew .crew-dot.asking { background: var(--warning); }
+.gatherer-row .act.start.crew .crew-dot.error { background: var(--critical); }
+.gatherer-row .act.start.crew .crew-dot.finished { background: var(--s1); }
+/* the gatherer agent's row, at the top of its gatherer: a gold line at its side, as its badge is edged */
+.agent.coordinator { box-shadow: inset 2px 0 0 var(--t-gatherer); }
+.gatherer-row .act.start.crew:not(.on) .crew-face { filter: grayscale(.75); opacity: .8; }
+.gatherer-row .act.start.crew:hover .crew-face { filter: none; opacity: 1; }
+.gatherer-row .act.start.crew.busy .crew-face { animation: term-blink 1s ease-in-out infinite; }
+.newform { margin: 4px 16px 12px; padding: 10px 12px; border: 1px solid var(--ring); border-radius: 8px; background: var(--page); display: grid; gap: 8px; }
+.newform label { display: grid; gap: 3px; font-size: 12px; color: var(--ink-2); }
+.newform input, .newform select, .composer textarea { font: inherit; font-size: 13px; color: var(--ink); background: var(--surface);
+  border: 1px solid var(--ring); border-radius: 6px; padding: 5px 8px; min-width: 0; }
+.newform .row { display: flex; gap: 8px; justify-content: flex-end; }
+.newform .row:has(button[value]) { gap: 6px; flex-wrap: wrap; }
+.newform .row button[value] { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; padding: 4px 8px; }
+.newform .row .badge { width: 14px; height: 14px; display: block; }
+.newform .err, .composer .err { color: var(--critical); font-size: 12px; }
+/* a new actor on a branch of its own: the gatherer's projects, which one, and whether each change is asked about */
+.newform .desc { font-size: 12px; color: var(--muted); line-height: 1.45; }
+.newform .projects { display: grid; gap: 4px; }
+.newform .proj { display: flex; align-items: center; gap: 6px; font-size: 12.5px; min-width: 0; }
+.newform .proj .nm { font-weight: 600; white-space: nowrap; }
+.newform .proj .at { color: var(--muted); font: 11.5px var(--mono, ui-monospace, monospace); min-width: 0; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.newform .proj button { flex: none; font-size: 11.5px; padding: 1px 8px; }
+.newform button.suggest { display: flex; align-items: center; gap: 6px; text-align: left; width: 100%; font-size: 12.5px; padding: 4px 8px; }
+.newform button.suggest .at { color: var(--muted); font: 11.5px ui-monospace, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.newform .addrow { display: flex; gap: 6px; } .newform .addrow input { flex: 1; }
+.newform label.check { display: flex; align-items: flex-start; gap: 7px; color: var(--ink-2); line-height: 1.4; }
+.newform label.check input { margin: 2px 0 0; padding: 0; width: 14px; height: 14px; flex: none; }
+.newform .desc.route code { font: 11.5px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--ink-2); }
+.newform .link { border: 0; background: none; padding: 0; color: var(--s1); font: inherit; font-size: 12px; cursor: pointer; justify-self: start; }
+/* the branch button's drop-down: the gatherer's sources, and adding one; and, in its style, a gatherer row's other
+   drop-downs (popMenu), each item's mark beside it */
+.br-menu { position: fixed; z-index: 60; min-width: 250px; max-width: min(380px, calc(100vw - 16px)); padding: 5px; display: grid; gap: 1px;
+  background: var(--surface); border: 1px solid var(--ring); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.25); font-size: 12.5px; }
+.br-menu .hd { color: var(--muted); font-size: 11px; padding: 3px 8px 4px; }
+.br-menu button { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 1px 10px; text-align: left; border: 0; background: none;
+  padding: 5px 8px; border-radius: 5px; color: var(--ink); font: inherit; cursor: pointer; }
+.br-menu button:hover, .br-menu button:focus-visible { background: var(--wash); outline: none; }
+.br-menu button .nm { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.br-menu button .on { color: var(--muted); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.br-menu button .at { grid-column: 1 / -1; color: var(--muted); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.br-menu button.add { display: block; color: var(--s1); }
+.br-menu .sep { height: 1px; background: var(--grid); margin: 3px 2px; }
+.row-menu button { grid-template-columns: 16px minmax(0, 1fr); align-items: center; }
+.row-menu button > :is(svg, .badge) { width: 16px; height: 16px; display: block; color: var(--muted); }
+.row-menu button .at { grid-column: 2; font-family: inherit; font-size: 11.5px; line-height: 1.35; white-space: normal; }
+/* the popup a new actor on a branch starts from */
+dialog.br-dialog { width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 64px); padding: 0; border: 1px solid var(--ring);
+  border-radius: 10px; background: var(--page); color: var(--ink); box-shadow: 0 20px 60px rgba(0,0,0,.35); }
+dialog.br-dialog::backdrop { background: rgba(0,0,0,.35); }
+.br-dialog .newform { margin: 0; border: 0; border-radius: 0; padding: 14px 18px 16px; gap: 10px; background: none; }
+.br-dialog .br-title { display: flex; align-items: center; gap: 8px; }
+.br-dialog h3 { margin: 0; font-size: 15px; display: flex; align-items: center; gap: 7px; flex: 1; }
+.br-dialog .x { border: 0; background: none; font-size: 18px; line-height: 1; padding: 2px 6px; color: var(--muted); cursor: pointer; }
+.br-dialog .x:hover { color: var(--ink); background: var(--wash); }
+.br-dialog .lbl { font-size: 11.5px; font-weight: 600; color: var(--ink-2); text-transform: uppercase; letter-spacing: .03em; }
+.br-dialog .projects .lbl { text-transform: none; letter-spacing: 0; font-weight: 500; color: var(--muted); }
+.br-dialog .br-src { border: 1px solid var(--ring); border-radius: 8px; padding: 8px 10px; display: grid; gap: 4px; background: var(--surface); }
+.br-dialog .br-src .top { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.br-dialog .br-src .nm { font-weight: 600; white-space: nowrap; }
+.br-dialog .br-src .at, .br-dialog .br-row .at { color: var(--muted); font: 11.5px ui-monospace, SFMono-Regular, Menlo, monospace;
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.br-dialog .br-row { display: flex; align-items: center; gap: 4px; border: 1px solid var(--ring); border-radius: 6px; }
+.br-dialog .br-row.on { border-color: var(--s1); }
+.br-dialog .br-row .use { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; border: 0; background: none; padding: 5px 8px;
+  text-align: left; font: inherit; font-size: 12.5px; color: var(--ink); cursor: pointer; border-radius: 6px; }
+.br-dialog .br-row .use:hover { background: var(--wash); }
+.br-dialog .br-row .nm { font-weight: 600; white-space: nowrap; }
+.br-dialog .br-row .on { color: var(--muted); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.br-dialog .br-row .rm { border: 0; background: none; color: var(--muted); font-size: 15px; padding: 2px 8px; cursor: pointer; border-radius: 5px; }
+.br-dialog .br-row .rm:hover { color: var(--critical); background: var(--wash); }
+/* an actor on a branch of its own, in the list: its branch, and what of it waits for the reader */
+.agent .branchline { display: flex; align-items: center; gap: 4px; margin-top: 2px; font-size: 11px; color: var(--muted); min-width: 0; }
+.agent .branchline svg { flex: none; }
+.agent .branchline .rt { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; min-width: 0; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.agent .branchline .wait { flex: none; color: var(--warning); font-weight: 600; white-space: nowrap; }
+button.primary { background: var(--s1); border-color: var(--s1); color: #fff; }
+button.primary:hover { filter: brightness(1.06); background: var(--s1); }
+button:disabled { opacity: .5; cursor: default; }
+.agent .chat-icon { margin-left: auto; flex: none; display: inline-flex; color: var(--s1); }
+.agent .chat-icon.held { color: var(--axis); }
+.agent .close-btn { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px;
+  margin-left: auto; border-radius: 4px; color: var(--muted); cursor: pointer; }
+.agent .close-btn + .chat-icon { margin-left: 0; }
+.agent .close-btn:hover, .agent .close-btn:focus-visible { color: var(--critical); background: var(--surface); }
+/* saved for later: a bookmark beside the close button -- filled, and always there, once saved; else only while
+   the row is hovered, in focus or selected, so the list stays quiet */
+.agent .save-btn { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px;
+  margin-left: auto; border-radius: 4px; color: var(--muted); cursor: pointer; opacity: 0; }
+.agent .save-btn + :is(.close-btn, .chat-icon) { margin-left: 0; }
+.agent:is(:hover, :focus-visible, [aria-current="true"]) .save-btn, .agent .save-btn:focus-visible, .agent .save-btn.on { opacity: 1; }
+@media (hover: none) { .agent .save-btn { opacity: 1; } }
+.agent .save-btn.on { color: var(--s1); }
+.agent .save-btn:hover, .agent .save-btn:focus-visible { color: var(--s1); background: var(--surface); }

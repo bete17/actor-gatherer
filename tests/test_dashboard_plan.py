@@ -12,8 +12,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 from ag_dashboard import data  # noqa: E402
+import page_source  # noqa: E402
 
-PAGE = os.path.join(ROOT, "ag_dashboard", "page.html")
 START, END = "const reEscape = ", "// `breaks`: each line break kept"
 # the harnesses as the home has them, the page's lines, then each text as markdown() splits it: [before, the plan,
 # after] or null; and its summary line
@@ -30,8 +30,7 @@ process.stdin.on("data", (d) => { input += d; }).on("end", () => process.stdout.
 
 
 def run(*texts):
-    with open(PAGE, encoding="utf-8") as fh:
-        page = fh.read()
+    page = page_source.script()
     code = page[page.index(START):page.index(END)]
     got = subprocess.run(["node", "-e", RUN % (json.dumps(data.harness_info()), code)], input=json.dumps(texts),
                          capture_output=True, text=True, timeout=30)

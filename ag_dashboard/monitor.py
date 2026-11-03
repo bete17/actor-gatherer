@@ -1,4 +1,4 @@
-"""What each actor is doing, for the page's full-screen view of them all (page.html's monitor): of its latest
+"""What each actor is doing, for the page's full-screen view of them all (the page's monitor): of its latest
 turn, what it was asked, what it is doing now, its newest calls, what it said last, and how many files it worked
 on of each kind -- files.files' turn, made small. The files in a temporary folder, and a search's hits, are not
 counted, as the Chat view leaves them out of its tree until asked."""

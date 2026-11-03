@@ -1,0 +1,1562 @@
+// ------------------------------------------------------------------ the Editor
+// Above the panes, the actors' views below it (each shorter while it is open; Cmd/Ctrl+click in the list opens more of
+// them side by side): a folder's tree, any folder -- an actor's, or one typed, or the one above -- and its files to
+// edit (editor.py): each file shared live by every page that has it open -- their edits and cursors shown as they
+// type -- and the file on disk one more of its editors, so what an actor writes to it lands in the editor as it is
+// written, around what was typed and not saved, marked in that actor's hue until the next change on disk -- but for
+// the conflict zone: the lines edited here since the file was opened, tinted, which an actor's change is asked about
+// (Restore yours / Accept its rewrite / Keep both), not merged into, until the zone is cleared (its button in the
+// header) or the file closed. Who changed each file, of the
+// actors, is what ag's hook found each tool call did on disk (the listing's `writers`): two or more changing one file
+// are said in the tree and over the file. Saved by Save (or ⌘S / Ctrl+S): until then the file on disk, which the
+// actors read, is as it was -- or, with Auto-save on (as it is unless the reader turns it off, kept in this browser), a moment after each
+// edit. The editor (CodeMirror and Yjs, vendor/editor.js) is loaded the first time a file opens.
+const ED_TICK = 2500;            // ms between looks at the open folders (and the header's "Ns ago")
+const ED_SEND = 40;              // ms the edits of a burst of keys are gathered before they are sent
+const ED_CREDIT = [3, 20];       // s an actor's recorded change may come before, and after, a change seen on disk, to be its
+const ED_AUTO_MS = 1000;         // ms after the last edit to a file that Auto-save saves it
+const ED_NAME_KEY = "ag-editor-name", ED_COLOR_KEY = "ag-editor-color", ED_ROOT_KEY = "ag-editor-folder", ED_AUTO_KEY = "ag-editor-autosave";
+const ED_WRAP_KEY = "ag-editor-wrap";
+const ED_SHOWN_KEY = "ag-dashboard-editor", ED_HEIGHT_KEY = "ag-dashboard-editor-height";
+const ed = { root: "", home: "", lists: new Map(), open: new Set(), file: null, s: null, lib: null, me: null, user: "", err: "",
+  timer: null, treeSig: "", barSig: "", host: null, bar: null, tree: null, head: null, body: null, side: null, changes: null,
+  pv: null, pvSide: null,
+  branches: [], brSig: "", brs: null,
+  auto: (() => { try { return localStorage.getItem(ED_AUTO_KEY) !== "0"; } catch (e) { return true; } })(),   // on unless turned off
+  wrap: (() => { try { return localStorage.getItem(ED_WRAP_KEY) !== "0"; } catch (e) { return true; } })() };  // long lines wrapped: likewise
+const edB64 = (u8) => { let t = ""; for (let i = 0; i < u8.length; i += 0x8000) t += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(t); };
+const edBytes = (t) => Uint8Array.from(atob(t), (c) => c.charCodeAt(0));
+const edJoin = (dir, name) => (dir === "/" ? "/" : dir + "/") + name;
+const edUnder = (p, dir) => dir === "/" ? p.startsWith("/") : p === dir || p.startsWith(dir + "/");
+const edDir = (p) => p.slice(0, p.lastIndexOf("/")) || "/";
+const edBase = (p) => p.slice(p.lastIndexOf("/") + 1);
+const edTilde = (p) => tildePath(p, ed.home);
+const edRel = (p) => ed.root && ed.root !== "/" && p.startsWith(ed.root + "/") ? p.slice(ed.root.length + 1) : edTilde(p);
+function edLib() {
+  return ed.lib ||= new Promise((ok, no) => {
+    const tag = document.createElement("script");
+    tag.src = "/vendor/editor.js";
+    tag.onload = () => window.agEditor ? ok(window.agEditor) : no(new Error("The editor did not load."));
+    tag.onerror = () => { ed.lib = null; tag.remove(); no(new Error("The editor did not load: is the dashboard still running?")); };
+    document.head.append(tag);
+  });
+}
+// Who this page is to the others with a file open: a name (the login, until the reader gives another, kept in this
+// browser) and a colour of this tab's own.
+function edMe() {
+  if (ed.me) return ed.me;
+  let name = "", color = "";
+  try { name = localStorage.getItem(ED_NAME_KEY) || ""; color = sessionStorage.getItem(ED_COLOR_KEY) || ""; } catch (e) { /* this page only */ }
+  if (!color) {
+    const hues = Object.values(HUE_MAIN);
+    color = hues[Math.floor(Math.random() * hues.length)];
+    try { sessionStorage.setItem(ED_COLOR_KEY, color); } catch (e) { /* this page only */ }
+  }
+  return ed.me = { name: name || ed.user || "Someone", color, colorLight: color + "40" };
+}
+function edRename() {
+  const name = (prompt("Your name, as the others with a file open see it", edMe().name) || "").trim();
+  if (!name) return;
+  try { localStorage.setItem(ED_NAME_KEY, name); } catch (e) { /* this page only */ }
+  ed.me = { ...edMe(), name };
+  if (ed.s) ed.s.awareness.setLocalStateField("user", ed.me);
+  edHead();
+}
+
+// The actors: as the list has them (their names, avatars, hues), by gatherer and channel.
+function edActor(g, c) {
+  const gat = ((state.home && state.home.gatherers) || []).find((x) => x.name === g);
+  return gat ? gat.agents.find((a) => a.channel === c) || null : null;
+}
+const edWhoName = (a) => {                           // its name; without one, its first message, quoted
+  if (a.name && a.name.text) return a.name.text;
+  const said = firstLine(a.last_user_message || "");
+  return said ? `“${said.length > 40 ? said.slice(0, 40).trimEnd() + "…" : said}”` : a.channel.slice(0, 8);
+};
+const edWhoColor = (a) => (a && HUE_MAIN[a.avatar_hue]) || null;
+// Until ag's hook has recorded who changed the file (a moment after), whose a change seen on disk likely is: the one
+// actor running in a directory that holds the file, if just one is.
+function edWho(path) {
+  const found = [];
+  for (const g of (state.home && state.home.gatherers) || [])
+    for (const a of g.agents)
+      if (a.cwd && edUnder(path, a.cwd.replace(/\/$/, "")) && statusOf(a)[0] === "running") found.push(a);
+  return found.length === 1 ? found[0] : null;
+}
+// A file's writers (the listing's: [{gatherer, channel, at, how}], the latest first), one per actor, each with its actor.
+const edWriters = (entry) => {
+  const seen = new Set(), out = [];
+  for (const w of (entry && entry.writers) || []) {
+    const k = w.gatherer + "\u0000" + w.channel;
+    if (!seen.has(k)) { seen.add(k); out.push({ ...w, actor: edActor(w.gatherer, w.channel) }); }
+  }
+  return out;
+};
+const edWriterName = (w) => w.actor ? edWhoName(w.actor) : w.channel.slice(0, 8);
+const edAvatar = (w) => w.actor && w.actor.avatar
+  ? el("img", { src: `/avatars/${w.actor.avatar}.svg`, alt: "", draggable: "false" })
+  : el("span", { class: "ed-noav", style: `--who: ${edWhoColor(w.actor) || "var(--axis)"}` });
+// An actor's changes to the file open, in the last ED_CHANGES_S, beside it (ed.side): opened by its avatar in the
+// header, closed by it again or the panel's ×, or another file opened. Each change as the Chat view shows a file's
+// (fileBlock), the latest first, under what the actor was asked; one whose new lines are in the file now has "Show",
+// which selects them there. Fetched again when the actor changes the file again (edHead).
+const ED_CHANGES_S = 600;
+const edKey = (w) => `${w.gatherer}\u0000${w.channel}`;
+function edChanges(w) {
+  if (ed.changes && ed.changes.k === edKey(w) && ed.changes.path === ed.file) return edChangesClose();
+  ed.changes = { k: edKey(w), w, path: ed.file, got: null, err: "", seen: w.at };
+  edDrawChanges(); edHead(); edFetchChanges();
+}
+function edChangesClose() { ed.changes = null; edDrawChanges(); edHead(); }
+async function edFetchChanges() {
+  const c = ed.changes;
+  if (!c) return;
+  const q = new URLSearchParams({ gatherer: c.w.gatherer, channel: c.w.channel, path: c.path,
+    since: String(Math.floor(Date.now() / 1000 - ED_CHANGES_S)), cwd: (c.w.actor && c.w.actor.cwd) || "" });
+  let got = null, err = "";
+  try { got = await get(`/api/files/changes?${q}`); err = got.error || ""; } catch (e) { err = e.message; }
+  if (ed.changes !== c) return;
+  c.got = got; c.err = err;
+  edDrawChanges();
+}
+function edDrawChanges() {
+  const side = ed.side, c = ed.changes;
+  if (!side) return;
+  if (!c || c.path !== ed.file) {
+    ed.changes = null;
+    if (!side.hidden) { side.hidden = true; side.replaceChildren(); }
+    return pvDraw();                                 // the preview, if open, back in its place
+  }
+  side.hidden = false;
+  pvDraw();                                          // the preview, if open: hidden while the changes show
+  const name = edWriterName(c.w), mins = `${ED_CHANGES_S / 60} minutes`;
+  const list = c.got && !c.err ? [...(c.got.changes || [])].reverse() : [];
+  const doc = ed.s && ed.s.view ? ed.s.view.state.doc.toString() : "";
+  side.replaceChildren(
+    el("div", { class: "ed-ch-h" }, el("span", { class: "ed-avs" }, edAvatar(c.w)),
+      el("span", { class: "t", title: `${name}'s changes to ${edRel(c.path)} in the last ${mins}` }, el("b", { text: name }), ` · changes in the last ${mins}`),
+      el("button", { type: "button", class: "ed-ch-x", title: "Close", "aria-label": "Close the changes", onclick: edChangesClose }, "×")),
+    ...(c.err ? [el("div", { class: "none", text: c.err })] : !c.got ? [el("div", { class: "none", text: "Loading…" })]
+      : !list.length ? [el("div", { class: "none", text: `No changes to this file in the last ${mins}.` })]
+      : list.map((x) => edChangeView(x, doc))));
+}
+function edChangeView(x, doc) {
+  const code = el("div", { class: "code" });
+  for (const b of x.blocks) code.append(...fileBlock(b, langOfPath(ed.file)));
+  const there = x.blocks.filter((b) => b.t === "diff" && b.new.length).map((b) => b.new.join("\n")).find((t) => doc.includes(t));
+  return el("details", { class: "fv-call" + (x.error ? " err" : ""), open: "" },
+    el("summary", {}, el("span", { class: "tw", text: "▸" }),
+      el("span", { class: "kinds" }, ...x.kinds.map((k) => kindMark(k, 12))),
+      el("span", { class: "via", text: firstLine(x.via, 160) }), changedCount(x.changed),
+      el("span", { class: "what", text: x.at ? ago(x.at) : "" }),
+      there ? el("button", { type: "button", class: "ed-ch-go", title: "Select these lines in the file",
+        onclick: (ev) => { ev.preventDefault(); edSelectText(there); } }, "Show") : null),
+    x.asked ? el("div", { class: "asked", title: x.asked, text: `Asked: ${firstLine(x.asked, 200)}` }) : null,
+    code);
+}
+function edSelectText(text) {
+  const s = ed.s, v = s && s.view, i = v ? v.state.doc.toString().indexOf(text) : -1;
+  if (i < 0) return;
+  v.dispatch({ selection: { anchor: i, head: i + text.length }, effects: s.A.EditorView.scrollIntoView(i, { y: "center" }) });
+  v.focus();
+}
+// The project's preview (preview.py), beside the file (ed.pvSide): what the command the header's Execute button runs
+// makes -- a file it writes, the page of a server it starts -- or its output. Its project is the git repository of the
+// file open (else of the folder shown), its command run in the file's checkout. Set here (its form) or by an actor
+// (`ag preview set`), whose command runs only once the reader lets it. The panel follows its checkout's runs
+// (/api/preview/stream), an actor's (`ag preview run`) among them. It shares the right side with an actor's changes:
+// hidden while they show. Closed (×), a server it runs is stopped; left open, it opens again with the page (ED_PV_KEY).
+const ED_PV_KEY = "ag-dashboard-editor-preview";
+const PV_OUT_MAX = 300000;                           // the most characters of a run's output this page keeps
+const PV_ANSI = /\x1b(?:\[[0-?]*[ -\/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[@-Z\\-_])/g;
+const pvPath = () => ed.file || ed.root;
+// Its output as a terminal would leave it: no colours, and a line rewritten (\r: a progress bar) as it was last.
+const pvClean = (t) => t.replace(PV_ANSI, "").replace(/\r\n/g, "\n").split("\n")
+  .map((l) => l.includes("\r") ? l.split("\r").filter(Boolean).pop() || "" : l).join("\n");
+async function pvAbout(path) {
+  const r = await fetch(`/api/preview?${new URLSearchParams({ path })}`, { cache: "no-store" });
+  const got = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(got.error || `${r.status}`);
+  return got;
+}
+// The panel opened (or its project looked at again, another file open): -> its state, or null (closed meanwhile).
+async function pvOpen(path) {
+  let pv = ed.pv;
+  if (!pv) {
+    pv = ed.pv = { path, about: null, run: null, out: "", picked: null, form: null, es: null, err: "", busy: false,
+      dom: null, sig: "", card: "", tick: null };
+    try { localStorage.setItem(ED_PV_KEY, "1"); } catch (e) { /* this page only */ }
+  }
+  pv.path = path;
+  pvDraw();
+  try {
+    const a = await pvAbout(path);
+    if (ed.pv !== pv || pv.path !== path) return ed.pv === pv ? pv : null;
+    const moved = !pv.about || pv.about.checkout !== a.checkout;
+    pv.about = a; pv.err = "";
+    if (moved) { pv.run = a.run; pv.out = ""; pv.picked = null; pv.sig = ""; }
+    if (moved || !pv.es || pv.es.readyState === 2) pvListen(pv);
+  } catch (e) { if (ed.pv === pv) pv.err = e.message; }
+  if (ed.pv !== pv) return null;
+  pvDraw(); edHead();
+  return pv;
+}
+// Its checkout's runs and its project's preview, as they change: the latest run and its output first.
+function pvListen(pv) {
+  if (pv.es) pv.es.close();
+  const es = pv.es = new EventSource(`/api/preview/stream?${new URLSearchParams({ path: pv.about.checkout })}`);
+  const on = (name, f) => es.addEventListener(name, (e) => {
+    if (ed.pv !== pv || pv.es !== es) return;
+    let v;
+    try { v = JSON.parse(e.data); } catch (x) { return; }
+    f(v);
+  });
+  on("run", (r) => {
+    if (pv.run && r.id !== pv.run.id && r.started < pv.run.started) return;   // an earlier run's end, after the next began
+    if (!pv.run || r.id !== pv.run.id) { pv.out = ""; pv.picked = null; }
+    pv.run = r; pvDraw(); edHead();
+  });
+  on("out", (o) => {
+    if (o.reset) pv.out = (o.dropped ? "…\n" : "") + o.text;
+    else if (pv.run && o.id === pv.run.id) pv.out += o.text;
+    else return;
+    if (pv.out.length > PV_OUT_MAX) pv.out = "…" + pv.out.slice(-PV_OUT_MAX);
+    pvOut(pv);
+  });
+  on("preview", (p) => { if (pv.about) pv.about.preview = p; pvDraw(); edHead(); });
+}
+// The header's Execute: the panel opened, and the preview run -- or, with none set, its form, prefilled with a guess;
+// an actor's command not yet let run, asked about first.
+async function edExecute() {
+  const path = pvPath();
+  if (!path || (ed.pv && ed.pv.busy)) return;
+  if (ed.changes) edChangesClose();
+  const pv = await pvOpen(path);
+  if (!pv || !pv.about) return;
+  const p = pv.about.preview;
+  if (!p) return pvEdit(pv);
+  if (p.needs_ok) return pvDraw();                   // its card asks
+  pvRun(pv);
+}
+async function pvRun(pv, ok = null) {
+  if (!pv.about || pv.busy) return;
+  const s = ed.s;                                    // the file as it is here: saved first
+  if (s && s.state && s.state.dirty && !s.state.missing && !edDiskConflicts(s).length) await edSave(s);
+  pv.busy = true; pv.err = ""; pv.picked = null; pvDraw(); edHead();
+  try {
+    const got = await post("/api/preview/run", { path: pv.path, ...(ed.file ? { file: ed.file } : {}), ...(ok !== null ? { ok } : {}) });
+    if (ed.pv === pv) {
+      pv.about.preview = got.preview; pv.about.token = got.token;
+      if (!pv.run || got.run.id !== pv.run.id) { pv.run = got.run; pv.out = got.output || ""; }
+    }
+  } catch (e) { if (ed.pv === pv) pv.err = e.message; }
+  pv.busy = false;
+  if (ed.pv === pv) { pvDraw(); edHead(); }
+}
+async function pvStop(pv) {
+  try { await post("/api/preview/stop", { path: pv.path }); } catch (e) { if (ed.pv === pv) { pv.err = e.message; pvDraw(); } }
+}
+function pvEdit(pv) {
+  const p = pv.about && (pv.about.preview || pv.about.guess) || { command: "", show: "" };
+  pv.form = { command: p.command || "", show: p.show || "", node: null };
+  pvDraw();
+}
+// Closed: its stream ended, a server it runs stopped -- and not opened again with the page.
+function pvClose() {
+  const pv = ed.pv;
+  if (!pv) return;
+  ed.pv = null;
+  if (pv.es) pv.es.close();
+  clearInterval(pv.tick);
+  if (pv.run && pv.run.server && (pv.run.state === "running" || pv.run.state === "ready")) pvStop(pv);
+  try { localStorage.removeItem(ED_PV_KEY); } catch (e) { /* this page only */ }
+  pvDraw(); edHead();
+}
+// The editor closed: its stream ended, the panel kept for when it opens again (a server left alone, until IDLE).
+function pvSleep() {
+  const pv = ed.pv;
+  if (pv && pv.es) { pv.es.close(); pv.es = null; }
+}
+// An actor, as the list has it, by the id it asked as (its channel, or the id its session was started under).
+function pvActor(id) {
+  for (const g of (state.home && state.home.gatherers) || [])
+    for (const a of g.agents)
+      if (a.channel === id || (a.session && (a.session.session_id === id || a.session.started_as === id))) return a;
+  return null;
+}
+function pvBy(p) {
+  if (!p.set_by) return el("span", { class: "by", title: `Set ${clock(p.set_at, true)}` }, `set by you, ${ago(p.set_at)}`);
+  const a = pvActor(p.set_by);
+  return el("span", { class: "by", title: `Set by ${p.set_by === "cli" ? "`ag preview set` in a shell" : `actor ${p.set_by}`}, ${clock(p.set_at, true)}` },
+    a && a.avatar ? el("img", { src: `/avatars/${a.avatar}.svg`, alt: "", draggable: "false" }) : null,
+    `set by ${p.set_by === "cli" ? "a shell" : a ? edWhoName(a) : `actor ${p.set_by.slice(0, 8)}`}, ${ago(p.set_at)}`);
+}
+function pvState(r) {
+  if (!r) return ["", "Not run yet"];
+  const t = (r.ended || Date.now() / 1000) - r.started, took = t < 10 ? `${Math.max(t, 0.1).toFixed(1)}s` : spell(t);
+  return ({ running: ["run", r.server ? `Starting · ${took}` : `Running · ${took}`], ready: ["ok", r.command ? "Serving" : "Shown"],
+    done: ["ok", r.command ? `Done · ${took}` : "Shown"], failed: ["bad", `Failed · exit ${r.code}`],
+    stopped: ["", "Stopped"], "timed out": ["bad", "Stopped: it ran over 5 minutes"] })[r.state] || ["", r.state];
+}
+// What the body shows unless the reader picks: the result once there is one; the output while it is made, or when it
+// failed, or is all there is.
+function pvAuto(r) {
+  const s = (r && r.shows) || {};
+  if (!r) return "result";
+  if (!s.url && !s.path) return "output";
+  if (r.state === "failed" || r.state === "timed out") return "output";
+  if (s.url) return r.state === "ready" ? "result" : "output";
+  return r.state === "running" || !s.exists ? "output" : "result";
+}
+function pvDraw() {
+  const side = ed.pvSide, pv = ed.pv;
+  if (!side) return;
+  if (!pv || ed.changes) {
+    if (!side.hidden) side.hidden = true;
+    if (!pv && side.firstChild) side.replaceChildren();
+    return;
+  }
+  side.hidden = false;
+  if (!pv.dom) {
+    pv.dom = { head: el("div", { class: "ed-pv-h" }), cmd: el("div", { class: "ed-pv-cmd" }), card: el("div", { class: "ed-pv-card" }),
+      result: el("div", { class: "ed-pv-result" }), output: el("pre", { class: "ed-pv-out", tabindex: "0", "aria-label": "Its output" }),
+      stat: el("span", { class: "ed-pv-st", role: "status" }) };
+    pv.dom.output.addEventListener("scroll", () => { const o = pv.dom.output; pv.pinned = o.scrollTop + o.clientHeight >= o.scrollHeight - 8; });
+    pv.pinned = true;
+  }
+  if (side.firstChild !== pv.dom.head)
+    side.replaceChildren(pv.dom.head, pv.dom.cmd, el("div", { class: "ed-pv-body" }, pv.dom.card, pv.dom.result, pv.dom.output));
+  const a = pv.about, p = a && a.preview, r = pv.run;
+  // the status, counting while it runs
+  const [cls, said] = pv.busy && !(r && r.state === "running") ? ["run", "Starting…"] : pvState(r);
+  pv.dom.stat.className = `ed-pv-st ${cls}`; pv.dom.stat.textContent = said;
+  const live = r && (r.state === "running" || (r.server && r.state === "ready"));     // a process of its own, to stop
+  if (r && r.state === "running" && !pv.tick) pv.tick = setInterval(() => { if (ed.pv !== pv || !pv.run || pv.run.state !== "running") { clearInterval(pv.tick); pv.tick = null; return; }
+    pv.dom.stat.textContent = pvState(pv.run)[1]; }, 1000);
+  const card = pv.form ? "form" : pv.err && !a ? "err" : !a ? "loading" : !p ? "none" : p.needs_ok ? "ask" : !r ? "idle" : "";
+  const tab = card ? null : pv.picked || pvAuto(r);
+  const hasResult = r && r.shows && (r.shows.url || r.shows.path);
+  const url = r && r.shows && (r.shows.url || (r.shows.path && r.shows.exists && a && `/preview/${a.token}/${r.shows.rel.split("/").map(encodeURIComponent).join("/")}?v=${r.shows.mtime}`));
+  // the header: what it is, how its run went, and what can be done
+  const btn = (text, title, onclick, attrs = {}) => el("button", { type: "button", title, onclick, ...attrs }, text);
+  pv.dom.head.replaceChildren(...[
+    el("span", { class: "t" }, strokeIcon(ICONS.play, 13), "Preview"),
+    el("span", { class: "nm", title: a ? (a.git ? `The git project ${a.key}, its worktrees too` : `The folder ${a.key} (not in a git project)`) : null,
+      text: a ? a.name : "" }),                      // the room left: none, in a narrow panel
+    card === "" || pv.busy ? pv.dom.stat : null,
+    tab && hasResult ? el("span", { class: "ed-pv-tabs", role: "group", "aria-label": "Show" },
+      ...[["result", "Result"], ["output", "Output"]].map(([k, t]) => btn(t, k === "result" ? "What it makes" : "What it printed",
+        () => { pv.picked = k; pvDraw(); }, { class: tab === k ? "on" : null, "aria-pressed": tab === k ? "true" : "false" }))) : null,
+    live ? btn("Stop", r.server ? "Stop its server" : "Stop its run", () => pvStop(pv))     // in Re-run's place while it runs
+      : p && !p.needs_ok && !pv.form ? btn(r ? "Re-run" : "Run", `Run it again: ${p.command || "(nothing to run)"}`, () => pvRun(pv), { disabled: pv.busy ? "" : null }) : null,
+    p && !pv.form ? btn("Edit", "Change the command, or what it shows", () => pvEdit(pv)) : null,
+    btn("×", r && r.server && (live || r.state === "ready") ? "Close the preview, and stop its server" : "Close the preview", pvClose,
+      { class: "x", "aria-label": "Close the preview" })].filter(Boolean));
+  // what runs, and who set it
+  pv.dom.cmd.hidden = !p || !!pv.form;
+  if (p && !pv.form) pv.dom.cmd.replaceChildren(
+    el("code", { title: `In ${a.checkout}: ${p.command || "nothing to run"}${p.show ? `, showing ${p.show}` : ""}` },
+      p.command ? `$ ${p.command}` : "(nothing to run)", p.show ? el("span", { class: "to", text: `  →  ${p.show}` }) : null),
+    url && tab === "result" ? el("a", { class: "ed-pv-open", href: url, target: "_blank", rel: "noopener", title: "Open it in a tab of its own" }, "↗") : null,
+    pvBy(p));
+  // the body: a card (the form, the question, a note), else the result or the output
+  const err = pv.err ? el("div", { class: "err", text: pv.err }) : null;
+  pv.dom.card.hidden = !card && !pv.err;
+  if (card === "form") {
+    if (!pv.form.node) pv.form.node = pvForm(pv);
+    if (pv.card !== "form" + pv.err || pv.dom.card.lastChild !== pv.form.node) {
+      pv.card = "form" + pv.err;
+      pv.dom.card.replaceChildren(...[err, pv.form.node].filter(Boolean));
+    }
+  } else {
+    const sig = JSON.stringify([card, pv.err, p && [p.command, p.show, p.set_by, p.needs_ok], a && a.name]);
+    if (sig !== pv.card) {
+      pv.card = sig;
+      pv.dom.card.replaceChildren(...[err, card === "ask" ? pvAsk(pv) : card === "none" ? pvNone(pv) : card === "idle"
+        ? el("div", { class: "note", text: "Not run yet: Execute (or Run) runs it, here." }) : card === "loading" ? el("div", { class: "note", text: "Loading…" }) : null].filter(Boolean));
+    }
+  }
+  pv.dom.result.classList.toggle("off", tab !== "result");      // laid out still: a PDF's viewer keeps its place
+  pv.dom.output.hidden = tab !== "output";
+  if (tab === "result") pvResult(pv, url);
+  if (tab === "output") pvOut(pv);
+}
+// Its form: the command and what it shows, saved for the project (and run, by Enter or "Save and run").
+function pvForm(pv) {
+  const f = pv.form, a = pv.about || {};
+  const field = (label, key, placeholder, hint) => {
+    const input = el("input", { type: "text", value: f[key], placeholder, spellcheck: "false", autocomplete: "off" });
+    input.addEventListener("input", () => { f[key] = input.value; });
+    input.addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); save(true); } });
+    return el("label", {}, label, input, el("span", { class: "note", text: hint }));
+  };
+  const save = async (run) => {
+    try {
+      const got = await post("/api/preview/set", { path: pv.path, command: f.command, show: f.show });
+      if (ed.pv !== pv) return;
+      pv.about = { ...pv.about, ...got }; pv.form = null; pv.err = ""; pv.card = "";
+      pvDraw(); edHead();
+      if (run) pvRun(pv);
+    } catch (e) { if (ed.pv === pv) { pv.err = e.message; pvDraw(); } }
+  };
+  const rel = ed.file && a.checkout && ed.file.startsWith(a.checkout + "/") ? ed.file.slice(a.checkout.length + 1) : null;
+  const node = el("div", { class: "ed-pv-form" },
+    el("div", { class: "head" }, a.preview ? "Change this project's preview" : "Set up a preview for this project",
+      a.name ? el("span", { class: "note", text: ` · ${a.name}${a.git ? ", and its worktrees" : ""}` }) : null),
+    field("Command", "command", "python3 {file}", "Run through your shell in the project's checkout. Empty: nothing runs, what it shows is shown as it is."),
+    field("Show", "show", "out.png · {stem}.pdf · http://localhost:5173", "A file in the project it makes, or the URL of a server it starts (kept running until Stop). Empty: what it prints."),
+    el("div", { class: "note" }, el("code", { text: "{file}" }), " ", el("code", { text: "{stem}" }), " ", el("code", { text: "{name}" }), " ",
+      el("code", { text: "{dir}" }), rel ? ` stand for the file open, ${rel}, its path without its extension, its name, and its folder.`
+        : " stand for the file open in the Editor: its path in the project, without its extension, its name, and its folder."),
+    el("div", { class: "row" },
+      el("button", { type: "button", class: "primary", onclick: () => save(true) }, "Save and run"),
+      el("button", { type: "button", onclick: () => save(false) }, "Save"),
+      el("button", { type: "button", onclick: () => { pv.form = null; pv.err = ""; pv.card = ""; if (pv.about && !pv.about.preview) pvClose(); else pvDraw(); } }, "Cancel")),
+    el("div", { class: "note" }, "Actors can set it too, with ", el("code", { text: "ag preview set" }), ": you are asked before an actor's command first runs."));
+  setTimeout(() => { const i = node.querySelector("input"); if (i && ed.pv === pv && pv.form && pv.form.node === node) i.focus(); }, 0);
+  return node;
+}
+// An actor's command, not yet let run: what it is, who set it, and Run it.
+function pvAsk(pv) {
+  const a = pv.about, p = a.preview, who = pvActor(p.set_by);
+  return el("div", { class: "ed-pv-ask" },
+    el("div", { class: "head" }, who && who.avatar ? el("img", { src: `/avatars/${who.avatar}.svg`, alt: "", draggable: "false" }) : null,
+      `${p.set_by === "cli" ? "A shell" : who ? edWhoName(who) : `Actor ${p.set_by.slice(0, 8)}`} set this project's preview, ${ago(p.set_at)}:`),
+    el("pre", { text: `$ ${p.command}` }),
+    el("div", { class: "note", text: `Shows: ${p.show || "what it prints"}. It runs in ${edTilde(a.checkout)} as you, outside the actor's own permissions, so it waits for you to let it.` }),
+    el("div", { class: "row" },
+      el("button", { type: "button", class: "primary", onclick: () => pvRun(pv, p.command) }, "Run it"),
+      el("button", { type: "button", onclick: () => pvEdit(pv) }, "Edit…")));
+}
+function pvNone(pv) {
+  return el("div", {}, el("div", { class: "note", text: `No preview is set for ${pv.about.name} yet.` }),
+    el("div", { class: "row" }, el("button", { type: "button", class: "primary", onclick: () => pvEdit(pv) }, "Set one up")));
+}
+// The result: drawn again only when another run's, or its file changed.
+function pvResult(pv, url) {
+  const r = pv.run, s = (r && r.shows) || {}, box = pv.dom.result;
+  const sig = JSON.stringify([r && r.id, url, s.kind, s.exists, r && r.state === "ready"]);
+  if (sig === pv.sig) return;
+  pv.sig = sig;
+  if (!r) return box.replaceChildren();
+  if (s.error) return box.replaceChildren(el("div", { class: "ed-pv-note", text: s.error }));
+  if (s.path && !s.exists) return box.replaceChildren(el("div", { class: "ed-pv-note" },
+    el("code", { text: s.rel }), r.state === "running" ? " is not there yet." : " is not there: the command did not make it."));
+  if (s.url && r.state !== "ready") return box.replaceChildren(el("div", { class: "ed-pv-note", text: `Waiting for ${s.url} to answer…` }));
+  if (s.kind === "image" || s.kind === "svg")
+    return box.replaceChildren(el("div", { class: "img" }, el("img", { src: url, alt: s.rel || "", draggable: "false" })));
+  if (s.kind === "pdf" && pv.about && pv.about.pdfjs) return pvPdf(pv, box, url);
+  if (s.kind === "pdf" || s.kind === "url") return box.replaceChildren(el("iframe", { src: url, title: "The preview", class: s.kind }));
+  if (s.kind === "html")
+    return box.replaceChildren(el("iframe", { src: url, title: "The preview", sandbox: "allow-scripts allow-forms allow-modals allow-popups" }));
+  box.replaceChildren(el("div", { class: "ed-pv-note", text: "Loading…" }));
+  fetch(url, { cache: "no-store" }).then((x) => x.ok ? x.text() : Promise.reject(new Error(`${x.status}`))).then((text) => {
+    if (ed.pv !== pv || pv.sig !== sig) return;
+    box.replaceChildren(s.kind === "markdown" ? el("div", { class: "files md-box" }, markdown(text)) : el("pre", { text }));
+  }).catch((e) => { if (ed.pv === pv && pv.sig === sig) box.replaceChildren(el("div", { class: "ed-pv-note", text: `It could not be read: ${e.message}` })); });
+}
+// A PDF, in pdf.js's viewer (DocWriter's copy, /vendor/pdfjs): one viewer kept from run to run, each new build opened
+// in it where the reader was -- its page, zoom and place (the viewer's `_location`, as a bookmark it opens at) -- not on
+// page 1 again. In the dashboard's colours; the PDF's own scripts not run.
+const pvViewer = (url) => `/vendor/pdfjs/web/viewer.html?file=${encodeURIComponent(url)}`;
+function pvPdf(pv, box, url) {
+  const had = pv.pdf;
+  if (had && had.frame.parentNode === box) { if (had.url !== url) pvPdfOpen(had, url); return; }
+  const frame = el("iframe", { class: "pdf", title: "The preview", src: pvViewer(url) });
+  const f = pv.pdf = { frame, url };
+  frame.addEventListener("load", () => { pvPdfTheme(f); pvPdfHooks(pv, f); });
+  box.replaceChildren(frame);
+}
+async function pvPdfOpen(f, url) {
+  f.url = url;
+  let app = null;
+  try { app = f.frame.contentWindow.PDFViewerApplication; } catch (e) { /* not the viewer's page */ }
+  if (!app || !app.pdfViewer || !app.initialized) { f.frame.src = pvViewer(url); return; }
+  const at = app.pdfViewer._location;
+  if (at && at.pdfOpenParams) app.initialBookmark = at.pdfOpenParams.slice(1);
+  try { await app.open({ url }); } catch (e) { f.frame.src = pvViewer(url); }
+}
+function pvPdfTheme(f) {
+  let root;
+  try { root = f && f.frame.contentDocument && f.frame.contentDocument.documentElement; } catch (e) { return; }
+  if (!root) return;
+  const cs = getComputedStyle(document.documentElement), v = (k) => cs.getPropertyValue(k).trim();
+  const vars = { "--bg": "--page", "--bg-surface": "--page", "--bg-elevated": "--surface", "--text": "--ink",
+    "--text-secondary": "--ink-2", "--text-faint": "--muted", "--accent": "--s1", "--bg-hover": "--wash", "--border-light": "--ring" };
+  for (const [k, from] of Object.entries(vars)) if (v(from)) root.style.setProperty(k, v(from));
+  root.setAttribute("data-docwriter-theme", dwTheme());       // its stylesheet's colours, from those
+  root.style.colorScheme = dwTheme();
+}
+window.addEventListener("ag-theme", () => { if (ed.pv && ed.pv.pdf) pvPdfTheme(ed.pv.pdf); });
+// SyncTeX between the PDF and its source (preview.py's `synctex`), for a build that wrote it (-synctex=1): a double-click
+// in the PDF opens its source in the Editor at that line (pvFromPdf); "→ PDF" in the Editor's header shows the cursor's
+// line in the PDF, marked a moment (edToPdf).
+const pvPdfApp = (f) => { try { return f && f.frame.contentWindow.PDFViewerApplication; } catch (e) { return null; } };
+function pvPdfHooks(pv, f) {
+  let box = null;
+  try { box = f.frame.contentDocument.getElementById("viewerContainer"); } catch (e) { /* not the viewer's page */ }
+  if (!box || box.agSync) return;
+  box.agSync = true;
+  box.addEventListener("dblclick", (ev) => pvFromPdf(pv, f, ev));
+}
+async function pvFromPdf(pv, f, ev) {
+  const app = pvPdfApp(f), at = ev.target && ev.target.closest && ev.target.closest(".page");
+  if (!app || !at || ed.pv !== pv || !pv.run || !pv.about) return;
+  const n = Number(at.dataset.pageNumber), view = app.pdfViewer.getPageView(n - 1);
+  if (!view || !view.pdfPage) return;
+  const r = view.div.getBoundingClientRect(), [px, py] = view.viewport.convertToPdfPoint(ev.clientX - r.left, ev.clientY - r.top);
+  const page = view.pdfPage.view;                      // [x0, y0, x1, y1]: SyncTeX's are from its top left
+  const got = await pvSync(pv, { page: n, x: px - page[0], y: page[3] - py });
+  if (!got || ed.pv !== pv) return;
+  const path = `${pv.about.checkout}/${got.file}`;
+  if (!ed.s || ed.s.path !== path) edOpen(path);
+  edGoLine(path, got.line);
+}
+async function pvSync(pv, ask) {
+  const s = pv.run && pv.run.shows;
+  if (!s || !s.rel) return null;
+  let said;
+  try {
+    const got = await post("/api/preview/synctex", { path: pv.about.checkout, pdf: s.rel, ...ask });
+    if (got.ok) return got;
+    const asks = /synctex/i.test((pv.about.preview && pv.about.preview.command) || "");
+    said = { "no-synctex": asks ? "This PDF has no SyncTeX yet: its build did not write it (latexmk saw nothing to rebuild). Change the source, or delete the PDF, and run it again."
+        : "This PDF has no SyncTeX: add -synctex=1 to the preview's command (Edit), and run it again.",
+      "no-tool": "SyncTeX needs TeX's synctex tool where the dashboard runs.",
+      "no-match": "SyncTeX has no match for that place." }[got.reason] || `SyncTeX: ${got.reason}`;
+  } catch (e) { said = e.message; }
+  if (ed.pv === pv) {                                  // said above the result a moment
+    pv.err = said; pvDraw();
+    setTimeout(() => { if (ed.pv === pv && pv.err === said) { pv.err = ""; pvDraw(); } }, 6000);
+  }
+  return null;
+}
+// A line of the file open in the Editor (once it is: just opened, its document comes a moment later), selected and shown.
+async function edGoLine(path, line) {
+  for (let i = 0; i < 80 && !(ed.s && ed.s.path === path && ed.s.view); i++) await new Promise((r) => setTimeout(r, 100));
+  const s = ed.s;
+  if (!s || s.path !== path || !s.view) return;
+  const doc = s.view.state.doc, l = doc.line(Math.max(1, Math.min(line, doc.lines)));
+  s.view.dispatch({ selection: { anchor: l.from, head: l.to }, effects: s.A.EditorView.scrollIntoView(l.from, { y: "center" }) });
+  s.view.focus();
+}
+// Whether the file open is a TeX source of the PDF the preview shows: "→ PDF" offered.
+const edTexToPdf = () => {
+  const pv = ed.pv, sh = pv && pv.run && pv.run.shows;
+  return !!(sh && sh.kind === "pdf" && sh.exists && pv.pdf && ed.file && /\.(tex|ltx)$/i.test(ed.file)
+    && pv.about && edUnder(ed.file, pv.about.checkout));
+};
+// `at`: the place in the file (⌘/Ctrl+double-click's); else the cursor's.
+async function edToPdf(at = null) {
+  const pv = ed.pv, s = ed.s;
+  if (!edTexToPdf() || !s || !s.view) return;
+  const head = at ?? s.view.state.selection.main.head, l = s.view.state.doc.lineAt(head);
+  if (pv.picked === "output") { pv.picked = "result"; pvDraw(); }
+  const got = await pvSync(pv, { mode: "forward", file: ed.file, line: l.number, column: head - l.from });
+  if (got && ed.pv === pv) pvPdfMark(pv.pdf, got);
+}
+// ⌘+double-click (Ctrl+ elsewhere) in a TeX source: that place in the PDF -- taken before CodeMirror's own double-click
+// (a word selected, ⌘ adding it as one more cursor), the cursor left there alone.
+const edToPdfKey = (ev) => MAC ? ev.metaKey : ev.ctrlKey;
+function edToPdfClick(ev) {
+  if (ev.button !== 0 || ev.detail !== 2 || !edToPdfKey(ev)) return;
+  const s = ed.s;
+  if (!s || !s.view || !edTexToPdf()) return;
+  const at = s.view.posAtCoords({ x: ev.clientX, y: ev.clientY });
+  if (at == null) return;
+  ev.preventDefault(); ev.stopPropagation();
+  s.view.dispatch({ selection: { anchor: at } });
+  edToPdf(at);
+}
+// The place SyncTeX found, scrolled to in the viewer (its zoom kept) and marked, fading.
+function pvPdfMark(f, got) {
+  const app = pvPdfApp(f), view = app && app.pdfViewer.getPageView(got.page - 1);
+  if (!view || !view.pdfPage) return;
+  const page = view.pdfPage.view, h = got.h ?? got.x, v = got.v ?? got.y;
+  const w = Math.max(got.w || 0, 24), tall = Math.max(got.height || 0, 9);
+  const top = page[3] - v + tall;                      // the box's top, in the PDF's own space
+  app.pdfViewer.scrollPageIntoView({ pageNumber: got.page,
+    destArray: [null, { name: "XYZ" }, page[0] + Math.max(0, h - 36), Math.min(page[3], top + 48), null] });
+  requestAnimationFrame(() => {
+    const [x1, y1, x2, y2] = view.viewport.convertToViewportRectangle([page[0] + h, page[3] - v, page[0] + h + w, top]);
+    const mark = f.frame.contentDocument.createElement("div");
+    Object.assign(mark.style, { position: "absolute", left: `${Math.min(x1, x2) - 3}px`, top: `${Math.min(y1, y2) - 3}px`,
+      width: `${Math.abs(x2 - x1) + 6}px`, height: `${Math.abs(y2 - y1) + 6}px`, background: "rgba(255, 190, 0, .38)",
+      borderRadius: "3px", pointerEvents: "none", zIndex: "10", transition: "opacity .8s" });
+    view.div.append(mark);
+    setTimeout(() => { mark.style.opacity = "0"; }, 1800);
+    setTimeout(() => mark.remove(), 2800);
+  });
+}
+document.addEventListener("webviewerloaded", (ev) => {     // the viewer, before it starts: no scripts of the PDF's
+  const w = ev.detail && ev.detail.source;
+  if (!ed.pv || !ed.pv.pdf || ed.pv.pdf.frame.contentWindow !== w) return;
+  try {                                              // its stored preferences would set it again: not read
+    w.PDFViewerApplicationOptions.set("disablePreferences", true);
+    w.PDFViewerApplicationOptions.set("enableScripting", false);
+  } catch (e) { /* an older viewer */ }
+});
+// The output, as it comes: written once a frame, kept scrolled to its end unless the reader scrolled up.
+function pvOut(pv) {
+  if (pv.outQueued) return;
+  pv.outQueued = true;
+  requestAnimationFrame(() => {
+    pv.outQueued = false;
+    if (ed.pv !== pv || !pv.dom) return;
+    const o = pv.dom.output, r = pv.run;
+    const text = pvClean(pv.out);
+    o.textContent = text || (r && r.state === "running" ? "" : r && r.command ? "(It printed nothing.)" : "(Nothing ran.)");
+    if (pv.pinned) o.scrollTop = o.scrollHeight;
+  });
+}
+// The writers in the tree: their avatars, overlapped; two or more, on an amber ground with their count.
+function edAvatars(writers, what) {
+  if (!writers.length) return null;
+  const many = writers.length > 1;
+  return el("span", { class: "ed-avs" + (many ? " many" : ""),
+    title: `${many ? `${writers.length} actors changed ${what}` : `Changed ${what}`} in the last half hour:\n`
+      + writers.map((w) => `${edWriterName(w)}, ${ago(w.at)}`).join("\n") },
+    ...writers.slice(0, 3).map(edAvatar), many ? el("span", { class: "n", text: String(writers.length) }) : null);
+}
+// Whose a change seen on disk at `t` was: the actor whose recorded change is nearest it, and not long before it (ag records
+// a call's change a moment after the call made it; one recorded well before was an earlier change).
+const edCredit = (writers, t) => writers.filter((w) => w.at >= t - ED_CREDIT[0] && w.at <= t + ED_CREDIT[1])
+  .sort((a, b) => Math.abs(a.at - t) - Math.abs(b.at - t))[0] || null;
+const edEntry = (path) => ((ed.lists.get(edDir(path)) || {}).entries || []).find((e) => e.name === edBase(path)) || null;
+
+// The tree: the folder's entries, and those of each folder opened in it; drawn again only when what it shows changed.
+async function edList(dir, draw = true) {
+  let got;
+  try { got = await get(`/api/edit/list?${new URLSearchParams({ dir, root: "/" })}`); }
+  catch (e) { got = { error: e.message, entries: [] }; }
+  if (!(ed.root && edUnder(dir, ed.root)) && !(ed.file && dir === edDir(ed.file))) return;   // a folder shown before
+  if (got.user) ed.user = got.user;
+  if (got.home) ed.home = got.home;
+  ed.lists.set(dir, got);
+  if (draw) { edTree(); edHead(); }
+}
+function edToggle(dir) {
+  if (ed.open.has(dir)) ed.open.delete(dir);
+  else { ed.open.add(dir); if (!ed.lists.has(dir)) edList(dir); }
+  edTree();
+}
+function edTree() {
+  if (!ed.tree || !ed.root) return;
+  const rows = [], sig = [ed.root, ed.file];
+  const walk = (dir, depth) => {
+    const got = ed.lists.get(dir), pad = `padding-left: ${10 + depth * 14}px`;
+    if (!got || got.error || !got.entries.length) {
+      sig.push(dir, got ? got.error || "empty" : "loading");
+      rows.push(el("div", { class: "ed-note" + (got && got.error ? " err" : ""), style: pad, text: !got ? "Loading…" : got.error || "Empty" }));
+      return;
+    }
+    for (const e of got.entries) {
+      const p = edJoin(dir, e.name), writers = edWriters(e);
+      if (e.dir) {
+        const open = ed.open.has(p);
+        sig.push(p, open, writers.map((w) => w.channel));
+        sig.push(e.pending);
+        rows.push(el("button", { type: "button", class: "ed-row dir", style: pad, title: edTilde(p), "aria-expanded": open ? "true" : "false",
+          onclick: () => edToggle(p) }, el("span", { class: "chev", text: open ? "▾" : "▸" }), el("span", { class: "n", text: e.name }),
+          open ? null : edAvatars(writers, "files in it"), open ? null : edWaiting(e.pending, "in it")));
+        if (open) walk(p, depth + 1);
+        continue;
+      }
+      const fresh = got.now - e.mtime < 60 && !writers.some((w) => got.now - w.at < 60), on = p === ed.file;
+      sig.push(p, fresh, e.editors, e.dirty, e.conflicts, e.pending, writers.map((w) => w.channel));
+      rows.push(el("button", { type: "button", class: "ed-row" + (on ? " on" : ""), style: pad, "aria-current": on ? "true" : null,
+        title: [edTilde(p), fresh ? `Changed ${ago(e.mtime)}` : "", e.editors ? `Open in ${plural(e.editors, "editor")}` : "",
+          e.dirty ? "Unsaved changes" : ""].filter(Boolean).join("\n"), onclick: () => edOpen(p) },
+        el("span", { class: "chev" }), el("span", { class: "n", text: e.name }),
+        edAvatars(writers, "it"),
+        fresh ? el("span", { class: "mk fresh", title: "Changed in the last minute" }) : null,
+        e.conflicts ? el("span", { class: "mk cf", title: `${plural(e.conflicts, "conflict")} with the file on disk`, text: "!" }) : null,
+        edWaiting(e.pending, "to it"),
+        e.dirty && !e.conflicts ? el("span", { class: "mk dirty", title: "Unsaved changes" }) : null,
+        e.editors ? el("span", { class: "mk eds", title: `Open in ${plural(e.editors, "editor")}`, text: String(e.editors) }) : null));
+    }
+    if (got.more) rows.push(el("div", { class: "ed-note", style: pad, text: "More not listed" }));
+  };
+  walk(ed.root, 0);
+  const now = JSON.stringify(sig);
+  if (now === ed.treeSig && ed.tree.childElementCount) return;          // the same: left as it is (focus, hover)
+  ed.treeSig = now;
+  ed.tree.replaceChildren(...rows);
+}
+const edWaiting = (n, what) => n ? el("span", { class: "mk br", title: `${plural(n, "change")} from an actor's branch ${what}, waiting for you`, text: String(n) }) : null;
+// Above the tree, under the folder: the actors on branches of the project shown (branches.py), each with its changes
+// waiting for the reader -- a file's changed lines, asked about in the file (opened by its name); a file it made, or deleted,
+// or the project no longer has, asked about here -- and its "auto-merge with approval".
+async function edFetchBranches() {
+  if (!ed.root) return;
+  let got = [];
+  try { got = await get(`/api/branches?${new URLSearchParams({ root: ed.root })}`); } catch (e) { return; }
+  ed.branches = got;
+  edBranches();
+}
+const ED_KIND = { created: "new file", deleted: "deleted on its branch", missing: "not in the project" };
+function edBranches() {
+  if (!ed.brs) return;
+  const list = ed.branches || [];
+  const sig = JSON.stringify([list, list.map((b) => { const a = edActor(b.gatherer, b.channel); return a ? [edWhoName(a), a.avatar] : null; })]);
+  if (sig === ed.brSig) return;
+  ed.brSig = sig;
+  ed.brs.replaceChildren(...list.map((b) => {
+    const a = edActor(b.gatherer, b.channel), color = edWhoColor(a), name = a ? edWhoName(a) : b.branch;
+    const files = Object.entries(b.held || {}).sort(([x], [y]) => x.localeCompare(y));
+    const decide = (path, take) => edDecide(b, path, take);
+    return el("div", { class: "ed-br", style: color ? `--who: ${color}` : null },
+      el("div", { class: "hd", title: `${name}\n${branchRoute(b)}` },
+        a && a.avatar ? el("img", { src: `/avatars/${a.avatar}.svg`, alt: "", draggable: "false" }) : el("span", { class: "ed-noav" }),
+        el("span", { class: "nm", text: name })),
+      el("div", { class: "rt", title: branchRoute(b) }, el("code", { text: b.branch }), " → ",
+        el("code", { text: edBase(b.project) }), " on ", el("code", { text: checkedOut(b.onto) })),
+      el("label", { class: "ap", title: "On: each of its changes waits for you to accept or reject it. Off: its changes are merged in as they come, but for lines you are editing here (the conflict zone), and lines you changed too." },
+        el("input", { type: "checkbox", checked: b.approve ? "" : null, onchange: (ev) => edApprove(b, ev.target.checked) }), "Auto-merge with approval"),
+      ...(files.length ? files.map(([path, v]) => {
+        const whole = v.kind !== "lines", there = v.kind === "created" || v.kind === "missing";
+        const open = there ? b.worktree + path.slice(b.project.length) : path;
+        return el("div", { class: "f" },
+          el("button", { type: "button", class: "go", title: there ? `Open its file on its branch: ${edTilde(open)}` : `Open ${edTilde(path)}`,
+            onclick: () => edOpen(open) }, edRel(path)),
+          el("span", { class: "k", text: whole ? ED_KIND[v.kind] || v.kind : plural(v.n, "change") }),
+          whole || v.n > 1 ? el("button", { type: "button", class: "pick", title: { created: "Add the file to the project", deleted: "Delete the file from the project",
+            missing: "Add the file to the project again" }[v.kind] || "Take every change of its into the file", onclick: () => decide(path, "theirs") }, whole ? "Accept" : "Accept all") : null,
+          whole || v.n > 1 ? el("button", { type: "button", class: "pick", title: whole ? "Leave the project's as it is: not asked about again, until it changes the file again"
+            : "Leave every change of its out of the file", onclick: () => decide(path, "mine") }, whole ? "Reject" : "Reject all") : null);
+      }) : [el("div", { class: "none", text: b.approve ? "Nothing waiting for you" : "Merged as it goes: nothing waiting" })]));
+  }));
+}
+async function edApprove(b, on) {
+  try { await post("/api/branches/approve", { session_id: b.session_id, approve: on }); } catch (e) { ed.err = e.message; edHead(); }
+  edFetchBranches();
+}
+async function edDecide(b, path, take) {
+  try { await post("/api/branches/decide", { session_id: b.session_id, path, take }); } catch (e) { ed.err = e.message; edHead(); }
+  edFetchBranches();
+  const dirs = new Set([ed.root, ...ed.open]);
+  Promise.all([...dirs].map((d) => edList(d, false))).then(() => edTree());
+}
+
+// Above the tree: the folder shown -- typed, or the one above it, or an actor's working directory.
+function edFolders() {
+  const by = new Map();
+  for (const g of (state.home && state.home.gatherers) || [])
+    for (const a of g.agents) {
+      const d = (a.cwd || "").replace(/\/+$/, "");
+      if (!d) continue;
+      const had = by.get(d) || { last: 0, names: [] };
+      had.last = Math.max(had.last, a.last || 0);
+      if (statusOf(a)[0] !== "closed" && had.names.length < 3) had.names.push(edWhoName(a));
+      by.set(d, had);
+    }
+  return [...by.entries()].sort((x, y) => y[1].last - x[1].last).slice(0, 15);
+}
+// The folder shown, picked among the actors' (itself first, when not one of theirs); the folder above it, beside.
+// A long path said by its last two folders, the end of it what tells one from another (the whole in its title).
+const edShort = (p) => { const t = edTilde(p), parts = t.split("/").filter(Boolean); return t.length <= 26 || parts.length <= 2 ? t : `…/${parts.slice(-2).join("/")}`; };
+function edBar() {
+  if (!ed.bar) return;
+  const folders = edFolders();
+  const sig = JSON.stringify([ed.root, ed.home, folders.map(([d, v]) => [d, v.names])]);
+  if (sig === ed.barSig) return;
+  ed.barSig = sig;
+  const theirs = folders.some(([d]) => d === ed.root);
+  const pick = el("select", { class: "ed-pick", "aria-label": "The folder shown", title: `The folder shown: ${edTilde(ed.root)}` },
+    theirs ? null : el("option", { value: ed.root, selected: "", title: edTilde(ed.root), text: edShort(ed.root) }),
+    folders.length ? el("optgroup", { label: "Actors' folders" },
+      ...folders.map(([d, v]) => el("option", { value: d, selected: d === ed.root ? "" : null, title: edTilde(d),
+        text: `${edShort(d)}${v.names.length ? " — " + v.names.join(", ") : ""}` }))) : null);
+  pick.addEventListener("change", () => { if (pick.value) edGo(pick.value); });
+  const above = edDir(ed.root);
+  ed.bar.replaceChildren(el("div", { class: "row" },
+    el("button", { type: "button", class: "ed-up", title: ed.root === "/" ? "The top folder" : `The folder above: ${edTilde(above)}`,
+      "aria-label": "The folder above", disabled: ed.root === "/" ? "" : null, onclick: () => edGo(above) }, strokeIcon(ICONS.folderUp, 15)),
+    pick));
+}
+function edGo(dir) {
+  dir = (dir || "").replace(/\/+$/, "") || "/";
+  if (!dir.startsWith("/")) { ed.barSig = ""; edBar(); return; }        // not a path: shown as it was
+  if (dir === ed.root) return;
+  ed.root = dir;
+  ed.lists = new Map([...ed.lists].filter(([d]) => ed.file && d === edDir(ed.file)));
+  ed.open.clear(); ed.treeSig = ""; ed.barSig = "";
+  try { localStorage.setItem(ED_ROOT_KEY, dir); } catch (e) { /* this page only */ }
+  ed.branches = []; edBranches();
+  edBar(); edTree(); edList(dir); edFetchBranches();
+  if (ed.pv && !ed.file) pvOpen(dir);                // no file open: the folder's project's preview
+}
+function edTick() {
+  if (ed.timer) return;
+  ed.timer = setInterval(() => {
+    if (!state.editor) { clearInterval(ed.timer); ed.timer = null; return; }
+    if (document.hidden || !ed.root) return;
+    const dirs = new Set([ed.root, ...ed.open, ...(ed.file ? [edDir(ed.file)] : [])]);
+    Promise.all([...dirs].map((d) => edList(d, false))).then(() => { edTree(); edHead(); if (ed.s) edConflicts(ed.s); });
+    edBar(); edFetchBranches();
+    if (ed.s) { edConflicts(ed.s); edAgentMarks(ed.s); }
+  }, ED_TICK);
+}
+
+// A file open: its document (Yjs), shared through the dashboard with every page that has it open and with the disk.
+async function edOpen(path) {
+  if (ed.s && ed.s.path === path && !ed.s.err) return;
+  edClose();
+  ed.file = path; ed.err = "";
+  if (ed.pv) pvOpen(path);                           // its project's preview, if that shows
+  if (!ed.lists.has(edDir(path))) edList(edDir(path));      // its writers
+  edTree(); edHead();
+  let A;
+  try { A = await edLib(); } catch (e) { ed.err = e.message; edHead(); return; }
+  if (ed.file !== path || ed.s) return;              // another picked meanwhile
+  const doc = new A.Y.Doc(), ytext = doc.getText("text"), awareness = new A.Awareness(doc);
+  const conn = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  const s = ed.s = { A, path, root: "/", doc, ytext, awareness, conn, es: null, view: null, marks: null, markN: 0,
+    epoch: null, state: null, err: "", note: "", out: [], sending: false, awareAt: null, who: null };
+  awareness.setLocalStateField("user", edMe());
+  doc.on("update", (u, origin) => { if (origin !== "remote" && origin !== "disk") { s.out.push(u); edFlush(s); } });
+  awareness.on("update", (_, origin) => { if (origin === "local") edAware(s); });
+  awareness.on("change", () => { if (ed.s === s) edHead(); });
+  ytext.observe((ev, tr) => { if (tr.origin === "disk") edDiskMarks(s, ev.delta); });
+  const es = s.es = new EventSource(`/api/edit/stream?${new URLSearchParams({ path, root: s.root, conn, client: doc.clientID })}`);
+  const on = (name, f) => es.addEventListener(name, (e) => {
+    if (ed.s !== s) return;
+    try { f(JSON.parse(e.data)); } catch (err) { console.error(err); }
+  });
+  on("init", (v) => {
+    if (s.epoch && s.epoch !== v.epoch) return edReopen(s);     // the dashboard restarted: its document is another
+    const first = !s.epoch;
+    s.epoch = v.epoch;
+    A.Y.applyUpdate(doc, edBytes(v.update), "remote");
+    if (!first) {                                    // back after the stream broke: what was typed meanwhile, sent
+      const mine = A.Y.encodeStateAsUpdate(doc, edBytes(v.sv));
+      if (mine.length > 2) { s.out.push(mine); edFlush(s); }
+    }
+    for (const u of v.aware) A.applyAwarenessUpdate(awareness, edBytes(u), "remote");
+    edAware(s);                                      // this page's cursor, to the stream's new end
+    if (first) edView(s);
+    edHead();
+  });
+  on("update", (v) => A.Y.applyUpdate(doc, edBytes(v.update), v.disk ? "disk" : "remote"));
+  on("aware", (v) => A.applyAwarenessUpdate(awareness, edBytes(v.update), "remote"));
+  on("left", (v) => A.removeAwarenessStates(awareness, [v.client], "remote"));
+  on("state", (v) => { s.state = v; edZone(s); edAgentMarks(s); edConflicts(s); edAutoLater(s); edHead(); });   // after each edit, any page's, and the disk's
+  on("failed", (v) => { s.err = v.error; es.close(); edHead(); });
+  es.onerror = es.onopen = () => { if (ed.s === s) edHead(); };   // the header says while it reconnects
+}
+function edView(s) {
+  const A = s.A;
+  const add = A.StateEffect.define(), clear = A.StateEffect.define();
+  const marks = A.StateField.define({                // what was written to the file on disk, marked a moment
+    create: () => A.Decoration.none,
+    update(deco, tr) {
+      deco = deco.map(tr.changes);
+      for (const e of tr.effects) {
+        if (e.is(add)) deco = deco.update({ add: e.value, sort: true });
+        else if (e.is(clear)) deco = A.Decoration.none;
+      }
+      return deco;
+    },
+    provide: (f) => A.EditorView.decorations.from(f),
+  });
+  s.marks = { add, clear };
+  const setConflicts = A.StateEffect.define();
+  const conflicts = A.StateField.define({            // the conflicts with the file on disk: this page's lines, its file's under them
+    create: () => A.Decoration.none,
+    update(deco, tr) {
+      deco = deco.map(tr.changes);
+      for (const e of tr.effects) if (e.is(setConflicts)) deco = e.value;
+      return deco;
+    },
+    provide: (f) => A.EditorView.decorations.from(f),
+  });
+  s.conflicts = { set: setConflicts, field: conflicts, sig: "" };
+  const setZone = A.StateEffect.define();
+  const zone = A.StateField.define({                 // the conflict zone: the lines edited here, tinted
+    create: () => A.Decoration.none,
+    update(deco, tr) {
+      deco = deco.map(tr.changes);
+      for (const e of tr.effects) if (e.is(setZone)) deco = e.value;
+      return deco;
+    },
+    provide: (f) => A.EditorView.decorations.from(f),
+  });
+  s.zone = { set: setZone, sig: "" };
+  const setAgents = A.StateEffect.define();
+  const agents = A.StateField.define({               // the lines of actors' branches, merged in: in each one's hue
+    create: () => A.Decoration.none,
+    update(deco, tr) {
+      deco = deco.map(tr.changes);
+      for (const e of tr.effects) if (e.is(setAgents)) deco = e.value;
+      return deco;
+    },
+    provide: (f) => A.EditorView.decorations.from(f),
+  });
+  s.agents = { set: setAgents, sig: "" };
+  s.wrapping = new A.Compartment();                  // long lines wrapped, or not (the header's Wrap)
+  ed.body.replaceChildren();
+  s.view = new A.EditorView({
+    parent: ed.body,
+    state: A.EditorState.create({
+      doc: s.ytext.toString(),
+      extensions: [
+        A.keymap.of([...A.yUndoManagerKeymap, { key: "Mod-s", preventDefault: true, run: () => { edSave(s); return true; } }, A.indentWithTab]),
+        A.basicSetup, A.EditorState.lineSeparator.of("\n"), A.highlight, A.language(s.path), A.yCollab(s.ytext, s.awareness), marks,
+        zone, agents, conflicts, s.wrapping.of(ed.wrap ? A.EditorView.lineWrapping : []),
+      ],
+    }),
+  });
+  edZone(s);
+  edAgentMarks(s);
+  edConflicts(s);
+}
+// The lines actors' branches put in the file (the state's `marks`), tinted in each one's hue -- as long as the actor is
+// not closed.
+function edAgentMarks(s) {
+  const v = s.view;
+  if (!v || !s.agents) return;
+  const list = ((s.state && s.state.marks) || []).map((m) => ({ ...m, a: edActor(m.gatherer, m.channel) }))
+    .filter((m) => !m.a || statusOf(m.a)[0] !== "closed");
+  const sig = JSON.stringify(list.map((m) => [m.from, m.to, m.channel, edWhoColor(m.a)]));
+  if (sig === s.agents.sig) return;
+  s.agents.sig = sig;
+  const A = s.A, doc = v.state.doc, out = new Map();
+  for (const m of list) {
+    const from = Math.min(m.from, doc.length), to = Math.min(Math.max(m.to, from), doc.length), color = edWhoColor(m.a);
+    const attributes = { title: `From ${m.a ? edWhoName(m.a) : "an actor"}'s branch`, ...(color ? { style: `--who: ${color}` } : {}) };
+    const last = doc.lineAt(Math.max(from, to - 1)).number;
+    for (let n = doc.lineAt(from).number; n <= last && out.size < 20000; n++) {
+      const at = doc.line(n).from;
+      if (!out.has(at)) out.set(at, A.Decoration.line({ class: "ed-agent", attributes }).range(at));
+    }
+  }
+  v.dispatch({ effects: s.agents.set.of(A.Decoration.set([...out.values()], true)) });
+}
+// The conflict zone (the state's `zone`: ranges of the document), drawn: each line a range is on, or an empty one is at.
+function edZone(s) {
+  const v = s.view, list = (s.state && s.state.zone) || [];
+  if (!v || !s.zone) return;
+  const sig = JSON.stringify(list);
+  if (sig === s.zone.sig) return;
+  s.zone.sig = sig;
+  const A = s.A, doc = v.state.doc, lines = new Set();
+  for (const [a, b] of list) {
+    const from = Math.min(a, doc.length), to = Math.min(Math.max(b, from), doc.length);
+    const last = doc.lineAt(Math.max(from, to - 1)).number;
+    for (let n = doc.lineAt(from).number; n <= last && lines.size < 20000; n++) lines.add(doc.line(n).from);
+  }
+  v.dispatch({ effects: s.zone.set.of(A.Decoration.set([...lines].map((at) => A.Decoration.line({ class: "ed-zone" }).range(at)), true)) });
+}
+async function edClearZone(s) {
+  try { s.state = await post("/api/edit/zone/clear", { path: s.path, root: s.root }); s.err = ""; }
+  catch (e) { s.err = e.message; }
+  if (ed.s === s) { edZone(s); edHead(); }
+}
+// What a box's change does within its lines, by word: (the lines here, the lines it would put in their place) as
+// [kind, text] parts -- "same", "del" (in the lines here only), "add" (in its lines only) -- from the longest run of
+// words the two share (their common start and end first left out); null where one side is empty, or too long to work
+// out at once (the whole lines are marked anyway).
+const ED_WORDS = /\s+|[\p{L}\p{N}_]+|[^\s\p{L}\p{N}_]+/gu, ED_DIFF_MAX = 250000;
+function edWordDiff(mine, theirs) {
+  if (!mine || !theirs || mine === theirs) return null;
+  const a = mine.match(ED_WORDS) || [], b = theirs.match(ED_WORDS) || [];
+  let pre = 0, post = 0;
+  while (pre < a.length && pre < b.length && a[pre] === b[pre]) pre++;
+  while (post < a.length - pre && post < b.length - pre && a[a.length - 1 - post] === b[b.length - 1 - post]) post++;
+  const x = a.slice(pre, a.length - post), y = b.slice(pre, b.length - post);
+  if (x.length * y.length > ED_DIFF_MAX) return null;
+  const n = x.length, m = y.length, L = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) L[i][j] = x[i] === y[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+  const out = [], put = (kind, text) => { const last = out[out.length - 1]; if (last && last[0] === kind) last[1] += text; else out.push([kind, text]); };
+  if (pre) put("same", a.slice(0, pre).join(""));
+  let i = 0, j = 0;
+  while (i < n || j < m) {
+    if (i < n && j < m && x[i] === y[j]) { put("same", x[i]); i++; j++; }
+    else if (j < m && (i === n || L[i][j + 1] >= L[i + 1][j])) put("add", y[j++]);
+    else put("del", x[i++]);
+  }
+  if (post) put("same", a.slice(a.length - post).join(""));
+  return out;
+}
+// A word diff's parts as a box shows them: each change whole -- what it takes out, then what it puts in -- its runs of
+// changed words, and the punctuation or spaces between them (ED_GLUE, on one line), one ["change", out, in]; the rest
+// ["same", text]. So "3.14" made "math.pi" reads as the one, struck, then the other, not word by word in turn.
+const ED_GLUE = /^[^\S\n]*[^\s\p{L}\p{N}_]{0,2}[^\S\n]*$/u;
+function edGroups(parts) {
+  const out = [];
+  for (let i = 0; i < parts.length; i++) {
+    const [kind, text] = parts[i];
+    if (kind === "same") { out.push(["same", text]); continue; }
+    let gone = "", put = "";
+    for (; i < parts.length; i++) {
+      const [k, t] = parts[i];
+      if (k === "del") gone += t;
+      else if (k === "add") put += t;
+      else if (ED_GLUE.test(t) && i + 1 < parts.length && parts[i + 1][0] !== "same") { gone += t; put += t; }
+      else { i--; break; }
+    }
+    out.push(["change", gone, put]);
+  }
+  return out;
+}
+// The conflicts, drawn: the lines kept here marked, and under them the file's lines, with what to do about them.
+let EdConflict = null;
+function edConflictWidget(A) {
+  return EdConflict ||= class extends A.WidgetType {
+    constructor(s, c, by, parts) { super(); this.s = s; this.c = c; this.by = by; this.parts = parts; }
+    eq(other) { return other.c.id === this.c.id && other.c.theirs === this.c.theirs && other.by.names.join("\n") === this.by.names.join("\n")
+      && JSON.stringify(other.parts) === JSON.stringify(this.parts); }
+    toDOM() {
+      const { s, c } = this, name = this.by.label, many = this.by.names.length > 1;
+      const pick = (take, label, title) => el("button", { type: "button", title,
+        onclick: (ev) => { ev.preventDefault(); edSettle(s, c.id, take); } }, label);
+      const mine = c.to > c.from, kind = !c.theirs ? "deleted" : mine ? "rewrote" : "added";
+      let what, picks;
+      const branch = c.agent, who = branch ? edActor(branch.gatherer, branch.channel) : null;
+      if (branch && !c.zone) {                       // an actor's branch's change: taken in, or left out, as the reader says
+        const nm = who ? edWhoName(who) : branch.branch;
+        what = branch.why === "approve"
+          ? { rewrote: `${nm} changed these lines on its branch`, deleted: `${nm} deleted these lines on its branch`, added: `${nm} added lines here on its branch` }[kind]
+          : `${nm} changed these lines on its branch, and they were changed here too`;
+        picks = branch.why === "approve" ? [
+          pick("theirs", "Accept", c.theirs ? "Put its lines in the file, in place of these" : "Delete these lines, as its branch did"),
+          pick("mine", "Reject", "Leave its change out: the file keeps these lines, and it is not asked about again"),
+          kind === "rewrote" ? pick("both", "Keep both", "Keep these lines, and its after them") : null]
+          : [pick("mine", "Keep yours", "Leave its change out: the file keeps these lines"),
+            pick("theirs", c.theirs ? "Take its" : "Delete them", c.theirs ? "Put its lines in place of these" : "Delete these lines, as its branch did"),
+            c.theirs && mine ? pick("both", "Keep both", "Keep these lines, and its after them") : null];
+      } else if (c.zone) {                                  // in the conflict zone: the reader's lines, rewritten on disk
+        what = { rewrote: name ? `${name} rewrote lines you edited` : "Lines you edited were rewritten on disk",
+          deleted: name ? `${name} deleted lines you edited` : "Lines you edited were deleted on disk",
+          added: name ? `${name} added lines among those you edited` : "Lines were added on disk among those you edited" }[kind];
+        picks = [
+          pick("mine", mine ? "Restore yours" : "Leave them out", mine ? "Keep your lines; a save (or Auto-save) writes them over the file's"
+            : "Leave the file's new lines out; a save (or Auto-save) writes the file without them"),
+          pick("theirs", { rewrote: many ? "Accept their rewrite" : "Accept its rewrite", deleted: "Accept the deletion", added: "Add them" }[kind],
+            c.theirs ? "Put the file's lines in place of yours" : "Delete your lines, as the file did"),
+          kind === "rewrote" ? pick("both", "Keep both", "Keep your lines, and the file's after them") : null];
+      } else {                                       // both changed, differently, outside the zone (it was cleared)
+        what = `${c.theirs ? "Changed" : "Deleted"} on disk${name ? ` by ${name}` : ""} where it was edited here too`;
+        picks = [pick("mine", "Keep yours", "Keep the lines above; the file's are left out (a save writes yours)"),
+          pick("theirs", c.theirs ? "Take theirs" : "Delete them", c.theirs ? "Put the file's lines in place of yours" : "Delete your lines, as the file did"),
+          c.theirs && mine ? pick("both", "Keep both", "Keep your lines, and the file's after them") : null];
+      }
+      const color = branch ? edWhoColor(who) : null;
+      return el("div", { class: "ed-cf" + (branch ? " from-branch" : ""), style: color ? `--who: ${color}` : null },
+        el("div", { class: "ed-cf-head" }, branch && who && who.avatar ? el("span", { class: "ed-avs" }, el("img", { src: `/avatars/${who.avatar}.svg`, alt: "", draggable: "false" })) : null,
+          el("span", { class: "what", title: branch ? `Its branch: ${branch.branch}` : many ? `Their changes, one after the other:\n${this.by.names.join("\n")}` : null,
+          text: `${what}, ${ago(c.at)}.` }), el("span", { class: "grow" }), ...picks),
+        // its lines -- with the words changed, both those it takes out of the lines above (red) and those it puts in
+        // (green), in place, where they are told (edWordDiff)
+        c.theirs ? el("div", { class: "ed-cf-label" }, branch ? (this.parts ? "Its change to the lines above: " : mine ? "On its branch, in place of the lines above:" : "On its branch:")
+          : this.parts ? "The change on disk to the lines above: " : mine ? "On disk now, in place of the lines above:" : "On disk now:",
+          ...(this.parts ? [el("span", { class: "ed-del", text: "taken out" }), ", ", el("span", { class: "ed-add", text: "put in" })] : [])) : null,
+        c.theirs ? el("pre", { class: "ed-cf-theirs" }, ...(this.parts
+          ? edGroups(this.parts).map((g, k, all) => {
+            const end = (t) => k === all.length - 1 ? t.replace(/\n$/, "") : t;
+            if (g[0] === "same") return end(g[1]);
+            const out = [g[1].trim() ? el("span", { class: "ed-del", text: g[2] ? g[1] : end(g[1]) }) : g[1],
+              g[2].trim() ? el("span", { class: "ed-add", text: end(g[2]) }) : end(g[2])];
+            return el("span", { class: "ed-chg" }, ...out);
+          })
+          : [c.theirs.replace(/\n$/, "")])) : null);
+    }
+    ignoreEvent() { return true; }
+  };
+}
+// Drawn again when the conflicts or their places change, or who made one is known (ag records an actor's change a
+// moment after it lands: the listing's `writers`), and whenever one's box is missing -- an edit can take it away (one
+// that deletes the line break after it) while leaving the conflict where it was. Called with each state, and with each
+// of the panel's ticks.
+// Who made a conflict: every actor whose change landed from the first of its lines' changes (`since`) to its last.
+function edConflictBy(s, c) {
+  if (c.agent) {                                     // an actor's branch's: that actor
+    const a = edActor(c.agent.gatherer, c.agent.channel), name = a ? edWhoName(a) : c.agent.branch;
+    return { label: name, names: [name] };
+  }
+  const ws = edWriters(edEntry(s.path)).filter((w) => w.at >= (c.since ?? c.at) - ED_CREDIT[0] && w.at <= c.at + ED_CREDIT[1]).reverse();
+  return { label: ws.length > 1 ? `${ws.length} actors` : ws.length ? edWriterName(ws[0]) : "", names: ws.map(edWriterName) };
+}
+function edConflicts(s) {
+  const v = s.view, list = (s.state && s.state.conflicts) || [];
+  if (!v || !s.conflicts) return;
+  const sig = JSON.stringify(list.map((c) => [c.id, c.from, c.to, c.theirs, edConflictBy(s, c)]));
+  const shown = new Set();
+  v.state.field(s.conflicts.field).between(0, v.state.doc.length, (from, to, d) => { if (d.spec.cf) shown.add(d.spec.cf); });
+  if (sig === s.conflicts.sig && list.every((c) => shown.has(c.id))) return;
+  try { edDrawConflicts(s, list); s.conflicts.sig = sig; }
+  catch (err) { console.error("the conflicts were not drawn:", err); }   // drawn at the next state, or tick
+}
+function edDrawConflicts(s, list) {
+  const v = s.view, A = s.A, doc = v.state.doc, Widget = edConflictWidget(A), out = [];
+  for (const c of list) {
+    const from = Math.min(c.from, doc.length), to = Math.min(Math.max(c.to, from), doc.length);
+    const parts = edWordDiff(doc.sliceString(from, to), c.theirs);
+    let at = from;                                   // what the change takes out of the lines here, marked in them
+    for (const [kind, text] of parts || []) {
+      if (kind === "del" && text.trim()) out.push(A.Decoration.mark({ class: "ed-del" }).range(at, at + text.length));
+      if (kind !== "add") at += text.length;
+    }
+    if (to > from) {
+      const color = c.agent ? edWhoColor(edActor(c.agent.gatherer, c.agent.channel)) : null;
+      const deco = A.Decoration.line({ class: "ed-cf-mine" + (c.agent ? " from-branch" : ""), ...(color ? { attributes: { style: `--who: ${color}` } } : {}) });
+      for (let p = from; p < to; ) { const line = doc.lineAt(p); out.push(deco.range(line.from)); p = line.to + 1; }
+      const last = doc.lineAt(Math.max(from, to - 1));
+      out.push(A.Decoration.widget({ widget: new Widget(s, c, edConflictBy(s, c), parts), block: true, side: 1, cf: c.id }).range(last.to));
+    } else {
+      out.push(A.Decoration.widget({ widget: new Widget(s, c, edConflictBy(s, c), parts), block: true, side: -1, cf: c.id }).range(doc.lineAt(from).from));
+    }
+  }
+  v.dispatch({ effects: s.conflicts.set.of(A.Decoration.set(out, true)) });
+}
+async function edSettle(s, conflict, take) {
+  try { s.state = await post("/api/edit/settle", { path: s.path, root: s.root, conflict, take }); s.err = ""; }
+  catch (e) { s.err = e.message; }
+  if (ed.s === s) { edConflicts(s); edHead(); }
+}
+function edUnmark(s) {
+  if (s.view) s.view.dispatch({ effects: s.marks.clear.of(null) });
+  s.marked = false;
+  edHead();
+}
+function edToConflict(s) {                             // the first conflict, shown
+  const c = ((s.state && s.state.conflicts) || [])[0];
+  if (c && s.view) s.view.dispatch({ effects: s.A.EditorView.scrollIntoView(Math.min(c.from, s.view.state.doc.length), { y: "center" }) });
+}
+// The disk's change, marked where it landed -- each line it touched, and the text it put there -- until the next
+// one, or until the reader clears it (the header's ×).
+function edDiskMarks(s, delta) {
+  queueMicrotask(() => {                             // once y-codemirror has put the change in the editor
+    const v = s.view;
+    if (!v || ed.s !== s) return;
+    const A = s.A, doc = v.state.doc, len = doc.length, n = ++s.markN, out = [], lines = new Set(), within = new Map();
+    s.who = edWho(s.path);
+    const color = edWhoColor(s.who), attributes = color ? { style: `--who: ${color}` } : undefined;
+    const mark = (a, b) => out.push(A.Decoration.mark({ class: "ed-disk", n, attributes }).range(a, b));
+    const part = (line, a, b) => { if (!within.has(line.from)) within.set(line.from, []); within.get(line.from).push([a, b]); };
+    let pos = 0;
+    for (const op of delta) {
+      if (op.retain) pos += op.retain;
+      else if (op.insert) {
+        const k = typeof op.insert === "string" ? op.insert.length : 1, a = Math.min(pos, len), b = Math.min(pos + k, len);
+        if (b > a) {                                 // its first and last lines' parts by word (edWords); the lines between whole
+          const first = doc.lineAt(a), last = doc.lineAt(b);
+          if (first.number === last.number) part(first, a, b);
+          else {
+            part(first, a, first.to);
+            if (last.from > first.to + 1) mark(first.to + 1, last.from - 1);
+            if (b > last.from) part(last, last.from, b);
+          }
+        }
+        let p = a;
+        do { const line = doc.lineAt(p); lines.add(line.from); p = line.to + 1; } while (p < b && lines.size < 2000);
+        pos += k;
+      } else if (op.delete) lines.add(doc.lineAt(Math.min(pos, len)).from);
+    }
+    for (const [from, parts] of within) for (const [a, b] of edWords(doc.lineAt(from), parts)) mark(a, b);
+    for (const from of lines) out.push(A.Decoration.line({ class: "ed-disk-line", n, attributes }).range(from));
+    if (!out.length) return;
+    v.dispatch({ effects: [s.marks.clear.of(null), s.marks.add.of(out)] });
+    s.marked = true;
+    edHead();
+  });
+}
+// What a change put in a line, to mark, by word: it is put in by character (editor.py's change), so that what others type
+// stays where it is -- which leaves a rewritten line in bits, the letters old and new have in common not put in. Each
+// part grown to the words it falls in; parts apart by spaces only, or one mark between words, joined; and a line it
+// mostly put in (most of its letters), marked from its first letter to its last.
+const ED_WORD = /[\p{L}\p{N}_]/u, ED_MOSTLY = 0.6;   // ED_MOSTLY: of a line's letters put in, it is marked whole
+function edWords(line, parts) {
+  const t = line.text, w = (i) => i >= 0 && i < t.length && ED_WORD.test(t[i]);
+  const grown = parts.map(([a, b]) => {
+    a -= line.from; b -= line.from;
+    while (a > 0 && w(a - 1) && w(a)) a--;
+    while (b < t.length && w(b - 1) && w(b)) b++;
+    return [a, b];
+  }).sort((x, y) => x[0] - y[0]);
+  const joined = [];
+  for (const [a, b] of grown) {
+    const prev = joined[joined.length - 1], gap = prev ? t.slice(prev[1], a) : null;
+    if (prev && (a <= prev[1] || /^\s*$/.test(gap) || /^\s*[^\p{L}\p{N}_\s]\s*$/u.test(gap))) prev[1] = Math.max(prev[1], b);
+    else joined.push([a, b]);
+  }
+  const letters = (x) => x.replace(/\s+/g, "").length;
+  const put = joined.reduce((k, [a, b]) => k + letters(t.slice(a, b)), 0), all = letters(t);
+  if (all && put / all >= ED_MOSTLY) {
+    const a = t.length - t.trimStart().length, b = t.trimEnd().length;
+    return b > a ? [[line.from + a, line.from + b]] : [];
+  }
+  return joined.filter(([a, b]) => b > a).map(([a, b]) => [line.from + a, line.from + b]);
+}
+// This page's edits, sent a burst at a time, one request at a time; kept to send again if one fails.
+function edFlush(s) {
+  if (s.sending || !s.out.length || !s.epoch || ed.s !== s) return;
+  s.sending = true;
+  setTimeout(async () => {
+    const u = s.out.length === 1 ? s.out[0] : s.A.Y.mergeUpdates(s.out);
+    s.out = [];
+    try {
+      s.state = await post("/api/edit/update", { path: s.path, root: s.root, conn: s.conn, update: edB64(u) });
+      s.err = "";
+    } catch (e) {
+      s.out.unshift(u);
+      s.err = e.message;
+      setTimeout(() => edFlush(s), 2000);
+    }
+    s.sending = false;
+    if (ed.s === s) { edHead(); if (s.out.length && !s.err) edFlush(s); }
+  }, ED_SEND);
+}
+// This page's user and cursor, to the others: at most one request at a time, the latest after it.
+function edAware(s) {
+  if (!s.epoch) return;
+  if (s.awareAt) { s.awareAgain = true; return; }
+  s.awareAt = Date.now();
+  post("/api/edit/aware", { path: s.path, root: s.root, conn: s.conn,
+    update: edB64(s.A.encodeAwarenessUpdate(s.awareness, [s.doc.clientID])) }).catch(() => {}).finally(() => {
+    s.awareAt = null;
+    if (s.awareAgain) { s.awareAgain = false; edAware(s); }
+  });
+}
+async function edSave(s) {
+  for (let i = 0; i < 100 && (s.sending || s.out.length) && !s.err; i++) await new Promise((r) => setTimeout(r, 20));   // its last keys first
+  try { s.state = await post("/api/edit/save", { path: s.path, root: s.root }); s.err = ""; }
+  catch (e) { s.err = e.message; }
+  if (ed.s === s) edHead();
+}
+// Auto-save: the file saved ED_AUTO_MS after the last edit to it, this page's or another's -- not a file deleted on disk,
+// which only Save writes again, nor one with a conflict with the file on disk, which waits for the reader (an actor's
+// branch's change waiting does not hold it back: the file has none of it).
+const edDiskConflicts = (s) => ((s && s.state && s.state.conflicts) || []).filter((c) => !c.agent);
+function edAutoLater(s) {
+  clearTimeout(s.autoT);
+  const due = () => ed.auto && ed.s === s && s.state && s.state.dirty && !s.state.missing && !edDiskConflicts(s).length;
+  if (due()) s.autoT = setTimeout(() => { if (due()) edSave(s); }, ED_AUTO_MS);
+}
+function edSetWrap(on) {
+  ed.wrap = on;
+  try { localStorage.setItem(ED_WRAP_KEY, on ? "1" : "0"); } catch (e) { /* this page only */ }
+  if (ed.body) ed.body.classList.toggle("wrap", on);
+  const s = ed.s;
+  if (s && s.view && s.wrapping) s.view.dispatch({ effects: s.wrapping.reconfigure(on ? s.A.EditorView.lineWrapping : []) });
+  edHead();
+}
+function edSetAuto(on) {
+  ed.auto = on;
+  try { localStorage.setItem(ED_AUTO_KEY, on ? "1" : "0"); } catch (e) { /* this page only */ }
+  if (ed.s) edAutoLater(ed.s);
+  edHead();
+}
+function edClose() {
+  const s = ed.s;
+  if (!s) return;
+  ed.s = null;
+  clearTimeout(s.autoT);
+  let sent = Promise.resolve();
+  if (s.out.length && s.epoch) {                     // its last keys, still sent
+    const u = s.A.Y.mergeUpdates(s.out);
+    sent = post("/api/edit/update", { path: s.path, root: s.root, conn: s.conn, update: edB64(u) });
+  }
+  if (ed.auto && s.epoch && (s.out.length || (s.state && s.state.dirty && !s.state.missing))
+      && !edDiskConflicts(s).length)                      // and, auto-saved, saved -- not over a conflict
+    sent = sent.then(() => post("/api/edit/save", { path: s.path, root: s.root }));
+  sent.catch(() => {});
+  s.awareness.setLocalState(null);                   // its cursor gone from the others' at once
+  s.awareness.destroy();
+  if (s.es) s.es.close();
+  if (s.view) s.view.destroy();
+  s.doc.destroy();
+}
+function edReopen(s) {
+  const lost = s.state && s.state.dirty;
+  edClose();
+  edOpen(s.path).then(() => {
+    if (lost && ed.s) { ed.s.note = "The dashboard restarted, and this file's unsaved changes there were lost: it was opened again from disk."; edHead(); }
+  });
+}
+window.addEventListener("pagehide", edClose);
+
+function edHead() {
+  if (!ed.head) return;
+  const s = ed.s;
+  if (!ed.file) {
+    ed.head.replaceChildren(el("span", { class: "ed-hint", text: "Pick a file to edit it. Everyone with it open sees the others' edits as they type, and what an actor writes to it shows here as it lands." }),
+      el("span", { class: "grow", style: "flex: 1" }), edExecBtn(), edCloseBtn());
+    return;
+  }
+  const st = s && s.state;
+  const nc = edDiskConflicts(s).length, na = ((st && st.conflicts) || []).length - nc;
+  const [cls, said] = ed.err || (s && s.err) ? ["bad", ed.err || s.err]
+    : nc ? ["bad", `${plural(nc, "conflict")} with the file on disk`]
+    : na ? ["warn", `${plural(na, "change")} from a branch to approve`]
+    : !s || !s.epoch ? ["", "Opening…"]
+    : s.es.readyState !== 1 ? ["warn", "Reconnecting…"]
+    : st && st.missing ? ["bad", "Deleted on disk: Save writes it again"]
+    : st && st.error ? ["bad", st.error]
+    : st && st.dirty ? (ed.auto ? ["", "Saving…"] : ["warn", "Unsaved"]) : ["ok", "Saved"];
+  const others = s ? [...s.awareness.getStates().entries()].filter(([id, v]) => id !== s.doc.clientID && v && v.user) : [];
+  // who changed it on disk last: the actor whose recorded change is nearest it, else (not yet recorded) the likely one
+  const writers = edWriters(edEntry(ed.file));
+  if (ed.changes && ed.changes.path !== ed.file) edDrawChanges();          // another file: its panel closed
+  else if (ed.changes) {                                                   // the actor changed it again: fetched again
+    const w = writers.find((x) => edKey(x) === ed.changes.k);
+    if (w && w.at > ed.changes.seen) { ed.changes.seen = w.at; ed.changes.w = w; edFetchChanges(); }
+  }
+  let changed = null;
+  if (st && st.changed && (s.marked || Date.now() / 1000 - st.changed < 120)) {
+    const near = edCredit(writers, st.changed);
+    const who = near ? near.actor : s.who, color = edWhoColor(who);
+    changed = el("span", { class: "ed-changed", style: color ? `--who: ${color}` : null,
+      title: near ? `By ${edWriterName(near)}, as ag's hook recorded the actor's change` : s.who ? `Likely by ${edWhoName(s.who)}: the one actor running in a directory that holds the file, until ag records who it was`
+        : "Written to the file by something other than this editor" },
+      `Changed on disk ${ago(st.changed)}`,
+      s.marked ? el("button", { type: "button", class: "ed-unmark", title: "Clear the marks of what changed on disk", "aria-label": "Clear the marks",
+        onclick: () => edUnmark(s) }, "×") : null);
+  }
+  const zoned = s && st && (st.zone || []).length ? el("span", { class: "ed-zone-chip",
+    title: "The lines edited here since the file was opened, tinted: an actor's change to them is asked about, not merged in. Cleared when the file is closed, or by Clear." },
+    "Conflict zone", el("button", { type: "button", title: "Clear the conflict zone: the actors' changes to its lines merge in, as anywhere else",
+      onclick: () => edClearZone(s) }, "Clear")) : null;
+  const many = writers.length > 1;
+  const by = writers.length ? el("span", { class: "ed-writers" + (many ? " many" : ""),
+    title: `${many ? `${writers.length} actors are changing this file` : "The actor changing this file"} (in the last half hour):\n`
+      + writers.map((w) => `${edWriterName(w)}, ${ago(w.at)}`).join("\n") },
+    el("span", { class: "ed-avs" }, ...writers.slice(0, 4).map((w) => el("button", { type: "button",
+      class: "ed-av" + (ed.changes && ed.changes.k === edKey(w) ? " on" : ""), "aria-label": `${edWriterName(w)}'s changes to this file`,
+      title: `${edWriterName(w)}: its changes to this file in the last ${ED_CHANGES_S / 60} minutes`, onclick: () => edChanges(w) }, edAvatar(w)))),
+    many ? el("span", { class: "lbl", text: `${writers.length} actors changing it` }) : null) : null;
+  ed.head.replaceChildren(...[
+    el("span", { class: "ed-path", title: ed.file, text: edRel(ed.file) }),
+    (nc || na) && !(ed.err || (s && s.err)) ? el("button", { type: "button", class: `ed-status ${cls}`, role: "status",
+      title: nc ? "Show the first: keep yours, take the file's, or both" : "Show the first: accept it, or reject it",
+      onclick: () => edToConflict(s) }, said) : el("span", { class: `ed-status ${cls}`, role: "status", text: said }),
+    zoned, by, changed,
+    s && s.note ? el("span", { class: "ed-status bad", text: s.note }) : null,
+    el("span", { class: "ed-people" },
+      ...others.map(([, v]) => el("span", { class: "ed-person", style: `--who: ${v.user.color}`, title: `${v.user.name} has it open`, text: v.user.name })),
+      s ? el("button", { type: "button", class: "ed-person", style: `--who: ${edMe().color}`, title: "You, as the others see you: click to change your name",
+        onclick: edRename, text: `${edMe().name} (you)` }) : null),
+    el("button", { type: "button", class: "ed-wrap" + (ed.wrap ? " on" : ""), "aria-pressed": ed.wrap ? "true" : "false",
+      title: ed.wrap ? "Long lines wrapped, here and in the boxes of changes to merge: click to scroll them instead"
+        : "Wrap long lines, here and in the boxes of changes to merge, so they read whole without scrolling",
+      "aria-label": "Wrap long lines", onclick: () => edSetWrap(!ed.wrap) }, strokeIcon(ICONS.wrap, 15)),
+    el("label", { class: "ed-auto", title: "Save the file a moment after each edit to it, yours or another's: the actors read it as it is typed. Not while a conflict with the file waits." },
+      el("input", { type: "checkbox", checked: ed.auto ? "" : null, onchange: (ev) => edSetAuto(ev.target.checked) }), "Auto-save"),
+    edTexToPdf() ? el("button", { type: "button", class: "ed-topdf", onclick: edToPdf,
+      title: `Show the cursor's line in the PDF beside (SyncTeX), or ${MAC ? "⌘" : "Ctrl"}+double-click a line. Double-click the PDF to come back to its source.` }, "→ PDF") : null,
+    edExecBtn(),
+    el("button", { type: "button", class: "primary", title: nc ? "Write it to the file on disk, your lines kept where they conflict (⌘S / Ctrl+S)" : "Write it to the file on disk (⌘S / Ctrl+S)",
+      disabled: s && st && (st.dirty || st.missing) ? null : "", onclick: () => s && edSave(s) }, "Save"),
+    edCloseBtn()].filter(Boolean));
+}
+
+// The panel: above the panes, opened from a pane's header (setEditor; from a pane's frame, through this page:
+// agEditorPanel). Its height is the reader's, by the edge between it and the panes (kept in this browser). Closed,
+// its file is closed too -- the others no longer see this page in it -- and opened again with it.
+state.editor = !PANE && !SNAPSHOT && (() => { try { return localStorage.getItem(ED_SHOWN_KEY) === "1"; } catch (e) { return false; } })();
+const edShown = () => PANE ? !!(window.parent.agEditorPanel && window.parent.agEditorPanel.shown()) : !!state.editor;
+// `dir`: the folder to show in it, opened -- a pane's actor's working directory, by its button.
+function setEditor(open, dir = null) {
+  if (PANE) { if (window.parent.agEditorPanel) window.parent.agEditorPanel.set(open, dir); return; }
+  const wasMin = chatMin();
+  state.editor = open;
+  if (!open) { edClose(); pvSleep(); keepMin(false); }   // the chat minimized only under it: closed, shown again
+  try { localStorage.setItem(ED_SHOWN_KEY, open ? "1" : ""); } catch (e) { /* this page only */ }
+  for (const p of panes.others) p.call("editor", open);
+  edMount();
+  if (open && dir) edGo(dir);
+  if (wasMin && !open) return minRedraw();          // its view's feed loaded again (minimized, the files')
+  keepingPlace(renderMain);                          // its button in the header: pressed, or not
+  drawn.main = mainSignature();
+}
+// The selected actor's working directory (this page's: a pane's, in its frame).
+const edActorDir = () => { const info = selectedInfo(); return (info && (info.cwd || (info.session && info.session.cwd))) || null; };
+// The Editor opened by a pane's button, at the actor's work: the folder holding the files it changed lately -- in its
+// latest turn that changed any, and the last few minutes; not by git, nor its scratch files (editor.place) -- else its
+// working directory.
+async function edAtActor() {
+  const cwd = edActorDir();
+  let dir = null;
+  if (state.selected && !isShell(state.selected[1])) {
+    const [gatherer, channel] = state.selected;
+    try { dir = (await get(`/api/edit/place?${new URLSearchParams({ gatherer, channel, cwd: cwd || "" })}`)).dir; }
+    catch (e) { /* its working directory */ }
+    const b = branchOf(gatherer, { channel });
+    if (b) {                                         // on a branch of its own: the project, where its changes are merged
+      const at = [b.worktree, cwd].find((w) => w && dir && edUnder(dir, w.replace(/\/+$/, "")));
+      return setEditor(true, b.project + (at ? dir.slice(at.replace(/\/+$/, "").length) : ""));
+    }
+  }
+  setEditor(true, dir || cwd);
+}
+if (!PANE && !SNAPSHOT) window.agEditorPanel = { shown: () => !!state.editor, set: setEditor, min: () => !!state.chatMin, setMin: setChatMin };
+// The chat minimized under the Editor: each pane only its message box, the actor's status at its right -- its avatar, moving
+// while it works, done with a check, a mark while it waits on the reader or stopped on an error -- and under it the latest
+// turn's commands and the lines its changes added and removed; the Editor the rest of the column. One choice for every
+// pane (they share the row under the Editor), kept in this browser while the Editor is open; closed, the chat comes back.
+const MIN_KEY = "ag-dashboard-chat-min";
+const MIN_TIP = "Minimize the chat: only its message box and the actor's status, under the Editor";
+state.chatMin = !PANE && !SNAPSHOT && !!state.editor && (() => { try { return localStorage.getItem(MIN_KEY) === "1"; } catch (e) { return false; } })();
+const chatMin = () => !SNAPSHOT && edShown()
+  && (PANE ? !!(window.parent.agEditorPanel && window.parent.agEditorPanel.min()) : !!state.chatMin);
+function keepMin(on) {
+  state.chatMin = on;
+  try { localStorage.setItem(MIN_KEY, on ? "1" : ""); } catch (e) { /* this page only */ }
+}
+function setChatMin(on) {
+  if (PANE) { if (window.parent.agEditorPanel) window.parent.agEditorPanel.setMin(on); return; }
+  keepMin(on);
+  for (const p of panes.others) p.call("minimized", on);
+  minRedraw();
+}
+// This page's pane minimized or shown again: its counts are the latest turn's, from the files' feed (chatFeed) -- then, shown
+// again, its view's own feed.
+async function minRedraw() {
+  if (chatMin() && state.files && state.files.turn !== null) { state.files.turn = null; state.files.sel = null; }
+  edMount();
+  await loadChat();
+  keepingPlace(renderMain);
+  drawn.main = mainSignature();
+  if (!chatMin()) chatToEnd();
+}
+// The view a minimized pane draws in place of its own (chatCard): no history, the message box, and miniFoot.
+const MINI_VIEW = { id: "mini", name: "Chat", feed: "files", mini: true, background: false, queued: false, greets: true,
+  render: () => [], footer: (ctx) => miniFoot(ctx) };
+const miniBack = () => el("button", { type: "button", class: "mini-back", title: "Show the chat again", "aria-label": "Show the chat again",
+  onclick: () => setChatMin(false) }, strokeIcon(ICONS.restore, 14));
+const miniFoot = (ctx) => [miniBack(), actorStatus(ctx, () => setChatMin(false))];
+// The actor's status, small, at the right of a message box with no conversation over it -- a minimized pane's (miniFoot), a
+// Browser's: its avatar moving while it works, or while a message sent from here waits to open its turn, ✓ when the turn is
+// done, ?/! when it asks or failed; under it the latest turn's commands and lines changed (from the files' feed). Pressed:
+// `show`, the chat.
+function actorStatus({ info, running }, show) {
+  const d = state.files && state.selected && state.files.key === key(...state.selected) ? state.files.data : null;
+  const [st0, word0] = statusOf(info);
+  // working: its turn, or a message sent from here that has yet to open one -- for a while: not seen for long, its terminal
+  // may be asking something first (pendingTalk), and the status says so
+  const mine = sentHereNow(heard(info)), unseen = !running && mine.some((m) => Date.now() - m.at > UNSEEN_MS);
+  // the latest turn, as loaded -- none while a message sent from here waits to open the next: its numbers are not that one's
+  const t = d && d.turns.length && d.turn === d.turns.length - 1 && !(mine.length && !running) ? d.turns[d.turn] : null;
+  const live = running || (mine.length > 0 && !unseen);
+  const [st, word] = unseen ? ["asking", "Pending · not seen by the session yet; its terminal may be asking something first"] : [st0, word0];
+  const cmds = t ? d.commands : [], failed = cmds.filter((c) => c.error).length;
+  const lines = t ? addChanged(d.files.filter((f) => (showTmp || !f.temporary) && (showGit || !gitOnly(f))).map((f) => f.changed)) : null;
+  const src = bareAvatar(info);
+  const mark = { asking: ["ask", "?"], error: ["err", "!"], failed: ["err", "!"], background: ["bg", ""] }[st];
+  const pic = live ? (src ? buddy(info, !!info.failing) : el("span", { class: "spin", "aria-hidden": "true" }))
+    : t && ["idle", "finished", "closed"].includes(st) ? atRest(info, t.row_id)
+    : src ? el("span", { class: "still", "data-sig": signature([src, st]) }, el("img", { src, alt: "", draggable: "false" }),
+      mark ? el("span", { class: "mk " + mark[0], text: mark[1] }) : null)
+    : null;
+  const said = [live ? (info.failing ? "Retrying" : "Working") : word,
+    t ? plural(cmds.length, "command") + (failed ? `, ${full(failed)} failed` : "") : null,
+    lines ? `${plural(lines[0], "line")} added, ${full(lines[1])} removed` : null].filter(Boolean).join(" · ");
+  return el("button", { type: "button", class: "mini-st" + (live ? " live" : ""), "data-morph": "",
+    title: `${said}. Show the chat`, "aria-label": `${said}. Show the chat`, onclick: show },
+    el("span", { class: "pic", "data-morph": "" }, pic),
+    el("span", { class: "n" }, t ? el("span", { class: "c" + (failed ? " err" : "") }, strokeIcon(ICONS.terminal, 11), full(cmds.length)) : null,
+      lines && lines[0] ? el("span", { class: "chg-a", text: `+${full(lines[0])}` }) : null,
+      lines && lines[1] ? el("span", { class: "chg-r", text: `−${full(lines[1])}` }) : null));
+}
+// A shell's pane, minimized: what it is, and the way back.
+function shellMini(id) {
+  const sh = shellOf(id);
+  return el("section", { class: "chat mini shell", "aria-label": "Terminal", "data-for": signature([id, "mini"]) }, miniBack(),
+    el("span", { class: "mini-sh" }, strokeIcon(ICONS.terminal, 13), el("span", { text: sh ? `Terminal · ${shellPath(sh)}` : "Terminal" })));
+}
+// In a frame: as tall as its minimized pane -- the row under the Editor as tall as its tallest -- else as its pane is laid out.
+let miniFit = null;
+function fitMini() {
+  const f = PANE && window.frameElement;
+  if (!f) return;
+  const card = document.querySelector("#main > .chat.mini");
+  if (miniFit && miniFit.card === card) return;
+  if (miniFit) miniFit.obs.disconnect();
+  miniFit = null;
+  if (!card) { f.style.height = ""; return; }
+  const obs = new ResizeObserver(() => { f.style.height = `${Math.ceil(card.getBoundingClientRect().height)}px`; });
+  obs.observe(card);
+  miniFit = { card, obs };
+}
+const edCloseBtn = () => el("button", { type: "button", class: "ed-close", title: "Close the editor", "aria-label": "Close the editor",
+  onclick: () => setEditor(false) }, "×");
+// Execute: the project's preview run, and shown beside the file (edExecute).
+function edExecBtn() {
+  const pv = ed.pv, p = pv && pv.about && pv.about.preview, r = pv && pv.run;
+  const running = !!(pv && (pv.busy || (r && r.state === "running")));
+  return el("button", { type: "button", class: "ed-exec" + (running ? " busy" : ""), disabled: pv && pv.busy ? "" : null,
+    title: p ? (p.needs_ok ? `An actor set this project's preview: ${p.command}. Press to see it, and let it run`
+      : `Run ${p.command || "nothing"}${p.show ? `, and show ${p.show}` : ", and show what it prints"}, beside the file`)
+      : "Run this project's preview, and show what it makes beside the file: the first time, set what it runs",
+    onclick: edExecute }, strokeIcon(ICONS.play, 13), "Execute");
+}
+// Shown or hidden as `state.editor` says, drawn the first time it is shown: called by each draw of the main view.
+function edMount() {
+  if (PANE || SNAPSHOT) return;
+  document.querySelector(".work").classList.toggle("chat-min", chatMin());
+  const top = document.getElementById("ed-top");
+  if (!state.editor) { top.hidden = true; return; }
+  if (state.home && state.home.editor === false) {
+    top.hidden = false;
+    if (!top.firstChild) top.append(el("div", { class: "ed-head" }, el("span", { class: "ed-hint",
+      text: "The editor needs pycrdt where the dashboard runs: pip install pycrdt, then restart the dashboard." }), edCloseBtn()));
+    return;
+  }
+  if (!ed.host) {
+    ed.bar = el("div", { class: "ed-bar" });
+    ed.tree = el("div", { class: "ed-rows" });
+    ed.head = el("div", { class: "ed-head" });
+    ed.body = el("div", { class: "ed-body" + (ed.wrap ? " wrap" : "") });
+    ed.body.addEventListener("mousedown", edToPdfClick, true);     // before CodeMirror's: ⌘+double-click, to the PDF
+    ed.side = el("aside", { class: "ed-changes files", hidden: "", "aria-label": "An actor's changes to the file" });
+    ed.pvSide = el("aside", { class: "ed-pv", hidden: "", "aria-label": "The project's preview" });
+    ed.brs = el("div", { class: "ed-brs" });
+    const nav = el("nav", { class: "ed-tree", "aria-label": "Files" }, ed.bar, ed.brs, ed.tree);
+    const colGrip = () => el("div", { class: "ed-col-grip", role: "separator", "aria-orientation": "vertical",
+      title: "Drag to resize · double-click: the width it had first" });
+    const treeGrip = colGrip(), sideGrip = colGrip(), pvGrip = colGrip();
+    ed.host = el("div", { class: "ed" }, nav, treeGrip,
+      el("div", { class: "ed-main" }, ed.head, el("div", { class: "ed-work" }, ed.body, sideGrip, ed.side, pvGrip, ed.pvSide)));
+    widthGrip(treeGrip, "ag-dashboard-editor-tree-width", nav, "width", 120, (x) => x - nav.getBoundingClientRect().left);
+    widthGrip(sideGrip, "ag-dashboard-editor-changes-width", ed.side, "width", 200, (x) => ed.side.getBoundingClientRect().right - x);
+    widthGrip(pvGrip, "ag-dashboard-editor-preview-width", ed.pvSide, "width", 220, (x) => ed.pvSide.getBoundingClientRect().right - x);
+    top.replaceChildren(ed.host, topGrip(top));
+  }
+  const opening = top.hidden;
+  top.hidden = false;
+  if (!ed.root) {                                    // the folder last shown, else the actor's, else the dashboard's
+    let dir = "";
+    try { dir = localStorage.getItem(ED_ROOT_KEY) || ""; } catch (e) { /* this page only */ }
+    edGo(dir || edActorDir() || (state.home && state.home.cwd) || "/");
+  }
+  if (opening) {                                     // shown again: drawn, and its file opened again
+    ed.barSig = ""; edBar(); edTree(); edHead();
+    if (ed.file && !ed.s) edOpen(ed.file);
+    let pvShown = !!ed.pv;                           // its preview too, if left open (by this page, or before a reload)
+    try { pvShown = pvShown || localStorage.getItem(ED_PV_KEY) === "1"; } catch (e) { /* this page only */ }
+    if (pvShown && pvPath()) pvOpen(pvPath());
+  }
+  edTick();
+}
+// The edge under the panel above the panes (the Editor's, DocWriter's), dragged to resize it: its height kept in this
+// browser, the same for both.
+function topGrip(top) {
+  const grip = el("div", { class: "ed-grip", title: "Drag to resize", "aria-hidden": "true" });
+  try { const h = Number(localStorage.getItem(ED_HEIGHT_KEY)); if (h > 0) top.style.setProperty("--ed-h", `${h}px`); } catch (e) { /* this page only */ }
+  grip.addEventListener("pointerdown", (ev) => {
+    ev.preventDefault();
+    grip.setPointerCapture(ev.pointerId);
+    grip.classList.add("on");
+    const at = top.getBoundingClientRect().top, room = top.parentElement.getBoundingClientRect().height;
+    let h = null;                                  // the panes below keep room for a view and its message box
+    const move = (e) => { h = Math.round(Math.max(140, Math.min(e.clientY - at, room - 220))); top.style.setProperty("--ed-h", `${h}px`); };
+    const up = () => {
+      grip.classList.remove("on");
+      grip.removeEventListener("pointermove", move); grip.removeEventListener("pointerup", up); grip.removeEventListener("pointercancel", up);
+      if (h !== null) try { localStorage.setItem(ED_HEIGHT_KEY, String(h)); } catch (e) { /* this page only */ }
+    };
+    grip.addEventListener("pointermove", move); grip.addEventListener("pointerup", up); grip.addEventListener("pointercancel", up);
+  });
+  return grip;
+}
+

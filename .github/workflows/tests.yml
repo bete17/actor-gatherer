@@ -30,7 +30,9 @@ jobs:
       - uses: actions/setup-node@v4 # some tests run the page's code in Node
         with:
           node-version: "22"
-      - run: pip install -e .
+      - run: pip install -e ".[dashboard]"
+      - name: Build the dashboard's page (its tests serve it)
+        run: python -m ag_dashboard.page_build
       - working-directory: tests
         run: PYTHONPATH=.. python -m unittest discover -s .
 
@@ -50,6 +52,7 @@ jobs:
       - run: pnpm lint
       - run: pnpm format:check
       - run: pnpm test
+      - run: pnpm build
 
   browser:
     runs-on: ubuntu-latest
@@ -64,7 +67,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - run: pip install -e ..
+      - run: pip install -e "..[dashboard]"
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec playwright install --with-deps chromium

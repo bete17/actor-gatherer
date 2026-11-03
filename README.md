@@ -37,18 +37,25 @@ Without a Gatherer, each agent operates largely on its own history, which is typ
 
 ## Install
 
-You need Python 3.11+ and the harness you want to run on your `PATH`. Install `ag` from PyPI:
+You need Python 3.11+ and the harness you want to run on your `PATH`. Install `ag` from PyPI, with its
+[agentic development environment](#agentic-development-environment) (the dashboard) or without it:
 
 ```bash
-pip install actor-gatherer
+pip install "actor-gatherer[dashboard]"    # ag and its dashboard
+pip install actor-gatherer                 # ag alone
 ```
 
 Or from source:
 
 ```bash
 git clone https://github.com/ucbepic/actor-gatherer && cd actor-gatherer
-pip install -r requirements.txt        # `ag` from this clone, editable, with every dependency
+pip install -e ".[dashboard]"              # ag and its dashboard, editable
+pip install -e .                           # ag alone, editable
 ```
+
+From source, the dashboard builds its page the first time it starts, which needs [Node.js](https://nodejs.org)
+22.12+. After a `git pull`, restart it, and it rebuilds the page if the page's source changed. `ag` alone needs no
+Node.
 
 ### Set the Gatherer's LLM
 
@@ -128,7 +135,8 @@ ag gatherers                                             # each one's policy, po
 
 ## Agentic Development Environment
 
-Run `ag` on its own to open ag's agentic development environment in your browser:
+Run `ag` on its own to open ag's agentic development environment in your browser (installed with the
+`dashboard` extra, see [Install](#install)):
 
 ```bash
 ag                                                       # http://127.0.0.1:4200
@@ -145,7 +153,7 @@ the others, and about `ag actors`, a command it runs in its shell:
 
 ```bash
 ag actors                                    # the other actors of this gatherer: ids, status, what each was asked
-ag actors who page.html                      # which actors changed a file
+ag actors who ag_dashboard/data.py           # which actors changed a file
 ag actors send 1a2b3c4d "I'm editing x.py"   # a message to one, typed into its conversation
 ag actors send gatherer "..."                # a message to the gatherer agent
 ```

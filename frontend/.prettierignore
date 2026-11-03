@@ -3,3 +3,5 @@ test-results/
 playwright-report/
 pnpm-lock.yaml
 e2e/**/*-snapshots/
+src/legacy/
+index.html

@@ -1,5 +1,5 @@
 // A snapshot (`ag-dashboard --out FILE`): the page with a home's data inside it, opened as a file, with no server.
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./test";
 import { execFileSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";

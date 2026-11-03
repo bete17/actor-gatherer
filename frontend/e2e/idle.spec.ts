@@ -1,5 +1,5 @@
 // An idle page does no work: no layout while nothing changes (the Chrome idle layout loop, fixed before).
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./test";
 import { CLAUDE, openActor } from "./home";
 
 test("lays nothing out while idle", async ({ page }) => {

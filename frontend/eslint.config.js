@@ -5,7 +5,9 @@ import globals from "globals";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["node_modules/", "test-results/", "playwright-report/"] },
+  // src/legacy/: page.html's script, line for line as it was (one scope, its sections joined by vite-plugin-legacy.ts),
+  // kept so until each view is rewritten: not linted.
+  { ignores: ["node_modules/", "test-results/", "playwright-report/", "src/legacy/"] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {

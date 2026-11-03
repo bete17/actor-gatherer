@@ -26,17 +26,17 @@ then an effect round it if any. With none, or a move the page does not know, it 
   `patter`, `flutter`, `lookabout`, `flip`, `whisk`, `wiggle`, `spin`;
 - effects: `steam`, `bubbles`, `spout`, `petals`, `snow`, `sparkle`, `notes`, `breeze`, `ripple`, `glow`.
 
-They are page.html's `.m-<move>` and `.buddy.f-<effect>`; the drawn ones name theirs in their kind's
+They are the page's `.m-<move>` and `.buddy.f-<effect>`; the drawn ones name theirs in their kind's
 MOTIONS (assets/src/avatars).
 
-It works on a stage (page.html's `stage`), the same for every avatar: for each kind of call its turn makes
+It works on a stage (the page's `stage`), the same for every avatar: for each kind of call its turn makes
 (ag_dashboard/work.py's), the character holds the same tool, so a tool means one thing whatever the character --
 a book (read), a magnifying glass (search), a pencil and sheet (edit), a checklist (test), gears (run), a parcel
 sent off (ship), an hourglass (wait), little copies of itself (team). As a call ends it slows to a stop and puts
 the tool away, then thinks until the next, with a thought bubble whose dots are in its hue; only then does it
 move as its own character, its move and its effect. It reacts the same way to how a call ended: a failure, failures
 in a row, tests passed or failed, a commit. Its turn over, it sits small under it, done. Before its first
-message, it waves hello (page.html's `greeting`): a hand in its hue raised beside it, waving a few times, then resting.
+message, it waves hello (the page's `greeting`): a hand in its hue raised beside it, waving a few times, then resting.
 The dashboard's settings can switch this to "Simple" instead (kept in the browser): the character small,
 with only its own move and effect.
 

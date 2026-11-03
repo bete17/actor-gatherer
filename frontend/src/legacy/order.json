@@ -1,0 +1,40 @@
+{
+  "css": [
+    "00-base.css",
+    "01-layout.css",
+    "02-panes.css",
+    "03-transcript.css",
+    "04-list.css",
+    "05-chat.css",
+    "06-terminal.css",
+    "07-editor.css",
+    "08-docwriter.css",
+    "09-browser.css",
+    "10-editor-marks.css",
+    "11-files-view.css"
+  ],
+  "js": [
+    "00-preamble.js",
+    "01-helpers.js",
+    "02-data.js",
+    "03-settings.js",
+    "04-seen.js",
+    "05-agent-list.js",
+    "06-list-modes.js",
+    "07-panes.js",
+    "08-charts.js",
+    "09-selected-agent.js",
+    "10-chat.js",
+    "11-code.js",
+    "12-transcript.js",
+    "13-chat-views.js",
+    "14-terminal.js",
+    "15-shell.js",
+    "16-files-view.js",
+    "17-history.js",
+    "18-editor.js",
+    "19-docwriter.js",
+    "20-browser.js",
+    "21-start.js"
+  ]
+}

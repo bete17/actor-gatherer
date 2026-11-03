@@ -1,5 +1,5 @@
 // The dashboard's panel (page.html: "ag's settings"): ag's settings and this page's, the theme among them.
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./test";
 import { masks, open } from "./home";
 
 test("opens from the gear, showing the model the home has set", async ({ page }) => {

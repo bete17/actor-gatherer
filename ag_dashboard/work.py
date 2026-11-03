@@ -1,4 +1,4 @@
-"""What an actor at work is doing, for its avatar to act out in the Chat view (page.html's stages): the
+"""What an actor at work is doing, for its avatar to act out in the Chat view (the page's stages): the
 kind of call it is making, and how the calls it made ended.
 
 A call's kind is read from what its harness's rules say it does (harness_kit's Action, and its view's Shape), or for a
