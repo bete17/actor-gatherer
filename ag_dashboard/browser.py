@@ -9,8 +9,10 @@ piece is:
                             none was used for IDLE_STOP; spoken to over a pipe (--remote-debugging-pipe, the Chrome
                             DevTools Protocol), so it opens no port: nothing else on the machine can drive it. Its profile
                             is the home's (<home>/dashboard/browser): logins made in it last, apart from the user's own
-                            Chrome. Which Chrome: `[dashboard] browser`, else one installed (`executable`); none: no
-                            Browser is offered (`available`)
+                            Chrome. Its user agent is ordinary Chrome's, not headless Chrome's (`ordinary_ua`,
+                            `ua_metadata`): some sites refuse a headless one. navigator.webdriver stays true: a site can
+                            still tell it is driven. Which Chrome: `[dashboard] browser`, else one installed
+                            (`executable`); none: no Browser is offered (`available`)
                           - "mine": the user's own Chrome, running, its logins and history -- its remote debugging turned
                             on by them (chrome://inspect/#remote-debugging, Chrome 144+), reached by a WebSocket to the
                             port its DevToolsActivePort names (`devtools_port`), once they click Allow in it; one
@@ -56,6 +58,7 @@ import collections
 import contextlib
 import json
 import os
+import platform
 import queue
 import re
 import secrets
@@ -105,6 +108,10 @@ DOWNLOADS_SHOWN = 5         # the downloads done the view is told of, the latest
 ARGS = ["--headless=new", "--remote-debugging-pipe", "--no-first-run", "--no-default-browser-check",
         "--use-mock-keychain", "--password-store=basic", "--mute-audio", "--hide-crash-restore-bubble",
         "--disable-features=Translate,OptimizationHints,MediaRouter", "--disable-search-engine-choice-screen"]
+#: The platform a Chrome names in its user agent, by sys.platform: fixed since Chrome reduced its user agent (101-110) --
+#: an Apple silicon Mac's is "Intel", any Linux's "x86_64".
+UA_PLATFORMS = {"darwin": "Macintosh; Intel Mac OS X 10_15_7", "linux": "X11; Linux x86_64",
+                "win32": "Windows NT 10.0; Win64; x64"}
 APPS = ["Google Chrome.app/Contents/MacOS/Google Chrome", "Chromium.app/Contents/MacOS/Chromium",
         "Microsoft Edge.app/Contents/MacOS/Microsoft Edge", "Brave Browser.app/Contents/MacOS/Brave Browser"]
 #: Run as `python -c PLACE_PIPES R W exe args...`: fds R and W, passed as they are, become 3 and 4 -- where Chrome's
@@ -184,6 +191,88 @@ def executable() -> Optional[str]:
     return None
 
 
+_ua_known: Dict[Tuple[str, float], Optional[str]] = {}
+
+
+def ordinary_ua(exe: str) -> Optional[str]:
+    """The user agent the Chrome `exe` sends with a window, for the dashboard's own to send headless. Headless, Chrome
+    names itself "HeadlessChrome/156.0.0.0" in it -- in every request's User-Agent and navigator.userAgent, a worker's
+    too -- and some sites refuse it outright: Figma's CloudFront answers a file's page with a 403 "Request blocked",
+    whatever the login. Given at launch (--user-agent) it is every request's, workers' and frames' alike; its client
+    hints' brands (Sec-CH-UA: "Google Chrome") are already the ordinary ones, their detail Chrome then leaves empty
+    (`ua_metadata`). Only the name changes: navigator.webdriver stays true. Its major version from `exe --version`
+    ("Google Chrome 156.0.8078.80", ~20 ms), once per Chrome installed; None -- its own then -- if that names none (or
+    one under 100: not Chrome's), or this platform's is unknown."""
+    try:
+        key = (exe, os.stat(exe).st_mtime)
+    except OSError:
+        return None
+    if key not in _ua_known:
+        try:
+            said = subprocess.run([exe, "--version"], stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                                  timeout=10, env=_chrome_env()).stdout
+        except (OSError, subprocess.SubprocessError):
+            said = ""
+        major = re.search(r"\b(\d+)\.\d+", said)
+        system = UA_PLATFORMS.get("linux" if sys.platform.startswith("linux") else sys.platform)
+        ua = None
+        if major and int(major.group(1)) >= 100 and system:
+            v = f"{major.group(1)}.0.0.0"
+            ua = f"Mozilla/5.0 ({system}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{v} Safari/537.36"
+            if "Edge" in said:
+                ua += f" Edg/{v}"
+        _ua_known[key] = ua
+    return _ua_known[key]
+
+
+UA_DATA_JS = "location.protocol === 'file:' && navigator.userAgentData ? navigator.userAgentData.toJSON() : null"
+
+
+def ua_metadata(cdp: "Cdp") -> Optional[dict]:
+    """The detail of the client hints the dashboard's own Chrome, its user agent given (`ordinary_ua`), would send --
+    its full version, its platform's version: Chrome sends them empty for a user agent given at launch (a site asking
+    gets "" where ordinary Chrome says "156.0.8078.80"), so each tab is given them (`_open`,
+    Emulation.setUserAgentOverride). Its brands and platform, which Chrome keeps, read from a page of its own that is a
+    secure context (navigator.userAgentData is only there): a file: page, its profile's listing, open a moment; the
+    full version from Chrome; the platform's version and the architecture this machine's, as Chrome tells them. None
+    if Chrome tells none."""
+    try:
+        version = re.search(r"/((\d+)\.\d+\.\d+\.\d+)", cdp.call("Browser.getVersion", {}).get("product", ""))
+        if not version:
+            return None
+        target = cdp.call("Target.createTarget", {"url": "about:blank"})["targetId"]
+        try:
+            session = cdp.call("Target.attachToTarget", {"targetId": target, "flatten": True})["sessionId"]
+            cdp.call("Page.navigate", {"url": "file://" + urllib.parse.quote(profile_dir())}, session)
+            end = time.time() + 3
+            while True:
+                data = cdp.call("Runtime.evaluate", {"expression": UA_DATA_JS, "returnByValue": True},
+                                session).get("result", {}).get("value")
+                if data or time.time() > end:
+                    break
+                time.sleep(0.05)
+        finally:
+            cdp.post("Target.closeTarget", {"targetId": target})
+    except BrowserError:
+        return None
+    if not isinstance(data, dict) or not data.get("brands"):
+        return None
+    full, major = version.group(1), version.group(2)
+    brands = [{"brand": str(b.get("brand", "")), "version": str(b.get("version", ""))} for b in data["brands"]]
+    if sys.platform == "darwin":
+        os_version = platform.mac_ver()[0]
+    else:
+        os_version = os.uname().release
+    numbers = re.findall(r"\d+", os_version)[:3]
+    return {"brands": brands,
+            "fullVersionList": [{"brand": b["brand"], "version": full if b["version"] == major else f"{b['version']}.0.0.0"}
+                                for b in brands],
+            "fullVersion": full, "platform": str(data.get("platform") or ""),
+            "platformVersion": ".".join(numbers + ["0"] * (3 - len(numbers))) if numbers else "",
+            "architecture": "arm" if platform.machine().lower() in ("arm64", "aarch64") else "x86",
+            "model": "", "mobile": False, "bitness": "64", "wow64": False, "formFactors": ["Desktop"]}
+
+
 def available() -> bool:
     """Whether a Browser can be started here: a Chrome -- the dashboard's own, or the user's (`mode`) -- on Unix (its
     own is handed its pipe by a shell)."""
@@ -212,6 +301,8 @@ class Cdp:
     is the subclass's: `_send` one, `_read` them all (each to `_got`), `_closed` once done."""
 
     mode = ""
+    ua: Optional[str] = None             # the user agent it was started with (`ordinary_ua`): its own Chrome's
+    ua_meta: Optional[dict] = None       # and its client hints' detail, for each tab (`ua_metadata`)
 
     def __init__(self, on_event: Callable, on_exit: Callable):
         self.on_event, self.on_exit = on_event, on_exit
@@ -328,8 +419,10 @@ class PipeCdp(Cdp):
         r4, w4 = os.pipe()
         log = open(os.path.join(log_dir, "browser.log"), "ab")
         try:   # PLACE_PIPES hands Chrome the pipes as 3 and 4: they keep the numbers they have here otherwise
+            self.ua = ua = ordinary_ua(exe)
             self.proc = subprocess.Popen([sys.executable, "-c", PLACE_PIPES, str(r3), str(w4), exe, *ARGS,
-                                          *browser_video.FLAGS, f"--user-data-dir={profile}", "about:blank"],
+                                          *browser_video.FLAGS, *([f"--user-agent={ua}"] if ua else []),
+                                          f"--user-data-dir={profile}", "about:blank"],
                                          pass_fds=(r3, w4), stdin=subprocess.DEVNULL, stdout=log, stderr=log,
                                          start_new_session=True, env=_chrome_env())
         finally:
@@ -633,6 +726,8 @@ class Chrome:
                                "[dashboard] browser", 409)
         conn = PipeCdp(exe, profile_dir(), self._event, self._exited)
         try:
+            if conn.ua:
+                conn.ua_meta = ua_metadata(conn)
             conn.call("Target.setDiscoverTargets", {"discover": True}, timeout=30)
             os.makedirs(downloads_dir(), exist_ok=True)
             conn.call("Browser.setDownloadBehavior", {"behavior": "allow", "downloadPath": downloads_dir(),
@@ -915,7 +1010,9 @@ class Browser:
             self.tabs.append(tab)
             if select:
                 self.active = len(self.tabs) - 1
-        for method, params in (("Page.enable", {}), ("Runtime.enable", {}), ("Log.enable", {}), ("DOM.enable", {}),
+        hints = (("Emulation.setUserAgentOverride", {"userAgent": cdp.ua, "userAgentMetadata": cdp.ua_meta}),) \
+            if cdp.ua and cdp.ua_meta else ()   # its client hints' detail, as ordinary Chrome's: `ua_metadata`
+        for method, params in (*hints, ("Page.enable", {}), ("Runtime.enable", {}), ("Log.enable", {}), ("DOM.enable", {}),
                                ("Overlay.enable", {}), ("Emulation.setFocusEmulationEnabled", {"enabled": True}),
                                ("Page.setInterceptFileChooserDialog", {"enabled": True}),   # the user's own: `chooser`
                                ("WebAuthn.enable", {"enableUI": False}),   # passkeys: PASSKEYS
