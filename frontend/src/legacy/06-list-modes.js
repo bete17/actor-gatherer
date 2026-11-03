@@ -78,7 +78,8 @@ function renderFolded() {
 }
 // The rail: the list, small. Each gatherer not hidden, its name over its actors -- a button folding it, as the list's
 // does (folded, the counts the list shows for it) -- and its actors in the list's order (listGroups), its Saved and Closed
-// folded as the list folds them, to a line here too that opens them (the one shown staying in view). Each its avatar, its
+// folded as the list folds them, to a line here too that opens them (the one shown staying in view) -- and under its name, a
+// "+" starting a new actor in it (railNew). Each actor its avatar, its
 // status's dot at its corner, and its name in small under it; hovered (or in focus from the keys), a card beside the rail
 // says who it is (actorCard). A click shows it, as in the list.
 function renderRail() {
@@ -89,7 +90,8 @@ function renderRail() {
     const sec = el("section", { class: "r-gatherer", "aria-label": titleOf(g) },
       el("button", { class: "r-gname", type: "button", "aria-expanded": open ? "true" : "false",
         title: `${titleOf(g)}${titleOf(g) !== g.name ? ` (${g.name})` : ""}: ${open ? "fold it" : "show its actors"}`,
-        onclick: () => toggleGatherer(g.name) }, el("span", { class: "caret", text: "▶" }), el("span", { class: "tx" }, ...breakable(titleOf(g)))));
+        onclick: () => toggleGatherer(g.name) }, el("span", { class: "caret", text: "▶" }), el("span", { class: "tx" }, ...breakable(titleOf(g)))),
+      SNAPSHOT ? null : railNew(g));                  // under its name: a new actor in it
     if (!open) {                                      // folded: its counts, and those of its actors open in the panes
       const counts = gathererCounts(g);
       if (counts.length) sec.append(el("div", { class: "r-counts" }, ...counts));
