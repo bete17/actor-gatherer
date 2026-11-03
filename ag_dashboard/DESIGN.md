@@ -48,9 +48,9 @@ dashboard to the tools most web front ends and Python APIs are built with now, i
 - **Node for development.** Each worktree runs `pnpm install` (one shared store, so it's quick) and either the Vite
   dev server or a build.
 - **A build after a pull.** The built front end goes to `ag_dashboard/static/`, which is not in git. `publish.yml`
-  builds it before `python -m build`, so the PyPI package carries it. Your ag is an editable install from the main
-  checkout (`.venv`), so after a pull it needs `pnpm -C frontend build`. A git `post-merge` hook can run that, and
-  `ag dashboard` says so when the build is older than the source.
+  builds it before `python -m build`, so the PyPI package carries it. From a checkout, `ag dashboard` builds it
+  when it starts and the build is missing or older than `frontend/` (`ag_dashboard/page_build.py`), so a pull
+  needs nothing more than a restart.
 - **The dashboard stops being standard-library only:** it adds fastapi, uvicorn, pydantic and sse-starlette.
   ag itself doesn't change.
 - **Views are rewritten, not moved.** That is where the risk is. Each view gets its Playwright tests before it is
@@ -173,8 +173,14 @@ moved into `state`. A3's script checks the same at its finer cuts, where a secti
 - **Tests** that read the page (`test_dashboard_code`, `_plan`, `_esc`, `_coordination`, `_avatars`,
   `test_harness_untouched`) read it through `tests/page_source.py`, which puts `page.html`'s text back together.
   `split.test.ts` checks the split and the port.
-- **After a pull**, `.githooks/post-merge` builds the page when the pull changed `frontend/`. It runs once a clone
-  turns it on: `git config core.hooksPath .githooks`. CI and `publish.yml` build it too.
+- **Installing and pulling.** The dashboard is an extra, `actor-gatherer[dashboard]` (its Python packages), so
+  ag alone needs neither them nor Node. `ag_dashboard/page_build.py` builds the page (pnpm through Node's
+  corepack, a pnpm of one's own, or npx), and `ag dashboard` runs it when it starts and the build is missing or
+  older than `frontend/`: the first start in an editable install, and the first after a pull. So only those who
+  use the dashboard need Node, and after a pull a restart is enough. A wheel built from a checkout builds it too
+  (`setup.py`'s one build step; with no Node, the wheel goes without it), and `publish.yml` builds it before
+  `python -m build`, whose wheel then takes it from the sdist. A git hook was the first choice for pulls; it
+  needed turning on in each clone, and it rebuilt the page under a dashboard still running the old server.
 
 Left open: the production build carries no source maps. `build.sourcemap` is set to no effect with this setup
 (a small project gets them; this one did not, and why is not found yet), so it is off; in development
@@ -243,7 +249,8 @@ Not built now. Each becomes a change in one place, given the steps above:
 - **React** (recommended) or another framework (Vue, Svelte). React for its libraries and because the agents
   write it most fluently.
 - **FastAPI** (recommended), so the dashboard is no longer standard-library only.
-- **The build after a pull** in your editable install: a git hook (recommended), or by hand.
+- **The build after a pull** in your editable install: a git hook, or by hand. (Built: `ag dashboard`'s start
+  builds it, `page_build.py`.)
 - **When to run A3:** the open `page.html` work has to be merged first, or ported that day.
 
 ## Projects built this way
