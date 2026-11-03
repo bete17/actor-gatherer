@@ -457,7 +457,7 @@ class HarnessTest(unittest.TestCase):
         self.assertIsNone(shape_of([user]))                 # a lone user message tells nothing
 
 
-@unittest.skipUnless(os.path.exists(server.INDEX), "the page is not built: cd frontend && corepack pnpm build")
+@unittest.skipUnless(os.path.exists(server.INDEX), "the page is not built: python -m ag_dashboard.page_build")
 class PageTest(HomeBase):
     def test_a_snapshot_stands_alone(self):
         text = server.page(data.snapshot())
