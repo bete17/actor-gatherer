@@ -440,8 +440,8 @@ class CommandTest(CoordinationBase):
 
     def setUp(self):
         super().setUp()
-        self.httpd = server.serve("127.0.0.1", 0, live_updates=False)
-        self.httpd.crew = self.crew
+        self.httpd = server.serve("127.0.0.1", 0, live_updates=False)   # with its own coordination (its DocWriters,
+                                                                         # its branches), not the test's
         import threading
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
         self.addCleanup(self.httpd.server_close)

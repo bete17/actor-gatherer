@@ -33,10 +33,11 @@ class Events:
         head = []
         while (line := self.fp.readline().decode().rstrip("\r\n")):
             head.append(line)
-        assert " 200 " in head[0] and "Content-Type: text/event-stream" in head, head
+        assert " 200 " in head[0] and "content-type: text/event-stream" in [h.lower() for h in head], head
 
     def next(self, timeout=5.0):
-        """(name, value) of the next event, skipping comments; None if none comes in `timeout`."""
+        """(name, value) of the next event, skipping comments; None if none comes in `timeout`. (Sent in chunks: each
+        chunk's size, and the line ending it, is no line of an event.)"""
         self.sock.settimeout(timeout)
         name, payload = None, []
         try:

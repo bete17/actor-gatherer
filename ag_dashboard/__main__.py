@@ -1,8 +1,9 @@
-"""`python -m ag_dashboard [--home DIR] [--host H] [--port N] [--open] [--out FILE]` (or `ag`, `ag dashboard`):
-the page on localhost until interrupted (Ctrl-C, SIGTERM or SIGHUP: each one stops it the same
+"""`python -m ag_dashboard [--home DIR] [--host H] [--port N] [--open] [--out FILE] [--routes]` (or `ag`, `ag
+dashboard`): the page on localhost until interrupted (Ctrl-C, SIGTERM or SIGHUP: each one stops it the same
 way, removing its socket in the home's listeners/), or, with --out, written to FILE with its
 data inside it. With --open (as `ag` runs it), the page is also opened in the browser -- the one
-already on that port, if it is this home's dashboard."""
+already on that port, if it is this home's dashboard. With --routes, the server's routes are listed instead: each
+one's methods, path, and the first paragraph of its handler's docstring (what it answers)."""
 
 import argparse
 import errno
@@ -17,8 +18,8 @@ from typing import List, Optional
 
 from . import data, home, live, page_build, server
 
-NEEDED: List[str] = []      # what of pyproject.toml's `dashboard` extra it can't start without (pycrdt it can: the
-                            # Editor is left out), missing when ag is installed alone
+NEEDED = ["fastapi", "uvicorn", "sse_starlette"]   # what of pyproject.toml's `dashboard` extra it can't start without
+                                                  # (pycrdt it can: the Editor is left out), missing when ag is alone
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -29,6 +30,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--open", action=argparse.BooleanOptionalAction, default=False,
                     help="open the page in the browser (`ag` does; --no-open: not)")
     ap.add_argument("--out", help="write the page, its data inside it, to this file and stop")
+    ap.add_argument("--routes", action="store_true", help="list the server's routes, each with what it answers, and stop")
     args = ap.parse_args(argv)
     missing = [name for name in NEEDED if importlib.util.find_spec(name) is None]
     if missing:
@@ -36,6 +38,13 @@ def main(argv: Optional[List[str]] = None) -> int:
               "pip install 'actor-gatherer[dashboard]', or from a checkout: pip install -e '.[dashboard]'",
               file=sys.stderr)
         return 1
+    if args.routes:
+        from . import app
+        listed = app.routes()
+        width = max(len(m) for m, _, _ in listed), max(len(p) for _, p, _ in listed)
+        for methods, path, doc in listed:
+            print(f"{methods:<{width[0]}}  {path:<{width[1]}}  {doc}")
+        return 0
     if args.home:
         home.HOME = os.path.abspath(os.path.expanduser(args.home))
     page_build.ensure(lambda said: print(f"ag dashboard: {said}", file=sys.stderr))   # built, in a checkout, if it

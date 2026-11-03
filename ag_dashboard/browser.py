@@ -22,7 +22,7 @@ piece is:
                           Chrome when it is used and again after the Chrome stopped (their pages kept in dashboard.db,
                           `browser`)
     what the user sees    `Browser.join`: while a page shows the Browser's view, the tab's screen, as it changes, to the
-                          page's stream (server.py's `browser_stream`) -- in the dashboard's own Chrome as video (H.264,
+                          page's stream (api/browser.py's `stream`) -- in the dashboard's own Chrome as video (H.264,
                           `Capture`: browser_video.py) to a page that can decode it, else as the JPEG frames of Chrome's
                           screencast (also until the video comes, and if it fails: `_recast`) -- and its state -- tabs,
                           what the user picked, what the agent does now, a dialog open; at the view's size (`resize`),
@@ -46,7 +46,7 @@ piece is:
     the agent's tools     `TOOLS` + mcp.py: snapshot, click, type, press, select, hover, scroll, navigate, back, forward,
                           reload, tabs, screenshot, console, evaluate, wait, dialog, upload: an MCP server the actor
                           reaches at /browser/w/<key>/mcp, each call run here, on the tab -- with or without a page open
-    the user's message    `compose`: what the user sends the actor (server.py's /api/send) ends with <browser_state>: the
+    the user's message    `compose`: what the user sends the actor (api/sessions.py's /api/send) ends with <browser_state>: the
                           page they are on, what they did since their last message, what they picked; then forgotten
                           (`sent`) but for the picks' refs, which keep working
 
