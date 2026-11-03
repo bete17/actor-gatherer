@@ -151,6 +151,39 @@ class PipesTest(unittest.TestCase):
         self.handed(0)
 
 
+class GroupEndedTest(unittest.TestCase):
+    """A Chrome stopped: its helpers, which outlive its browser process a moment, waited for -- else killed."""
+
+    def started(self, linger: float) -> int:
+        """A process in a session of its own, ended, its child left running `linger` seconds."""
+        p = subprocess.Popen([sys.executable, "-c", "import subprocess, sys; subprocess.Popen([sys.executable, '-c', "
+                              f"'import time; time.sleep({linger})'])"], start_new_session=True)
+        p.wait(10)
+        os.killpg(p.pid, 0)                                         # its child still there
+        return p.pid
+
+    def gone(self, pgid: int) -> bool:
+        try:
+            os.killpg(pgid, 0)
+        except ProcessLookupError:
+            return True
+        return False
+
+    def test_a_helper_ending_by_itself_waited_for(self):
+        pgid = self.started(0.5)
+        start = time.time()
+        browser.group_ended(pgid)
+        self.assertTrue(self.gone(pgid))
+        self.assertLess(time.time() - start, 4)
+
+    def test_one_left_running_killed(self):
+        pgid = self.started(60)
+        start = time.time()
+        browser.group_ended(pgid, wait=0.5)
+        self.assertTrue(self.gone(pgid))
+        self.assertLess(time.time() - start, 4)
+
+
 class ShortcutKeyTest(unittest.TestCase):
     """Chrome's shortcut key -- a link opened in a tab behind, Find, copy and paste -- is Cmd on macOS and Ctrl elsewhere:
     Cmd from a user on a Mac, or from the agent ("Meta"), goes to a Chrome on Linux as Ctrl."""
@@ -868,6 +901,34 @@ class ChromeTest(Home):
         self.assertEqual(self.b.tabs, [])
         self.assertIn("Page two", self.text("snapshot"))
 
+    def test_a_page_opened_again_is_read_once_it_has_loaded(self):
+        class Slow(http.server.BaseHTTPRequestHandler):                 # its title at once, its body 1.5 s later
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html")
+                self.end_headers()
+                self.wfile.write(b"<!doctype html><title>Slow page</title>" + b" " * 2048)
+                self.wfile.flush()
+                time.sleep(1.5)
+                self.wfile.write(b"<h1>Slow page body</h1>")
+
+            def log_message(self, *args):
+                pass
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Slow)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        self.text("navigate", url=f"http://localhost:{server.server_address[1]}/slow.html")
+        time.sleep(1.5)                                  # its pages kept (at most every second)
+        self.bs.chrome.conn.stop()
+        end = time.time() + 5
+        while time.time() < end and self.b.tabs:
+            time.sleep(0.1)
+        self.assertEqual(self.b.tabs, [])
+        got = self.text("snapshot")
+        self.assertIn("Slow page body", got)
+        self.assertNotIn("(loading)", got)
+
 
 @unittest.skipUnless(browser.available(), "no Chrome here")
 class UsersChromeTest(Home):
@@ -880,7 +941,8 @@ class UsersChromeTest(Home):
         self.user = os.path.join(self.tmp.name, "userchrome")
         self.chrome = subprocess.Popen([browser.executable(), "--headless=new", "--remote-debugging-port=0",
                                         f"--user-data-dir={self.user}", "--no-first-run", "about:blank"],
-                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        self.addCleanup(browser.group_ended, self.chrome.pid)         # its helpers too, before its profile is removed
         self.addCleanup(self.chrome.wait, 10)
         self.addCleanup(self.chrome.terminate)
         end = time.time() + 15
@@ -971,7 +1033,8 @@ class ImportLoginsTest(Home):
         self.user = os.path.join(self.tmp.name, "userchrome")
         self.chrome = subprocess.Popen([browser.executable(), "--headless=new", "--remote-debugging-port=0",
                                         f"--user-data-dir={self.user}", "--no-first-run", "about:blank"],
-                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        self.addCleanup(browser.group_ended, self.chrome.pid)         # its helpers too, before its profile is removed
         self.addCleanup(self.chrome.wait, 10)
         self.addCleanup(self.chrome.terminate)
         end = time.time() + 15
