@@ -24,7 +24,7 @@ tables it creates in `init` and operates on in its own module.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Dict, FrozenSet, List, Optional, Tuple
+from typing import Any, Callable, Dict, FrozenSet, List, Optional, Tuple
 
 import sys
 from .event import EventType
@@ -48,12 +48,17 @@ class Read:
         fixed_tokens: the size of what the harness sends besides its messages with this call (its
             system prompt, its tools: its preamble), counted as the events are; 0 when it states none.
             The model gets it with every context, so the context's limits count it too.
+        stopped: whether the harness has given up on the call by now -- its user stopped it (Esc)
+            while the read was under way, so nothing will be sent. A read that waits for work of
+            its own in the background (a build) asks it as often as it likes, and once it is True
+            stops waiting and returns what it has. Always False when the harness says nothing.
     """
     gatherer_id: str
     properties: Dict[str, Any]
     row_id: int
     limit: Optional[int] = None
     fixed_tokens: int = 0
+    stopped: Callable[[], bool] = field(default=lambda: False, compare=False, repr=False)
 
 
 @dataclass

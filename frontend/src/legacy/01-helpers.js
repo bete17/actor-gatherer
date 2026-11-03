@@ -482,6 +482,13 @@ const statusOf = (a) => sessionStatus(a.session) || (opened(a) ? ["running", "Ru
   : (a.status ? a.status === "running" : a.running) ? ["running", "Running"]
   : a.status === "background" ? ["background", "Background"]
   : unseen(a) ? ["finished", "Finished"] : a.status === "closed" ? ["closed", "Closed"] : ["idle", "Idle"]);
+// Its status as its conversation shows it: statusOf's, but a build of its context that runs once its turn is over -- a
+// check that found a new task, its message then taken back (Esc) -- is ag's work, not its turn's: the status under it.
+const turnStatus = (a) => {
+  const st = statusOf(a);
+  return st[0] === "building" && a.building && a.status !== "running" && !sessionStatus(a.session) && !opened(a)
+    ? statusOf({ ...a, building: false }) : st;
+};
 // Whether an actor can be messaged here: a session the page started, or any session of a harness the dashboard runs
 // (harness_kit's, that says how to start it: `runs`) with a directory to resume it in. Its message box works while no
 // other process has it open (data.py's `chattable`).

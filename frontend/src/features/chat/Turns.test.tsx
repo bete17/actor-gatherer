@@ -215,6 +215,15 @@ describe("Turns", () => {
     expect(host.calls).toContainEqual(["interruptOver"]);
   });
 
+  it("keeps an Esc sent while the message that opens the turn is on its way", () => {
+    const mine = [{ text: "And now?", at: NOW * 1000, ran: true }];
+    const { page, host } = testPage(turns(2), { running: false, status: "idle", interrupting: true, mine });
+    page.draw();
+    expect(host.calls).not.toContainEqual(["interruptOver"]);
+    page.draw({ mine: [{ ...mine[0], ran: false }] }); // kept for the turn's end: no turn of its own to stop
+    expect(host.calls).toContainEqual(["interruptOver"]);
+  });
+
   it("draws a turn the session opened before ag stored it, at work; the turn stored counts from when it was sent", () => {
     const typed = [{ text: "And now?", sent: NOW - 30, at: NOW - 31 }];
     const { page } = testPage(turns(2), { running: true, status: "running", heard: { stored: [], typed, queued: [] } });

@@ -10,6 +10,8 @@ import os
 import sqlite3
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from types import SimpleNamespace
 
@@ -222,6 +224,57 @@ class HookTest(unittest.TestCase):
         self.assertFalse(any(SUMMARY[:40] in json.dumps(e) for e in events))
         self.assertEqual([e["type"] for e in events], [claude.AGENT_MESSAGE, claude.USER_MESSAGE])
         self.assertEqual(claude.classify(after[0]), claude.CONTEXT)       # wherever it is, never the user's
+
+
+class HungUpTest(unittest.TestCase):
+    """A read that waits for the policy's work in the background stops waiting once the harness hangs up on its call
+    (`Read.stopped`, as the server sets it): the check and the build go on in the background."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.saved = paths.TRACE_DIR
+        paths.TRACE_DIR = os.path.join(self.tmp.name, "traces")
+        cfg = ProactiveContextManagerConfig(min_context_tokens=0, sync_seconds=20, boundary_cooldown=0,
+                                            build_timeout=20)
+        self.policy = ProactiveContextManager(codex_items.FORMAT, ScriptedLLM(), cfg)
+        self.spawned = []
+        self.policy.jobs = Recording(lambda gatherer, channel_id, job, job_id: self.spawned.append(job))   # never done
+        self.m = Manager(self.policy)
+        self.m.init("s")
+        self.items = codex_items.CodexItems(self.m)
+        for item in PREAMBLE + conversation(3) + [user("Something else entirely", 9)]:
+            self.items.insert("s", item, channel_id="c1")
+        self.row = store.high_water(self.m._conn("s"))
+        self.hung_up = threading.Event()
+
+    def tearDown(self):
+        paths.TRACE_DIR = self.saved
+        self.tmp.cleanup()
+
+    def later(self, seconds=0.3):
+        threading.Timer(seconds, self.hung_up.set).start()
+
+    def test_a_read_waiting_for_its_check_goes_on_without_it(self):
+        self.later()
+        began = time.monotonic()
+        context, read_id, _ = self.m.read_logged("s", self.row, properties=ch("c1"), stopped=self.hung_up.is_set)
+        self.assertLess(time.monotonic() - began, 5)                      # not its 20 s
+        self.assertEqual(self.spawned, ["check"])
+        self.assertTrue(context)
+        self.assertIsNotNone(read_id)                                     # logged: the hang-up is kept on it
+
+    def test_a_compaction_waiting_for_its_build_goes_on_without_it(self):
+        self.later()
+        began = time.monotonic()
+        self.assertEqual(self.m.compacted("s", self.row, properties=ch("c1"), stopped=self.hung_up.is_set), "timeout")
+        self.assertLess(time.monotonic() - began, 5)
+        self.assertEqual(self.spawned, ["build"])
+
+    def test_without_a_hang_up_the_read_still_waits(self):
+        self.policy.config.sync_seconds = 0.5
+        began = time.monotonic()
+        self.m.read_logged("s", self.row, properties=ch("c1"))
+        self.assertGreaterEqual(time.monotonic() - began, 0.5)
 
 
 if __name__ == "__main__":

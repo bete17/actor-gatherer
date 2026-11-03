@@ -28,9 +28,11 @@ export function drawTurns(feed: ChatFeed, host: ChatHost): HTMLDivElement {
   useTurns.getState().forFiles(feed.files);
   const turns = feed.data.turns,
     opens = openings(feed.heard);
-  // the latest turn no longer at work: the Esc sent for it is over too
+  // the latest turn no longer at work, and no message sent from here to open one still on its way: the Esc sent for it
+  // is over too (one sent before the session had the message stops the turn it opens)
   let interrupting = feed.interrupting;
-  if (turns.length && interrupting && !(feed.running && !opens.length)) {
+  const starting = feed.mine.some((m) => m.ran);
+  if (turns.length && interrupting && !(feed.running && !opens.length) && !starting) {
     host.interruptOver();
     interrupting = false;
   }

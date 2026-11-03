@@ -95,7 +95,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ag.ag_interface import LLM, Format, Tokenizer
 from ag.ag_policies.tools import boundary, channel, history, ranking, segmentation, summarize
@@ -326,7 +326,7 @@ class ProactiveContextManager(Policy):
             started = self.start_due(conn, types, read, rows, latest, build, size, over)
             # over the limit, or joining, the read waits for its build however long it takes (up to build_timeout)
             seconds = cfg.build_timeout if (over and started == "build") or started == "join" else cfg.sync_seconds
-            if started and seconds > 0 and self.wait(conn, ch, rows[-1].row_id, started, seconds):
+            if started and seconds > 0 and self.wait(conn, ch, rows[-1].row_id, started, seconds, read.stopped):
                 latest = tables.build_for(conn, ch)
                 build, made = self.choose(conn, types, rows, latest, last, True, read)
                 items, refs, size, own = self.assemble(conn, rows, build, made, types, read)
@@ -978,8 +978,9 @@ class ProactiveContextManager(Policy):
                 return ""
             build_id = tables.claim_build(conn, ch, cfg.build_timeout, tables.COMPACTION)
             if build_id is None:                    # one is running: let it finish, then build again
-                self.wait(conn, ch, read.row_id, "build", cfg.build_timeout)
-                build_id = tables.claim_build(conn, ch, cfg.build_timeout, tables.COMPACTION)
+                self.wait(conn, ch, read.row_id, "build", cfg.build_timeout, read.stopped)
+                build_id = None if read.stopped() else \
+                    tables.claim_build(conn, ch, cfg.build_timeout, tables.COMPACTION)
             if build_id is None:
                 return "timeout"
             try:
@@ -987,7 +988,7 @@ class ProactiveContextManager(Policy):
             except OSError as exc:
                 tables.fail_build(conn, build_id, f"could not start the worker: {exc}")
                 return "failed"
-            self.wait(conn, ch, read.row_id, "build", cfg.build_timeout)
+            self.wait(conn, ch, read.row_id, "build", cfg.build_timeout, read.stopped)
             build = tables.get_build(conn, build_id) or {}
             return build.get("status") if build.get("status") in ("ready", "failed", "nothing") else "timeout"
 
@@ -1022,14 +1023,21 @@ class ProactiveContextManager(Policy):
         self.log(f"[{ch}] build {build_id} asked for, {n} user messages since the last")
         return {"started": build_id, "messages": n}
 
-    def wait(self, conn, channel_id, row_id: int, started: str, seconds: float) -> bool:
+    def wait(self, conn, channel_id, row_id: int, started: str, seconds: float,
+             stopped: Callable[[], bool] = lambda: False) -> bool:
         """Whether the build the read started (or the one its check found a new task for) is ready
         within `seconds` -- for a check that finds a new task, within build_wait_seconds, if longer:
-        the check answers in seconds, the build it starts takes tens of them."""
+        the check answers in seconds, the build it starts takes tens of them. Not once the harness has
+        given up on the call (`stopped`: its user pressed Esc): nothing will be sent, so the read goes on
+        without it at once -- the check and the build carry on in the background."""
         begun = time.monotonic()
         deadline = begun + seconds
         started = "build" if started == "join" else started
         while True:
+            if stopped():
+                self.log(f"[{channel_id}] the harness hung up on the call: not waiting for the {started} "
+                         f"({time.monotonic() - begun:.1f} s in)")
+                return False
             if started == "check":
                 verdict = tables.boundary_verdict(conn, row_id)
                 if verdict and verdict["new_task"] is False:

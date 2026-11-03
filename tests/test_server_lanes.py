@@ -212,6 +212,78 @@ class LanesTest(unittest.TestCase):
             serve(StubServer(), [json.dumps(dict(read("a", 1), id=1)), json.dumps(dict(read("b", 2), id=2))], Closed())
 
 
+class Waits(Stub):
+    """A manager whose reads wait until their harness hangs up (`stopped`), or WAIT seconds: each row's start set in
+    `began`, and each read kept in `handled` as (channel, row, whether it was stopped)."""
+
+    def __init__(self, handled, began):
+        super().__init__(None, handled)
+        self.began = began
+
+    def read_logged(self, gatherer, row, *, properties=None, stopped=None, **_):
+        self.began.setdefault(row, threading.Event()).set()
+        end = time.monotonic() + WAIT
+        while not (stopped is not None and stopped()) and time.monotonic() < end:
+            time.sleep(0.01)
+        self.handled.append(((properties or {}).get("channel"), row, stopped is not None and stopped()))
+        return [], None, {}
+
+
+class HungUpTest(unittest.TestCase):
+    """`hung_up`: the harness hung up on the call a session's read is for -- that read stops waiting, at once."""
+
+    def setUp(self):
+        self.began = {r: threading.Event() for r in range(1, 5)}
+        self.server = StubServer()
+        self.server.factory = lambda gatherer: Waits(self.server.handled, self.began)
+
+    def hung_up(self, channel, i):
+        return json.dumps({"op": "hung_up", "gatherer": "g", "properties": {"channel": channel}, "id": i})
+
+    def test_the_read_running_in_its_session_s_lane_stops_and_no_other(self):
+        out = Out()
+
+        def lines():
+            yield json.dumps(dict(read("a", 1), id=1))
+            yield json.dumps(dict(read("b", 2), id=2))
+            self.began[1].wait(WAIT)
+            self.began[2].wait(WAIT)
+            yield self.hung_up("a", 3)
+            out.wait_for([3, 1])
+            yield self.hung_up("c", 4)                 # a session with no read running: nothing to stop
+            out.wait_for([4])
+            yield self.hung_up("b", 5)
+
+        began = time.monotonic()
+        done = in_background(self.server, lines(), out)
+        done.join(WAIT)
+        self.assertFalse(done.is_alive())
+        self.assertLess(time.monotonic() - began, WAIT / 2)                    # neither read waited it out
+        by_id = {a["id"]: a for a in out.seen}
+        self.assertEqual((by_id[3]["stopped"], by_id[4]["stopped"], by_id[5]["stopped"]), (True, False, True))
+        self.assertEqual([a["id"] for a in out.seen], [3, 1, 4, 5, 2])          # b's read went on until told
+        self.assertEqual(sorted(self.server.handled), [("a", 1, True), ("b", 2, True)])
+
+    def test_a_read_queued_behind_the_one_stopped_is_not_stopped_with_it(self):
+        out = Out()
+
+        def lines():
+            yield json.dumps(dict(read("a", 1), id=1))
+            yield json.dumps(dict(read("a", 2), id=2))     # its harness's next call, in the same lane
+            self.began[1].wait(WAIT)
+            yield self.hung_up("a", 3)
+            self.began[2].wait(WAIT)
+            time.sleep(0.3)
+            self.assertNotIn(2, [a["id"] for a in out.seen])                    # still waiting
+            yield self.hung_up("a", 4)
+
+        done = in_background(self.server, lines(), out)
+        done.join(WAIT)
+        self.assertFalse(done.is_alive())
+        self.assertEqual(self.server.handled, [("a", 1, True), ("a", 2, True)])
+        self.assertEqual([a["id"] for a in out.seen], [3, 1, 4, 2])
+
+
 class GathererTest(unittest.TestCase):
     """Sessions side by side on a real gatherer: one sqlite file, written from a thread per session."""
 
@@ -251,9 +323,9 @@ class GathererTest(unittest.TestCase):
                    "events": codex.to_events([self.user("start", 0)])}])            # the gatherer, made
         lanes, answer = set(), Server.answer
 
-        def seen(server, request):
+        def seen(server, request, *more):
             lanes.add(threading.current_thread().name)
-            return answer(server, request)
+            return answer(server, request, *more)
         requests = []
         for turn in range(1, 6):
             for c in ("c1", "c2", "c3"):

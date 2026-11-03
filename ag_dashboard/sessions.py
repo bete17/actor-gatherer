@@ -36,7 +36,7 @@ turns it gives way (`ag home hold ... --yields`): another process opening the se
 resuming it -- stops it and takes the session over; before the next turn it stops giving way
 (`--keeps`), and if it was taken meanwhile the message is refused. A process that is gone (taken
 over, exited, the dashboard restarted) is started again on the next message, resuming the session
-(`--resume`) once it has had a turn.
+(`--resume`) once it has had a turn, or its harness has saved it (`resumes`).
 
 Any Claude Code session of a gatherer can be messaged so, not only one started here (`adopt`: it
 joins the table, to be resumed in the directory its calls named) -- while no other process has it
@@ -251,6 +251,20 @@ def _has_calls(gatherer: str, session_id: str) -> bool:
         return False
     finally:
         conn.close()
+
+
+def resumes(s: dict) -> bool:
+    """Whether the session `s` (a row of the table) is resumed when it starts, not started anew: it has had a turn, or
+    made a call, or its harness keeps a record of it already (harness_kit's `record_path`). Claude Code writes its record
+    once its first message is entered, before any call, and then refuses to start a session of that id again
+    ("Session ID ... is already in use"): one closed before its first call was recorded is resumed so."""
+    if s["turns"] or _has_calls(s["gatherer"], s["session_id"]):
+        return True
+    h = harness_kit.get(s["harness"])
+    try:
+        return bool(h and h.record_path(s["session_id"], s.get("cwd")))
+    except OSError:
+        return False
 
 
 SESSION_ID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
@@ -955,7 +969,7 @@ class Sessions:
         message a line on its stdin (`_next`), each turn's end an event on its stdout (`_read`)."""
         sid = s["session_id"]
         told = instructions(s)
-        argv = self._headless(s, bool(s["turns"]))
+        argv = self._headless(s, resumes(s))
         os.makedirs(os.path.dirname(log_path(sid)), exist_ok=True)
         log = open(log_path(sid), "a", encoding="utf-8", buffering=1)
         log.write(f"--- {_now()} {shlex.join(_unsaid(argv, told))}\n")
@@ -978,7 +992,7 @@ class Sessions:
         stdin (the lock held)."""
         sid = s["session_id"]
         told = instructions(s)
-        argv = self._headless(s, bool(s["turns"]))
+        argv = self._headless(s, resumes(s))
         h = harness_kit.get(s["harness"])
         os.makedirs(os.path.dirname(log_path(sid)), exist_ok=True)
         log = open(log_path(sid), "a", encoding="utf-8", buffering=1)
@@ -1216,7 +1230,7 @@ class Sessions:
     def _start_terminal(self, s: dict, cols: int, rows: int, fullscreen: bool = False,
                         prompt: Optional[str] = None) -> _Term:
         sid = s["session_id"]
-        resume = bool(s["turns"]) or _has_calls(s["gatherer"], sid)
+        resume = resumes(s)
         h = harness_kit.get(s["harness"])               # its own options: the harness's (harness_kit's `command`)
         if h is None:
             raise SessionError(f"no rules for {s['harness']} to start it with")

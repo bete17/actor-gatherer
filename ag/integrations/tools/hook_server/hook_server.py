@@ -53,7 +53,10 @@ status, `error` the endpoint's message) -- once the harness has it; or no answer
 endpoint could not be reached, or did not answer -- (`status` None, `error` why). The harness is then
 answered 502 with an error body readable as both Anthropic's and OpenAI's ({"type": "error", "error":
 {"type", "message"}}), saying why, where it would otherwise get a bare 500. An answer that breaks off
-once it has begun is not reported: the harness itself may have closed it (an interrupted turn). A URL starting
+once it has begun is not reported: the harness itself may have closed it (an interrupted turn). A hook with a
+`hung_up(request)` has it called (awaited) when the harness hangs up while the hook itself still runs -- the user
+stopped the call (Esc) before it went on -- and again every TELL_AGAIN seconds until the hook returns (`hooked`): so a
+hook waiting on something of its own can end the wait. A URL starting
 `/h/<label>/` gives the hook that label (the prefix is stripped before
 forwarding): what the label means is the hook's to decide. `request.upstream` is
 where the request goes (its path after it), for a hook that asks the same
@@ -219,6 +222,29 @@ async def _call(hook: Callable, request: Request):
     return await result if inspect.isawaitable(result) else result
 
 
+TELL_AGAIN = 0.5         # once the harness hung up while the hook runs, how often the hook is told again (`hooked`)
+
+
+async def hooked(n: int, hook: Callable, given: Request, request) -> Any:
+    """The hook's answer to `given` -- the harness looked at meanwhile (`WATCH_SECONDS`): once it hangs up (Esc while
+    ag reads for the call, which may wait for its build), the hook's `hung_up` is told, and again every TELL_AGAIN
+    seconds while it runs -- the read it waits on may not have begun -- so it can end its wait. The hook still
+    finishes: what it stored is what the hang-up withdraws (`failed`)."""
+    tell = getattr(hook, "hung_up", None)
+    task = asyncio.ensure_future(_call(hook, given))
+    told = None
+    while True:
+        done, _ = await asyncio.wait({task}, timeout=WATCH_SECONDS)
+        if done:
+            return task.result()
+        if tell is None or not hung_up(request) or told is not None and time.monotonic() - told < TELL_AGAIN:
+            continue
+        if told is None:
+            print(f"#{n:04d} the harness hung up while the hook ran: told it", flush=True)
+        told = time.monotonic()
+        await _report(n, "hung_up", tell, given)
+
+
 async def _report(n: int, name: str, method: Callable, *args) -> None:
     """Call a hook's report (`failed`, ...), awaited if it must be; a failing one is logged, never raised."""
     try:
@@ -326,7 +352,7 @@ def make_app(upstream: str, hook: Callable, log_dir: Optional[str] = None,
         given = Request(request.method, path_qs.split("?", 1)[0], label, dict(request.headers), body, limit,
                         upstream=upstream, process=sender(request), run=run, config=config)
         try:
-            new = await _call(hook, given)
+            new = await hooked(n, hook, given, request)
         except Exception as exc:  # noqa: BLE001 - a failing hook never blocks the call
             print(f"#{n:04d} hook failed: {exc!r}; request unchanged", file=sys.stderr, flush=True)
             new = None

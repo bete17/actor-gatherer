@@ -157,6 +157,14 @@ none: {}. `cwd` is the working directory the gatherer's pollers look at.
 
 where TYPE is {"name", "properties"?: [{"name", "required"?, "identifies"?}]}.
     {"op": "ping"} -> {"pong": true}
+    {"op": "hung_up", "gatherer", "properties"} -> {"stopped": bool}
+                                                the harness hung up on the call its session's read
+                                                is for (its user stopped it: Esc): that read, if one
+                                                runs in the session's lane now, stops waiting for
+                                                work of its own in the background (`Read.stopped`)
+                                                and answers with what it has. Answered at once,
+                                                beside the lanes; a read that has not begun is not
+                                                touched (the harness says it again while it waits)
 
 A request that fails is answered `{"id", "error"}`; a rewrite that fails is
 answered with a null context, so the harness sends its own messages.
@@ -179,6 +187,8 @@ waited for itself (a `measured` is answered before the harness sees the call's
 end, a `claim` before the call is made). A gatherer with no identifying
 property, or none known yet (no database), has one lane. Answers come out as
 they are ready, each one whole line: a client matches them to its requests by id.
+A `hung_up` runs in no lane: it is answered as it is read, so a read it stops
+need not end first (`Lanes.hung_up`).
 """
 
 import json
@@ -202,6 +212,9 @@ from ..store import paths, schema
 LINGER = 60.0
 #: An insert's `lane` naming events no read depends on: run beside its session's lane (`lane_of`).
 RECORDS_LANE = "records"
+#: The requests that read for a harness's call -- and may wait for the policy's work in the background, until the
+#: harness hangs up on it (`hung_up`).
+READS = ("read", "rewrite", "compaction")
 
 
 def log_line(gatherer: str, line: str) -> None:
@@ -434,10 +447,12 @@ class Server:
 
     def read(self, gatherer: str, properties: Dict[str, Any], cwd: Optional[str], row: int, manager=None,
              limit: Optional[int] = None, preamble: Optional[List[dict]] = None,
-             process: Optional[dict] = None, run: Optional[str] = None) -> dict:
+             process: Optional[dict] = None, run: Optional[str] = None,
+             stopped: Optional[Callable[[], bool]] = None) -> dict:
         manager = self.with_pollers(manager or self.manager(gatherer), gatherer, cwd)
+        more = {"stopped": stopped} if stopped is not None else {}
         context, read_id, sizes = manager.read_logged(gatherer, row, properties=properties, limit=limit,
-                                                      preamble=preamble, process=process, run=run)
+                                                      preamble=preamble, process=process, run=run, **more)
         return {"context": context, "read_id": read_id, **sizes}
 
     def measured(self, gatherer: str, read_id: int, tokens: int) -> dict:
@@ -477,14 +492,17 @@ class Server:
     def rewrite(self, gatherer: str, properties: Dict[str, Any], cwd: Optional[str], events: list,
                 measured: Optional[dict] = None, limit: Optional[int] = None,
                 preamble: Optional[List[dict]] = None, read_only: bool = False, compacted: bool = False,
-                process: Optional[dict] = None, run: Optional[str] = None) -> dict:
+                process: Optional[dict] = None, run: Optional[str] = None,
+                stopped: Optional[Callable[[], bool]] = None) -> dict:
         """Insert `events`, then read in response to the last. `measured`,
         {"read_id", "tokens"}, is the provider's count of an earlier read's
         context, recorded first, so this read sees it. With `read_only`, the
         context only (`Manager.context_only`): nothing else of the gatherer's
         state changes, and there is no read_id. With `compacted` (read only
         too), the harness compacted its history: the policy builds first, and
-        waits for it (`Manager.compacted`). Never raises: a failure anywhere
+        waits for it (`Manager.compacted`). `stopped`: whether the harness has
+        given up on the call -- a read or a compaction waiting for a build stops
+        waiting then (`Read.stopped`). Never raises: a failure anywhere
         answers a null context."""
         prefix = tag(properties)
         if measured is not None:
@@ -507,7 +525,8 @@ class Server:
         built = ""
         if compacted:
             try:
-                built = manager.compacted(gatherer, last, properties=properties, limit=limit, preamble=preamble)
+                built = manager.compacted(gatherer, last, properties=properties, limit=limit, preamble=preamble,
+                                          **({"stopped": stopped} if stopped is not None else {}))
             except Exception as exc:  # noqa: BLE001 - a failed build never blocks the call
                 built = f"failed: {exc!r}"
         try:
@@ -516,7 +535,7 @@ class Server:
                                                       preamble=preamble)
                 answer = {"context": context, "read_id": None, **sizes}
             else:
-                answer = self.read(gatherer, properties, cwd, last, manager, limit, preamble, process, run)
+                answer = self.read(gatherer, properties, cwd, last, manager, limit, preamble, process, run, stopped)
         except Exception as exc:  # noqa: BLE001
             note = f"read failed: {exc!r}; messages unchanged"
             self.log(gatherer, prefix + note)
@@ -541,8 +560,9 @@ class Server:
 
     # ---- requests
 
-    def handle(self, request: dict) -> dict:
-        """The answer to one request (without its id)."""
+    def handle(self, request: dict, stopped: Optional[Callable[[], bool]] = None) -> dict:
+        """The answer to one request (without its id). `stopped`, for a read (READS): whether the harness has
+        hung up on its call since (`hung_up`)."""
         op = request.get("op")
         if op == "ping":
             return {"pong": True}
@@ -555,12 +575,14 @@ class Server:
                 return {"context": None, "note": "no events; messages unchanged"}
             return self.rewrite(gatherer, properties, cwd, events, measured_of(request.get("measured")),
                                 limit_of(request.get("limit")), preamble_of(request.get("preamble")),
-                                process=process_of(request.get("process")), run=run_of(request.get("run")))
+                                process=process_of(request.get("process")), run=run_of(request.get("run")),
+                                stopped=stopped)
         if op in ("context", "compaction"):
             if not isinstance(events, list):
                 return {"context": None, "note": "no events; messages unchanged"}
             return self.rewrite(gatherer, properties, cwd, events, None, limit_of(request.get("limit")),
-                                preamble_of(request.get("preamble")), read_only=True, compacted=op == "compaction")
+                                preamble_of(request.get("preamble")), read_only=True, compacted=op == "compaction",
+                                stopped=stopped)
         if op == "measured":
             measured = measured_of(request)
             if measured is None:
@@ -597,7 +619,8 @@ class Server:
             if not isinstance(request.get("row"), int):
                 return {"error": "no row"}
             return self.read(gatherer, properties, cwd, request["row"], limit=limit_of(request.get("limit")),
-                             process=process_of(request.get("process")), run=run_of(request.get("run")))
+                             process=process_of(request.get("process")), run=run_of(request.get("run")),
+                             stopped=stopped)
         if op == "claim":
             process, session = process_of(request.get("process")), request.get("session")
             if process is None or not isinstance(session, str) or not session:
@@ -627,10 +650,10 @@ class Server:
             return self.open(gatherer, properties)
         return {"error": f"no op {op!r}"}
 
-    def answer(self, request: dict) -> dict:
-        """The answer to `request`, with its id; never raises."""
+    def answer(self, request: dict, stopped: Optional[Callable[[], bool]] = None) -> dict:
+        """The answer to `request`, with its id; never raises. `stopped`: as `handle`'s."""
         try:
-            result = self.handle(request)
+            result = self.handle(request, stopped) if stopped is not None else self.handle(request)
         except Exception as exc:  # noqa: BLE001
             result = {"error": f"{type(exc).__name__}: {exc}"}
         return dict(result, id=request.get("id"))
@@ -667,7 +690,9 @@ class Lanes:
     A request is placed by its gatherer's identifying properties as last found (`Server.identifying`:
     when the gatherer is first seen, and after each answer). When they change -- a new gatherer's,
     once its database has its types -- the gatherer's requests after the change are held until those
-    placed before it are answered: a lane by the new ones never runs ahead of one by the old."""
+    placed before it are answered: a lane by the new ones never runs ahead of one by the old.
+
+    A read (READS) running in a lane can be stopped from outside it (`hung_up`): the harness hung up on its call."""
 
     def __init__(self, server: Server, out, linger: float = LINGER):
         self.server, self.out, self.linger = server, out, linger
@@ -681,6 +706,7 @@ class Lanes:
         self.held: Dict[Any, deque] = {}            # gatherer -> its requests waiting for those to be answered
         self.writing = threading.Lock()
         self.broken: Optional[Exception] = None     # what writing an answer raised: no one reads them
+        self.reading: Dict[tuple, threading.Event] = {}    # lane -> the read running there: set once its harness hangs up
 
     def write(self, result: dict) -> None:
         try:
@@ -698,13 +724,26 @@ class Lanes:
     def submit(self, request: dict) -> None:
         gatherer = gatherer_of(request)
         names = None if gatherer in self.found else self.identifying(gatherer)     # a gatherer not seen yet
+        stopped = None
         with self.lock:
             if names is not None:
                 self.found.setdefault(gatherer, names)
-            if gatherer in self.held:
+            if request.get("op") == "hung_up":
+                stopped = self.hung_up(gatherer, request)
+            elif gatherer in self.held:
                 self.held[gatherer].append(request)
             else:
                 self.place(gatherer, request)
+        if stopped is not None:
+            self.write({"stopped": stopped, "id": request.get("id")})
+
+    def hung_up(self, gatherer, request: dict) -> bool:
+        """The read running in the lane `request` names (under the lock) told that its harness hung up on its call:
+        whether one runs there. One queued behind it is not: the harness says it again while it waits."""
+        stop = self.reading.get(lane_of(request, self.found.get(gatherer, ())))
+        if stop is not None:
+            stop.set()
+        return stop is not None
 
     def place(self, gatherer, request: dict) -> None:
         """Put `request` in its lane (under the lock) -- or hold it, while requests of its gatherer
@@ -764,9 +803,14 @@ class Lanes:
                         del self.queues[key]
                         return
                     request = queue.popleft()
-                self.write(self.server.answer(request))
+                    stop = threading.Event() if request.get("op") in READS else None
+                    if stop is not None:
+                        self.reading[key] = stop
+                self.write(self.server.answer(request, stop.is_set if stop is not None else None))
                 names = self.identifying(gatherer)
                 with self.lock:
+                    if stop is not None and self.reading.get(key) is stop:
+                        del self.reading[key]
                     self.answered(gatherer, names)
         finally:
             try:
