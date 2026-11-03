@@ -30,7 +30,7 @@ import threading
 import time
 from dataclasses import replace
 from datetime import datetime
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 from ag.ag_interface import AG, ContextManager, Event, EventType, Poller, Tokenizer, is_ag
 from ag.ag_interface.policy import Context, Policy, Read
@@ -50,6 +50,11 @@ _POLLING_LOCK = threading.Lock()
 #: A read-only context (`context_only`) is read from a copy of the whole database, in memory: one at a time in the
 #: process, so the server's lanes (each session's side calls at once) do not hold a copy each.
 _COPYING = threading.Lock()
+
+
+def _stopping(stopped: Optional[Callable[[], bool]]) -> dict:
+    """A `Read`'s `stopped`, when the caller gave one: whether the harness has given up on the call."""
+    return {"stopped": stopped} if stopped is not None else {}
 
 
 def polling(name: str) -> threading.Lock:
@@ -294,18 +299,21 @@ class Manager(ContextManager):
 
     def _context(self, gatherer_id: str, row_id: int, properties: Optional[dict],
                  limit: Optional[int] = None, preamble: Optional[List[dict]] = None,
-                 process: Optional[dict] = None, run: Optional[str] = None) -> Tuple[Context, Optional[int]]:
+                 process: Optional[dict] = None, run: Optional[str] = None,
+                 stopped: Optional[Callable[[], bool]] = None) -> Tuple[Context, Optional[int]]:
         """(the policy's context, the read_id it was logged as; None: an empty context, not logged).
         `limit` is the harness's own limit the call stated (`Read.limit`); `preamble` what it sends
         besides its messages ([{name, text}]), kept with the read, as are `process`, the harness's process
-        that made the call ({"pid", "started"}), and `run`, the harness's run that made it."""
+        that made the call ({"pid", "started"}), and `run`, the harness's run that made it. `stopped`: whether
+        the harness has given up on the call (`Read.stopped`)."""
         if not os.path.exists(db_path(gatherer_id)):
             return Context(), None
         self.poll(gatherer_id)
         conn = self._conn(gatherer_id)
         ids = [store.record_preamble(conn, p["name"], p["text"], self.tokenizer) for p in preamble or ()]
         ctx = self.policy.read(Store(conn, gatherer_id), Read(gatherer_id, dict(properties or {}), row_id, limit,
-                                                              fixed_tokens=store.preamble_tokens(conn, preamble)))
+                                                              fixed_tokens=store.preamble_tokens(conn, preamble),
+                                                              **_stopping(stopped)))
         read_id = None
         if ctx.items:
             read_id = store.record_read(conn, properties, ctx.refs, manager=self.policy.name, basis=ctx.basis,
@@ -324,16 +332,19 @@ class Manager(ContextManager):
                 + store.preamble_tokens(conn, preamble))
 
     def compacted(self, gatherer_id: str, row_id: int, *, properties: Optional[dict] = None,
-                  limit: Optional[int] = None, preamble: Optional[List[dict]] = None) -> str:
+                  limit: Optional[int] = None, preamble: Optional[List[dict]] = None,
+                  stopped: Optional[Callable[[], bool]] = None) -> str:
         """Not part of the interface: the harness compacted its own history, in response to the event
-        `row_id` -- the policy builds (its `compacted`, if it has one) and waits for it. What it came
-        to, in the policy's words; "" for a policy that does not build, or a gatherer with no database."""
+        `row_id` -- the policy builds (its `compacted`, if it has one) and waits for it, until the harness
+        gives up on the call (`stopped`). What it came to, in the policy's words; "" for a policy that does
+        not build, or a gatherer with no database."""
         hook = getattr(self.policy, "compacted", None)
         if hook is None or not os.path.exists(db_path(gatherer_id)):
             return ""
         conn = self._conn(gatherer_id)
         return hook(Store(conn, gatherer_id), Read(gatherer_id, dict(properties or {}), row_id, limit,
-                                                   fixed_tokens=store.preamble_tokens(conn, preamble)))
+                                                   fixed_tokens=store.preamble_tokens(conn, preamble),
+                                                   **_stopping(stopped)))
 
     def requested(self, gatherer_id: str, *, properties: Optional[dict] = None, min_messages: int = 0) -> dict:
         """Not part of the interface: a build a reader asked for, outside any call -- the policy's
@@ -394,7 +405,8 @@ class Manager(ContextManager):
 
     def read_logged(self, gatherer_id: str, row_id: int, *, properties: Optional[dict] = None,
                     limit: Optional[int] = None, preamble: Optional[List[dict]] = None,
-                    process: Optional[dict] = None, run: Optional[str] = None) -> Tuple[List[dict], Optional[int], dict]:
+                    process: Optional[dict] = None, run: Optional[str] = None,
+                    stopped: Optional[Callable[[], bool]] = None) -> Tuple[List[dict], Optional[int], dict]:
         """Not part of the interface: `read_events`, with the read_id the read
         was logged as (None: nothing returned, nothing logged) -- what the
         provider's count of the call is later recorded against (`record_real_tokens`) --
@@ -403,8 +415,9 @@ class Manager(ContextManager):
         item and the preamble -- as the provider counts it too. `limit` is the harness's
         own limit the call stated (`Read.limit`); `preamble`, what it sends besides its
         messages ([{name, text}]); `process`, the harness's process that made the call ({"pid", "started"});
-        `run`, the harness's run that made it, as its launcher named it."""
-        ctx, read_id = self._context(gatherer_id, row_id, properties, limit, preamble, process, run)
+        `run`, the harness's run that made it, as its launcher named it; `stopped`, whether the harness has
+        given up on the call (`Read.stopped`: a read waiting for its build returns then)."""
+        ctx, read_id = self._context(gatherer_id, row_id, properties, limit, preamble, process, run, stopped)
         sizes = {"tokens": ctx.tokens, "budget": ctx.budget, "basis": ctx.basis}
         if not ctx.items:
             return [], None, sizes

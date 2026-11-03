@@ -194,8 +194,8 @@ class StrictMaxTest(Base):
         spawned, waited = [], []
         self.policy.jobs = Recording(lambda s, c, job, job_id: spawned.append(job))
         wait = self.policy.wait
-        self.policy.wait = lambda conn, ch_, row, started, seconds: waited.append(seconds) or wait(conn, ch_, row,
-                                                                                                started, seconds)
+        self.policy.wait = lambda conn, ch_, row, started, seconds, *more: waited.append(seconds) or wait(
+            conn, ch_, row, started, seconds, *more)
         self.put(PREAMBLE + long_turn(40))                   # ends on a tool output, not a user message
         self.read()
         self.assertEqual(spawned, ["build"])

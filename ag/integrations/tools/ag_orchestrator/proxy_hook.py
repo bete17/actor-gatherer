@@ -15,7 +15,8 @@ A subclass gives:
 and may override `overtaken` (an answer a later call has carried back already) and `side_answered`.
 
 What the hook server reports once the harness has an answer (`answered`, `failed`) or as it streams (`streamed`, a
-task of its own) is recorded then and there: the harness waits on none of it. A model call is recorded in the
+task of its own) is recorded then and there: the harness waits on none of it. Its report that the harness hung up on a
+call while the hook was still reading for it (`hung_up`: Esc, as ag waited for its build) goes to ag at once. A model call is recorded in the
 background, so the call is not held up for it; `close` waits for what is under way.
 """
 
@@ -25,6 +26,7 @@ from typing import Callable, List, Optional, Set
 
 from harness_kit import Call, Facts, Harness, Part
 
+from .adaptor import CHANNEL
 from .call_ag import HUNG_UP, read_of, report_measured
 from .records import call_failed, derived, model_call, record, recap, reply_end, reply_parts, name
 from .session_files import SessionFiles
@@ -34,6 +36,10 @@ class ProxyHook:
     harness: Harness
     ANSWERED = "answered"
     FILES = "files"
+    SESSION = "ag_session"           # its key in `request.state`: the call's (gatherer, channel), once known (`following`)
+
+    #: How long the hook waits for ag to take a hang-up (`hung_up`): it answers at once, beside the reads.
+    HUNG_UP_SECONDS = 5.0
 
     def __init__(self, ag_clients, log: Callable[[str, str], None], files=None, sessions: Optional[SessionFiles] = ...):
         self.ag_clients, self.log, self.files = ag_clients, log, files
@@ -83,7 +89,10 @@ class ProxyHook:
 
     def following(self, request, gatherer: str, channel: str, call: Call) -> None:
         """The session's own record followed (session_files.py), from this call of it on: where it runs, and the
-        harness's own folder for it as its launcher named it (`request.config`, the URL's /c/)."""
+        harness's own folder for it as its launcher named it (`request.config`, the URL's /c/). The call's session kept
+        on the request, for a hang-up while ag reads for it (`hung_up`)."""
+        if isinstance(getattr(request, "state", None), dict):
+            request.state[self.SESSION] = (gatherer, channel)
         if self.sessions is not None and call is not None and call.session:
             self.sessions.follow(gatherer, channel, self.harness, call.session, call.cwd, getattr(request, "config", None))
 
@@ -98,6 +107,24 @@ class ProxyHook:
             self.log(gatherer, f"[{channel}] name: kept")
 
     # ---- the hook server's reports
+
+    async def hung_up(self, request) -> None:
+        """The hook server's report that the harness hung up on a call while the hook still read for it (the user pressed
+        Esc as ag waited for its build): ag told (its `hung_up`), so the session's read stops waiting and answers with what
+        it has -- nothing will be sent. The hook then finishes as it would, and the hang-up is recorded (`failed`)."""
+        state = getattr(request, "state", None) or {}
+        kept = state.get(self.ANSWERED) or state.get(self.SESSION)
+        if kept is None:
+            return
+        gatherer, channel = kept[0], kept[1]
+        try:
+            got = await asyncio.wait_for(self.ag_clients.client(gatherer).request(
+                "hung_up", {"gatherer": gatherer, "properties": {CHANNEL: channel}}), self.HUNG_UP_SECONDS)
+        except asyncio.TimeoutError:
+            return
+        if isinstance(got, dict) and got.get("stopped") and not state.get("ag_stopped"):
+            state["ag_stopped"] = True
+            self.log(gatherer, f"[{channel}] the harness hung up as ag read for the call: told to stop waiting")
 
     def answer_items(self, output_items: list) -> list:
         """The harness's messages an answer's output items are, as its adaptor takes them."""

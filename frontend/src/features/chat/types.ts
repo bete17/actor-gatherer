@@ -127,6 +127,8 @@ export interface SentHere {
   text: string;
   /** when it was sent, in the page's milliseconds */
   at: number;
+  /** typed into its terminal, opening a turn -- not kept for the end of the turn under way */
+  ran?: boolean;
 }
 
 /** What the old page hands the turn list at each draw (16-files-view.js's talkFeed). */
