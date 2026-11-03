@@ -1,8 +1,10 @@
 /* The Terminal view: Claude Code's own UI, drawn by xterm.js on the page's terminal colors, so it follows
    the theme (Claude Code's own colors follow its /theme) */
 .chat .chat-frame.xterm-frame { position: relative; overflow: hidden; background: var(--term-bg); padding: 8px 4px 8px 10px; }
-.xterm-host { position: absolute; inset: 8px 4px 8px 10px; }
+/* The host a stacking context of its own: xterm's layers (WebGL's link canvas at z-index 2, its helpers at 5, its
+   scrollbar at 11) stay inside it, under the cover -- else they lie over the cover's "Open again", and take its clicks */
+.xterm-host { position: absolute; inset: 8px 4px 8px 10px; isolation: isolate; }
 .xterm-host .xterm-viewport { background: var(--term-bg) !important; }
-.xterm-cover { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 10px; text-align: center;
+.xterm-cover { position: absolute; inset: 0; z-index: 1; display: grid; place-content: center; justify-items: center; gap: 10px; text-align: center;
   background: color-mix(in srgb, var(--term-bg) 82%, transparent); color: var(--term-ink); font-size: 13px; padding: 20px; }
 .xterm-cover .desc { color: var(--term-dim); max-width: 46ch; }

@@ -121,6 +121,30 @@ class ExecutableTest(Home):
             self.assertIsNone(browser.executable())
 
 
+class OrdinaryUaTest(Home):
+    """The user agent the dashboard's own Chrome is started with: ordinary Chrome's, of the version installed."""
+
+    def chrome(self, says: str) -> str:
+        exe = self.write(f"chrome{len(os.listdir(self.root))}", f"#!/bin/sh\necho '{says}'\n")
+        os.chmod(exe, 0o755)
+        return exe
+
+    def test_the_version_installed_named_as_ordinary_chrome(self):
+        with mock.patch.object(browser.sys, "platform", "darwin"):
+            self.assertEqual(browser.ordinary_ua(self.chrome("Google Chrome 156.0.8078.80 ")),
+                             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) "
+                             "Chrome/156.0.0.0 Safari/537.36")
+        with mock.patch.object(browser.sys, "platform", "linux"):
+            self.assertEqual(browser.ordinary_ua(self.chrome("Microsoft Edge 157.0.3400.12")),
+                             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
+                             "Chrome/157.0.0.0 Safari/537.36 Edg/157.0.0.0")
+
+    def test_none_when_the_chrome_names_no_version_of_chrome_s(self):
+        self.assertIsNone(browser.ordinary_ua(self.chrome("")))
+        self.assertIsNone(browser.ordinary_ua(self.chrome("Brave Browser 1.71.118")))   # not Chrome's numbering
+        self.assertIsNone(browser.ordinary_ua("/no/such/chrome"))
+
+
 class PipesTest(unittest.TestCase):
     """Chrome is handed its DevTools pipe as fds 3 and 4 (PLACE_PIPES), whatever numbers the pipes have here: past 9,
     as a server's mostly are (where Linux's /bin/sh, dash, refused them), or one of them on 3 already."""
@@ -628,6 +652,27 @@ class ChromeTest(Home):
         self.assertEqual(seen["state"]["tabs"][seen["state"]["active"]]["title"], "Second page")
         self.assertEqual((seen["frame"]["w"], seen["frame"]["h"]), (640, 480))
         self.assertTrue(base64.b64decode(seen["frame"]["data"]).startswith(b"\xff\xd8"))   # a JPEG
+
+    def test_a_site_is_told_it_is_ordinary_chrome_but_driven(self):
+        """Some sites refuse headless Chrome by its user agent (Figma's CloudFront: a 403 "Request blocked"): pages,
+        their workers and requests see ordinary Chrome's, and its client hints in full; navigator.webdriver stays."""
+        url = self.serve("ua.html", "<!doctype html><title>UA</title>")
+        self.text("navigate", url=url)
+        seen = json.loads(self.text("evaluate", expression="""(async () => ({ua: navigator.userAgent,
+            driven: navigator.webdriver, hints: await navigator.userAgentData.getHighEntropyValues(
+              ['fullVersionList', 'platformVersion', 'architecture', 'bitness']),
+            worker: await new Promise((r) => { const w = new Worker(URL.createObjectURL(new Blob(
+              ['postMessage(navigator.userAgent)']))); w.onmessage = (e) => r(e.data); })}))()"""))
+        self.assertNotIn("Headless", seen["ua"])
+        self.assertRegex(seen["ua"], r" Chrome/\d+\.0\.0\.0 ")
+        self.assertEqual(seen["worker"], seen["ua"])
+        self.assertIs(seen["driven"], True)
+        hints = seen["hints"]
+        self.assertTrue(any(len(b["version"].split(".")) == 4 and b["version"].split(".")[0] in seen["ua"]
+                            for b in hints["fullVersionList"]), hints)
+        self.assertRegex(hints["platformVersion"], r"^\d+\.\d+\.\d+$")
+        self.assertIn(hints["architecture"], ("arm", "x86"))
+        self.assertEqual(hints["bitness"], "64")
 
     def test_the_screen_comes_quicker_while_the_user_scrolls_or_drags_then_sharp_again(self):
         def cast(want):
