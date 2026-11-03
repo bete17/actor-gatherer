@@ -1,21 +1,50 @@
 {
   "claude": {
-    "reply_block": null
+    "reply_block": null,
+    "stopped": {
+      "lead": "⎿",
+      "interrupted": "Interrupted · What should Claude do instead?",
+      "error": "API Error",
+      "error_status": "API Error: {status}"
+    }
   },
   "codex": {
     "reply_block": {
       "open": "<proposed_plan>",
       "close": "</proposed_plan>",
       "title": "Proposed plan"
+    },
+    "stopped": {
+      "lead": "■",
+      "interrupted": "Conversation interrupted",
+      "error": "Error",
+      "reasons": {
+        "budget_limited": "Goal budget reached - the turn was stopped."
+      }
     }
   },
   "antigravity": {
-    "reply_block": null
+    "reply_block": null,
+    "stopped": {
+      "lead": "⎿",
+      "interrupted": "Interrupted",
+      "error": "Error"
+    }
   },
   "pi": {
-    "reply_block": null
+    "reply_block": null,
+    "stopped": {
+      "lead": "⎿",
+      "interrupted": "Interrupted",
+      "error": "Error"
+    }
   },
   "opencode": {
-    "reply_block": null
+    "reply_block": null,
+    "stopped": {
+      "lead": "⎿",
+      "interrupted": "Interrupted",
+      "error": "Error"
+    }
   }
 }

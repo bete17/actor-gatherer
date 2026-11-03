@@ -1,6 +1,6 @@
 # The dashboard on a standard stack: plan
 
-Status: A0–A4 built; A5 begun (the renderers the views share, in `core/ui/`). A1's build step, the server serving it and `publish.yml` building it come with A3, the
+Status: A0–A4 built; A5 begun (the renderers the views share, in `core/ui/`; Chat's turn list, in `features/chat/`). A1's build step, the server serving it and `publish.yml` building it come with A3, the
 first step with something to build. It moves the
 dashboard to the tools most web front ends and Python APIs are built with now, in steps that keep it working.
 
@@ -242,6 +242,64 @@ out of the old script, as one implementation that the old page and React both us
   (`highlight/*.test.ts`, `md.test.ts`); the components' own in `Markdown.test.tsx` and `Code.test.tsx`. Vitest runs
   the vendored marked and DOMPurify (`core/ui/testing.ts`). The plan's cases use the reply blocks in
   `core/ui/harness-info.json`; `test_dashboard_plan.py` checks those are harness_kit's.
+
+**A5, second part: Chat's turn list in React (`features/chat/`).** The conversation at the right of the Chat view (the
+old page's "Files view") is React now; what is around it is still the old page's.
+- **What moved:** `16-files-view.js`'s `filesTalk` and what only it used: a turn and its replies (a message, a run of
+  thinking, the harness's notes: `notedReply`), the latest call's line (`lastCall`), how a turn stopped (`stoppedLine`),
+  the line under a running turn and the turn over (`working`, `finished`, `miniAvatar`), what waits to reach the agent
+  (`pendingTalk`, `openings`), a turn the session opened before ag stored it (`openedTurn`, `turnsBegan`), the earlier
+  turns and pulling them in (`TURNS_SHOWN`, `pullEarlier` and its listeners, `showMore`, `keepTurn`, `talkShown`),
+  `filesRender`'s cases before the first turn is stored (the opened turns; the actor waving hello, `01-helpers.js`'s
+  `helloLine`), and the bubbles only it drew (`05-agent-list.js`'s `userWords`, `bubbleClass`, `crewBand`, `crewWords`,
+  `sentBubble`, `crewText` and its sizes). Into `Turns.tsx` (the conversation), `Turn.tsx`, `Reply.tsx`, `Bubble.tsx`,
+  `Working.tsx`, `Pending.tsx`, `Hello.tsx`, `pull.ts`, `store.ts`, `mount.tsx`, `Hosted.tsx`, `types.ts`; and, for any
+  view, `core/format.ts` (counts and times: the old page's `plural`, `ago`, `spell`, ..., which it keeps until it goes)
+  and `core/ui/Icon.tsx` (`StrokeIcon`). The markup and classes are the old page's: its DOM, compared with the old
+  page's in 16 states of the test home (each actor, folds, pulls, the side), is the same but for the old page's
+  `data-morph` marks (instructions to its `patch()`) and the order of attributes.
+- **How the data comes:** one way, at each draw of the page. The stream and the loading stay the old page's
+  (`state.files`, `state.agent`); at each draw of the Chat view, `filesRender` builds the feed (`talkFeed`: the actor's
+  turns, the actor and its status, what the user wrote and the page sent and the session has not had -- `heard()`,
+  `sentHereNow()`, which the message box sends from -- whether Esc was sent or would interrupt, the side folded, the
+  setting "Chat's earlier turns") and calls `window.agNext.chat.draw(feed, CHAT_HOST)`. That renders the turn list at
+  once (`flushSync`), so it is in place when `keepingPlace()` puts the scroll back and follows the end, as `filesTalk`'s
+  nodes were. Nothing else renders it: a click on it changes its store and redraws the page (the host's `redraw`,
+  `keepingPlace(renderMain)`), as clicks did; the setting picked calls `agNext.chat.clearFlips()`. The feed carries the
+  page's home, so the turn list reads nothing of the page's but its feed and host.
+- **What it calls of the page** (`CHAT_HOST`, `types.ts`'s `ChatHost`), what stays there for later steps: the actor's
+  stage (`atWork`, `atRest`, `greeting`: its rewrite comes later); a call as the files-and-commands panel draws it
+  (`callView`, `callLabel`: that panel, `fileBlock` and the rest of `filesRender`'s side stay); an actor's face
+  (`crewFace`, the panes' too) and the message parsing the list shares (`envelope`, whose patterns
+  `test_dashboard_coordination.py` checks against coordination.py's); a Browser's message (`bwWords`: only `apps/`
+  names an app); a message's words as matched (`typedAs`, `sameWords`, the message box's); the icons; and the page's
+  redraw, its side (`foldSide`, `setFilesTurn`), its views, and the end of an Esc. The message box and sending, Esc
+  (`interrupt`, `canInterrupt`), and the question, plan and error cards (`10-chat.js`) stay too.
+- **Where its state lives:** `store.ts` (Zustand): the replies folded by a click, the turns whose earlier messages
+  show, the turns flipped against the setting, the first turn drawn -- kept across draws and views, and started over
+  when the page's files feed is (`feed.files`, the `state.files` made for each actor picked), as they were in
+  `state.files`; the turn last brought into view (`talkShown`), again when the view opens afresh; when opened turns
+  began. The mount reads it at each draw and hands it down; a click writes it, then redraws.
+- **The node that stays:** each actor's conversation is a node of its own (`.fl-talk`, its React root), the same from
+  draw to draw. `filesRender` hands it to the frame held apart (`kids`), so building the frame does not take it from
+  the page, and marks it with the actor (`data-sig`), so `patch()` leaves it where it is, never patched into another
+  actor's: React then changes in place only what changed. When the first turn is stored, the node moves from the
+  frame's top into the grid: `filesRender` takes it out first, as `patch()` would look for it where it was.
+- **The stage's animations:** the stage is the old page's DOM, put first in a React element by `useStage`
+  (`Hosted.tsx`): made again at each render, as each draw made it, and the node on the page kept while it shows the
+  same (its `data-sig`, `patch()`'s rule) -- or the next moment the stage put in its place on its own clock. Its node
+  and animations stay across redraws (checked in the browser), and across one that replaces the grid around it too,
+  where the old page drew the conversation anew. Nodes the page builds that nothing changes after (a call opened, its
+  line, a face, a Browser's message) are drawn as React's own (`Html`).
+- **Tests:** `e2e/turns.spec.ts`, written against the old page first: "N earlier turns" and pulling them in (the wheel,
+  keys, the reader's place kept), an earlier turn's replies and its earlier messages shown and folded, the latest
+  reply folded and kept so across views (another actor's pick starting over), the setting picked again, a subagent's
+  report and encrypted thinking, an interrupted turn's call and stopped line, messages joined mid-turn, the actor done,
+  the hello (its stage kept across a redraw) and the first turn drawn in its place; two screenshots more. Vitest:
+  `Turns.test.tsx` (the turn list drawn by the mount, with a host standing in: `testing.tsx`), `Bubble.test.tsx`,
+  `Hosted.test.tsx`, `pull.test.ts`, `Working.test.tsx` (the cases `test_dashboard_esc.py` ran on the old
+  `stoppedLine`, on the words in `core/ui/harness-info.json`, which that test now checks are harness_kit's),
+  `core/format.test.ts`.
 
 **A6. The shell in React.**
 - The arrangement becomes the store's `layout` slice: the list's mode and width, the Editor open and its height, the

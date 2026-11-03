@@ -198,25 +198,12 @@ function renderAgents() {
   document.getElementById("servers").textContent = servers.length
     ? servers.map((s) => `:${s.port} → ${s.upstream}`).join("\n") : "None running.";
 }
-// A user's message in a chat bubble: as the server gives it -- the user's words as their harness's rules read them
-// (harness_kit: a command run with `!` as "! ls", a /name as "/greet Bob", a message sent mid-turn unwrapped) -- a
-// command (its `kind` "user_command") in the terminal's type, as is one typed in this page's box ("!ls"), which Claude
-// Code runs as one. A `!` command's bubble is a bash bubble (bubbleClass): its `!` in bash mode's colour, as Claude Code
-// marks it, and under it, once run, what it printed.
-const isBash = (text) => !!text && /^\s*!/.test(text);
-const bubbleClass = (text) => isBash(text) ? " bash" : !envelope(text) ? "" : envelope(text).from === "update" ? " crew update" : " crew";
-const userWords = (text, kind) => isBash(text)
-  ? el("span", { class: "tx bang" }, el("span", { class: "bash-mark", "aria-hidden": "true", text: "!" }),
-    " ", shellSpan(String(text).trim().replace(/^!\s*/, "")))
-  : envelope(text) ? crewWords(envelope(text))
-  : BW_BLOCK.test(text) ? bwWords(text)
-  : el("span", { class: "tx" + (kind === "user_command" ? " bang" : ""), text: text });
+// A user's message in a chat bubble: src/features/chat/Bubble.tsx (ag_dashboard/DESIGN.md, A5).
 // A message between the actors of a gatherer (coordination.py's `envelope`), typed into the receiver's terminal: its first
 // line who it is from -- the gatherer agent, or another actor (its id, its name as JSON) -- and how to answer, then a
 // blank line, then the message (or, as the list has it, its lines made one). Or the news of a watch the actor asked for
 // (coordination.py's `update`, UPDATE): which actor is done, and how, then what it was asked and said. null: neither.
-// A message is drawn with its sender's avatar and name -- the gatherer agent's, the manager -- folded to its first lines
-// (crewFold); news, as a quiet line with the avatar of the actor it is about.
+// Chat draws a message with its sender's avatar and name (src/features/chat/Bubble.tsx); the list, as a line (crewLine).
 const ENVELOPE = /^Message from (the gatherer agent|actor ([\w-]+)(?:, ("(?:[^"\\]|\\.)*"))?)(?: \(answer it with: [^\n]*?\))?:\s+([\s\S]*)$/;
 const UPDATE = /^Update \(you asked with `ag actors when`, watch (\d+)\): actor ([\w-]+)(?: \(("(?:[^"\\]|\\.)*")\))? is done: ([^\n]*?)\.(?:\s+([\s\S]*))?$/;
 function envelope(text) {
@@ -227,14 +214,7 @@ function envelope(text) {
   m = ENVELOPE.exec(s);
   return m && { from: m[1] === "the gatherer agent" ? "coordinator" : "actor", id: m[2] || null, name: named(m[3]), text: m[4] };
 }
-const COORDINATOR_NAME = "Gatherer agent";
 const MANAGER = "roles/manager";             // the gatherer agent's picture (avatars.py's ROLES), before it has one
-// The actor of the gatherer shown that an envelope names: the gatherer agent, or the one whose id starts with `id`.
-function crewActor(coordinator, id) {
-  const g = state.home && state.selected && state.home.gatherers.find((x) => x.name === state.selected[0]);
-  return !g ? null : coordinator ? g.agents.find(isCoordinator) || null
-    : g.agents.find((a) => id && (a.channel.startsWith(id) || (a.session && (a.session.started_as || "").startsWith(id)))) || null;
-}
 // An actor's avatar, small, as the list draws it (actorLogo) less its harness's mark: `fallback`, the picture with none.
 function crewFace(a, fallback = null) {
   const name = (a && a.avatar) || fallback;
@@ -246,79 +226,9 @@ function crewFace(a, fallback = null) {
 // An actor's id as a label shows it: its first characters. Messages name ids whole (coordination.py's `_view`), for
 // the actors to answer by; the page finds the actor by the whole id.
 const crewId = (id) => String(id || "").slice(0, 8);
-const crewName = (coordinator, a, env) => coordinator ? COORDINATOR_NAME : (a && a.name && a.name.text) || (env && env.name)
-  || `Actor ${env ? crewId(env.id) : ""}`;
 // in a line (the list's): who it is from, and its words
 const crewLine = (env) => env.from === "update" ? `${env.name || `Actor ${crewId(env.id)}`} is done: ${env.how}`
   : `${env.from === "coordinator" ? "From the gatherer agent" : `From ${env.name || `actor ${crewId(env.id)}`}`}: ${env.text}`;
-function crewWords(env) {
-  const coordinator = env.from === "coordinator", a = crewActor(coordinator, env.id);
-  if (env.from === "update")
-    return el("span", { class: "tx crew" }, crewFace(a), el("span", { class: "crew-body" },
-      el("span", { class: "crew-from" }, `${crewName(false, a, env)} is done`, el("span", { class: "crew-how", text: ` · ${env.how}` })),
-      env.text ? crewText(env.text) : null));
-  return el("span", { class: "tx crew" }, crewFace(a, coordinator ? MANAGER : null), el("span", { class: "crew-body" },
-    el("span", { class: "crew-from", text: crewName(coordinator, a, env) }), crewText(env.text)));
-}
-// A message between actors, long as they mostly are, folded to its first three lines (.crew-fold; news, two) with a toggle under it to
-// show the rest: opened, kept so (crewOpen) by the actor shown and the message's words -- across redraws, and once ag
-// stores a message sent from its pending bubble. Whether its words run past those lines is measured where it is drawn,
-// and again when its width changes (crewSizes): the toggle is there (.long) only then, and kept by the message
-// (crewLong) so that a redraw builds the same node.
-const crewOpen = new Set(), crewLong = new Map();
-const crewKey = (text) => `${state.selected ? key(...state.selected) : ""}\u0000${String(text).length}\u0000${String(text).slice(0, 200)}`;
-function crewText(text) {
-  const n = el("span", { class: "crew-text", text });
-  n.crewKey = crewKey(text);
-  return n;
-}
-const crewFold = (k) => " crew-fold" + (crewLong.get(k) || crewOpen.has(k) ? " long" : "") + (crewOpen.has(k) ? " open" : "");
-function crewMore(k) {
-  const open = crewOpen.has(k);
-  return el("button", { type: "button", class: "crew-more", "aria-expanded": open ? "true" : "false",
-    title: open ? "Fold the message to its first lines" : "Show the whole message",
-    onclick: (ev) => {
-      if (crewOpen.has(k)) crewOpen.delete(k); else crewOpen.add(k);
-      ev.currentTarget.closest(".crew-fold").classList.toggle("open", crewOpen.has(k));
-      ev.currentTarget.replaceWith(crewMore(k));
-    } }, open ? "Show less" : "Show all");
-}
-// A message between actors, or a watch's news, in a bubble (`bubble`, of a turn's message `text`): in a band, with its
-// toggle under the bubble, which a button (a turn's, picking it) cannot hold. Any other message: the bubble as it is.
-function crewBand(text, bubble) {
-  const env = envelope(text);
-  if (!env || !env.text) return bubble;
-  const k = crewKey(env.text), joined = bubble.classList.contains("joined");
-  bubble.classList.remove("joined");
-  return el("div", { class: "fl-crew" + (env.from === "update" ? " update" : "") + (joined ? " joined" : "") + crewFold(k) },
-    bubble, crewMore(k));
-}
-const crewSizes = typeof ResizeObserver === "undefined" ? null : new ResizeObserver((seen) => {
-  for (const { target: t } of seen) {
-    const box = t.isConnected && t.closest(".crew-fold");
-    if (!box) { crewSizes.unobserve(t); continue; }
-    if (box.classList.contains("open")) continue;
-    const long = t.scrollHeight > t.clientHeight + 1;
-    if (crewLong.size > 500) crewLong.clear();
-    crewLong.set(t.crewKey, long);
-    box.classList.toggle("long", long);
-  }
-});
-const crewWatched = new WeakSet();
-function watchCrew() {   // the messages drawn since: measured from now on
-  if (crewSizes) for (const t of document.querySelectorAll(".crew-fold .crew-text"))
-    if (!crewWatched.has(t)) { crewWatched.add(t); crewSizes.observe(t); }
-}
-// A message the actor sent another (files.py's `sent`: `ag actors send`, or a new actor started with it), in its turn:
-// with its receiver's avatar and name.
-function sentBubble(m) {
-  const coordinator = m.to_name === COORDINATOR_NAME, to = crewActor(coordinator, String(m.to || ""));
-  const who = coordinator ? "the gatherer agent" : (to && to.name && to.name.text) || m.to_name || `actor ${crewId(m.to)}`;
-  const k = crewKey(m.text);
-  return el("div", { class: "fl-sent crew" + crewFold(k), title: m.kind === "new" ? "A new actor, started with this message" : "Sent with `ag actors send`" },
-    crewFace(to, coordinator ? MANAGER : null), el("span", { class: "crew-body" },
-      el("span", { class: "crew-from", text: m.kind === "new" ? `Started ${who}` : `To ${who}` }), crewText(m.text), crewMore(k)));
-}
 const isCoordinator = (a) => !!a && a.role === "coordinator";
 function agentRow(g, a, group) {
   const [cls, label] = statusOf(a);

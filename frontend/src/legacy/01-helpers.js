@@ -185,12 +185,7 @@ function greeting(a) {
     + `<path class="swish" d="M-12 -15q-2.2 3.4 -.6 7"/><path class="swish s2" d="M11.5 -15q2.2 3.4 .6 7"/></g></svg>`;
   return box;
 }
-// What the actor says before its first message, under it waving: its line (avatar_hello: one of its avatar's in
-// avatars/hello.toml, the same for it always -- avatars.py's), a haiku's lines each on its own.
-function helloLine(text) {
-  const parts = String(text).split("\n");
-  return el("div", { class: "fl-say" + (parts.length > 1 ? " verse" : "") }, ...parts.flatMap((part, k) => k ? [el("br"), part] : [part]));
-}
+// What the actor says before its first message, under it waving: src/features/chat/Hello.tsx.
 // The actor at work, small: its avatar's character out of its circle, moving as it does (its avatar_motion: a move, then an
 // effect round it, if any -- the .buddy CSS), on the page's clock so a redraw does not start it over; `still`, its calls
 // failing: not moving.
