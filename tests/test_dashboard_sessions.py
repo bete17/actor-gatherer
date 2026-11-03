@@ -269,6 +269,37 @@ class TerminalTest(SessionsBase):
         self.s.terminal(sid, cols, rows)
         self.until(lambda: "fake terminal" in self.screen(sid))
 
+    def test_nothing_reaches_its_number_once_it_is_gone(self):
+        """Once the terminal has ended, a late write -- a paste's Enter, typed a moment after the paste -- or a resize
+        reaches nothing: its fd's number is free then, and whatever is opened next takes it (here a pipe's end, put
+        there), a page's connection or a gatherer's database as likely."""
+        sid = self.s.create("g", self.work)["session_id"]
+        self.started(sid)
+        t = self.s.terms[sid]
+        self.s._hang_up(t)
+        self.until(lambda: t.exited is not None)
+        r, w = os.pipe()
+        if t.fd in (r, w):                                   # the pipe took its number itself: its ends moved
+            r2, w2 = os.dup(r), os.dup(w)
+            os.close(r)
+            os.close(w)
+            r, w = r2, w2
+        try:
+            os.dup2(w, t.fd)                                 # its number taken again, by the pipe's write end
+            self.s._write_quietly(t, b"\r")
+            with self.assertRaises(sessions.SessionError):
+                self.s._write(t, b"x")
+            try:
+                self.s.resize(sid, 80, 24)
+            except sessions.SessionError:
+                pass
+            os.set_blocking(r, False)
+            with self.assertRaises(BlockingIOError):         # nothing written to it
+                os.read(r, 10)
+        finally:
+            for fd in (t.fd, r, w):
+                os.close(fd)
+
     def test_a_terminal_runs_the_interactive_ui_through_ag_in_a_pseudo_terminal(self):
         sid = self.s.create("g", self.work)["session_id"]
         self.started(sid, 100, 30)

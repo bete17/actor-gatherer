@@ -94,6 +94,7 @@ as a session's terminal is -- by its id, "shell:" and 12 hex digits, which no ch
 
 ag is run as a command (AG_COMMAND, else `ag` on the PATH), never imported."""
 
+import errno
 import json
 import os
 import re
@@ -107,7 +108,7 @@ import threading
 import time
 import uuid
 from datetime import datetime, timezone
-from typing import Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import urlsplit
 
 import harness_kit
@@ -618,6 +619,17 @@ class _Term:
         self.redrawing = False          # `redraw` at it
         self.screen = Screen(cols, rows) if cols and rows else None   # its screen as what it printed draws it (`_box`):
         self.screen_lock = threading.Lock()                           # a harness's terminal's, fed by its reader
+        self.fd_lock = threading.Lock()  # its fd used (`use_fd`) or closed by one at a time
+        self.closed = False              # its fd closed, by its reader once its process has ended
+
+    def use_fd(self, act: Callable[[int], Any]) -> Any:
+        """act(fd): what it returns -- while the terminal is open. Once its reader has closed it, an OSError, and act not
+        called: the number is free then, and the next file or socket opened takes it, which a late write (a paste's
+        Enter, typed a moment after) or a resize would reach instead. Under `fd_lock`, which the reader closes it under."""
+        with self.fd_lock:
+            if self.closed:
+                raise OSError(errno.EBADF, "the terminal is gone")
+            return act(self.fd)
 
 
 class Sessions:
@@ -1342,10 +1354,12 @@ class Sessions:
             code = os.waitstatus_to_exitcode(status)
         except ChildProcessError:
             code = -1
-        try:
-            os.close(t.fd)
-        except OSError:
-            pass
+        with t.fd_lock:                              # nothing uses its number after (`use_fd`)
+            t.closed = True
+            try:
+                os.close(t.fd)
+            except OSError:
+                pass
         with t.changed:
             t.exited = code
             t.changed.notify_all()
@@ -1398,16 +1412,16 @@ class Sessions:
     def _redraw(self, t: _Term) -> None:
         try:
             with t.sizing:
-                rows, cols = struct.unpack("HHHH", fcntl.ioctl(t.fd, termios.TIOCGWINSZ, b"\0" * 8))[:2]
+                rows, cols = struct.unpack("HHHH", t.use_fd(lambda fd: fcntl.ioctl(fd, termios.TIOCGWINSZ, b"\0" * 8)))[:2]
                 short = struct.pack("HHHH", rows - 1 if rows > 5 else rows + 1, cols, 0, 0)
                 drawn = t.drawn
-                fcntl.ioctl(t.fd, termios.TIOCSWINSZ, short)
+                t.use_fd(lambda fd: fcntl.ioctl(fd, termios.TIOCSWINSZ, short))
                 self._sized(t, cols, rows - 1 if rows > 5 else rows + 1)
             with t.changed:
                 t.changed.wait_for(lambda: t.drawn > drawn or t.exited is not None, REDRAW_WAIT)
             with t.sizing:                           # unless the page has sized it meanwhile
-                if fcntl.ioctl(t.fd, termios.TIOCGWINSZ, b"\0" * 8) == short:
-                    fcntl.ioctl(t.fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+                if t.use_fd(lambda fd: fcntl.ioctl(fd, termios.TIOCGWINSZ, b"\0" * 8)) == short:
+                    t.use_fd(lambda fd: fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0)))
                     self._sized(t, cols, rows)
         except OSError:                              # its terminal gone meanwhile
             pass
@@ -1528,7 +1542,7 @@ class Sessions:
         cols, rows = max(20, min(int(cols), 500)), max(5, min(int(rows), 200))
         try:
             with t.sizing:
-                fcntl.ioctl(t.fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+                t.use_fd(lambda fd: fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0)))
                 self._sized(t, cols, rows)
         except OSError:
             pass
@@ -1584,7 +1598,7 @@ class Sessions:
     def _write(self, t: _Term, data: bytes) -> None:
         try:
             while data:
-                data = data[os.write(t.fd, data):]
+                data = data[t.use_fd(lambda fd: os.write(fd, data)):]
         except OSError as exc:
             raise SessionError(f"the terminal is gone: {exc}") from exc
 
