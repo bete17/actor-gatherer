@@ -13,13 +13,13 @@ from fastapi.exceptions import RequestValidationError
 from starlette.datastructures import Headers
 from starlette.exceptions import HTTPException
 
-from . import server
-from .api import (agent, branches, browser, common, docwriter, editor, files, history, home, monitor, page, preview,
-                  sessions, settings, stream, terminal)
+from . import apps, server
+from .api import (agent, branches, common, editor, files, history, home, monitor, page, preview, sessions, settings,
+                  stream, terminal)
 
 ROUTERS = (page.router, home.router, stream.router, agent.router, files.router, history.router, sessions.router,
            terminal.router, editor.router, preview.router, branches.router, monitor.router, settings.router,
-           browser.router, docwriter.router)
+           *(a.router() for a in apps.APPS))          # each app's own (apps.py)
 WRITES = ("POST", "PUT", "PATCH", "DELETE")
 
 
@@ -93,9 +93,10 @@ def own_page(headers: Headers, host_named: bool, json_only: bool = True) -> bool
 class OwnPage:
     """Every request's query read as the page's (`first_values`), its path's leading slashes made one, as http.server's
     handler did; and a write (POST, PUT, PATCH, DELETE) taken from the dashboard's own page only (`own_page`), its body
-    no larger than MAX_BODY (DOCWRITER_BODY a DocWriter's): else 403 -- or, a body too large from the page to /api, 400
-    -- its connection not used again. PUT, PATCH and DELETE are a DocWriter's only (/docwriter/w/...), JSON or not. A
-    method other than these and GET: 501, as http.server's handler answered it -- so no preflight is ever answered."""
+    no larger than MAX_BODY (an app's page's, under /<name>/w/: its own `max_body`, apps.py): else 403 -- or, a body
+    too large from the page to /api, 400 -- its connection not used again. PUT, PATCH and DELETE only to an app's page
+    that takes them (its `page_writes`), JSON or not. A method other than these and GET: 501, as http.server's handler
+    answered it -- so no preflight is ever answered."""
 
     def __init__(self, app):
         self.app = app
@@ -115,8 +116,8 @@ class OwnPage:
             return await common.send(501, f"Unsupported method ({method!r})".encode(), "text/plain")(scope, receive, send)
         headers = Headers(scope=scope)
         host_named = common.named_here(headers.get("host"), scope["app"].state.server if "app" in scope else None)
-        apps = path.startswith(("/docwriter/w/", "/browser/w/"))
-        limit = server.DOCWRITER_BODY if path.startswith("/docwriter/w/") else server.MAX_BODY
+        mine = apps.under(path)                     # an app's page's: its own limit and methods
+        limit = mine.max_body if mine is not None and mine.max_body else server.MAX_BODY
         try:
             length = int(headers.get("content-length") or 0)
         except ValueError:
@@ -124,11 +125,12 @@ class OwnPage:
         large = not 0 <= length <= limit
         refused = common.failure(403, common.REFUSED)
         if method != "POST":
-            ok = path.startswith("/docwriter/w/") and own_page(headers, host_named, json_only=False)
+            ok = mine is not None and method in mine.page_writes and own_page(headers, host_named, json_only=False)
         else:
             ok = own_page(headers, host_named)
         if large:                                    # its body left unread: the connection is not used again
-            answer = refused if apps or not ok or method != "POST" else common.failure(400, "a JSON object, please")
+            answer = refused if mine is not None or not ok or method != "POST" else \
+                common.failure(400, "a JSON object, please")
             answer.headers["connection"] = "close"
             return await answer(scope, receive, send)
         if not ok:

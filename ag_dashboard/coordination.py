@@ -10,14 +10,14 @@ reach them: `ag actors` (ag/cli/actors.py), run in its shell, asks this dashboar
               its terminal as a message of its conversation, as Chat sends one (sessions.py's `send`: its terminal opened
               for it, if it has none open), in an envelope saying who it is from and how to answer (`envelope`)
     new       a new actor in the gatherer, started with a message: in a directory, on a harness and model, as given, else
-              as the actor it is `like` has them, else as the asker's -- or a DocWriter's actor (`docwriter`): a new
-              DocWriter on the directory (docwriter.py's `create`), its actor writing with the user there, its edits
-              proposals the user accepts or rejects in its DocWriter view -- or an actor on a branch of its own
-              (`branch`): a new worktree of the repository the directory is in (branches.py's `create`, as the page's
-              branch button makes one; the repository made one of the gatherer's projects if it is not yet), what the
-              actor changes there merged into the repository's checkout by the dashboard (`approve`: each change
-              waiting for the user in the Editor) -- or a Browser's actor (`browser`): a new Browser (browser.py's
-              `create`), a Chrome tab in the dashboard the actor and the user use together
+              as the actor it is `like` has them, else as the asker's -- or an app's actor (`--<name>`, apps.py): a
+              new one of the app on the directory (its `create`), its actor named as asked -- a DocWriter's
+              (`docwriter`), writing with the user there, its edits proposals the user accepts or rejects in its
+              DocWriter view; a Browser's (`browser`), a Chrome tab in the dashboard the actor and the user use
+              together -- or an actor on a branch of its own (`branch`): a new worktree of the repository the
+              directory is in (branches.py's `create`, as the page's branch button makes one; the repository made one
+              of the gatherer's projects if it is not yet), what the actor changes there merged into the repository's
+              checkout by the dashboard (`approve`: each change waiting for the user in the Editor)
     when      the asker told, by an update in its conversation, once an actor's turn is over (WATCHES)
     watches   what the asker asked to be told and has not been yet; `unwatch`, one of them dropped
 
@@ -72,11 +72,12 @@ import sqlite3
 import threading
 import time
 import uuid
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import harness_kit
 
-from . import actions, branches, browser as bw, data, docwriter as dw, editor, files, naming, sessions
+from . import actions, branches, data, editor, files, naming, sessions
+from .apps import APPS, App
 
 COORDINATOR = sessions.COORDINATOR
 ALIASES = ("gatherer", "gatherer-agent", "coordinator")   # what `send`, `show` and `when` take for the gatherer agent
@@ -183,16 +184,17 @@ def instructions(gatherer: str) -> str:
 
 class Coordination:
     """What actors ask the dashboard (module doc), and the watches: `started`, the dashboard's sessions, which run the
-    actors; `ring(gatherer)`, told when a gatherer's actors changed; `docwriters`, its DocWriters (docwriter.py), which
-    a new actor may be one of; `branched`, its actors' branches (branches.py), which a new actor may be on.
+    actors; `ring(gatherer)`, told when a gatherer's actors changed; `branched`, its actors' branches (branches.py),
+    which a new actor may be on; `apps`, the running part of each app (apps.py) by its name -- server.py's `apps` --
+    a new one of which a new actor may be the actor of.
     Thread-safe: the server's handlers share one, and its watches are looked at on a thread of its own, until
     `close`."""
 
     def __init__(self, started: "sessions.Sessions", ring: Optional[Callable[[Optional[str]], None]] = None,
-                 watch: bool = True, docwriters: Optional["dw.DocWriters"] = None,
-                 branched: Optional["branches.Branches"] = None, browsers: Optional["bw.Browsers"] = None):
-        self.started, self.ring, self.docwriters, self.branched = started, ring, docwriters, branched
-        self.browsers = browsers
+                 watch: bool = True, branched: Optional["branches.Branches"] = None,
+                 apps: Optional[Dict[str, Any]] = None):
+        self.started, self.ring, self.branched = started, ring, branched
+        self.apps: Dict[str, Any] = dict(apps or {})
         self.lock = threading.RLock()
         self.stop = threading.Event()
         self.marked: set = set()                 # the gatherer agents' channels marked private by this dashboard
@@ -291,8 +293,7 @@ class Coordination:
                 "asked": _clip(_unwrapped(a.get("last_user_message")), ASKED_CHARS),
                 "recap": _clip((a.get("recap") or {}).get("text"), ASKED_CHARS),
                 "last": a.get("last"), "you": bool(me) and a["channel"] == me["channel"],
-                "gatherer_agent": self._is_coordinator(a), "docwriter": _docwriter_of(s) is not None,
-                "browser": bw.key_of(s) is not None}
+                "gatherer_agent": self._is_coordinator(a), **{x.name: x.key_of(s) is not None for x in APPS}}
 
     # ---- what an actor asks
 
@@ -337,13 +338,21 @@ class Coordination:
 
     def new(self, actor: str, text: str, cwd: Optional[str] = None, harness: Optional[str] = None,
             model: Optional[str] = None, like: Optional[str] = None, name: Optional[str] = None,
-            docwriter: bool = False, branch: bool = False, approve: bool = False, browser: bool = False) -> dict:
+            branch: bool = False, approve: bool = False, **app: bool) -> dict:
+        """A new actor (module doc). `app`, {<name>: True}: the actor of a new one of that app (apps.py), as
+        `ag actors new --<name>` asks."""
+        unknown = sorted(set(app) - {x.name for x in APPS})
+        if unknown:
+            raise TypeError(f"new() got an unexpected keyword argument {unknown[0]!r}")
         g, me, agents = self._asker(actor)
         text = _message(text)
-        if docwriter and branch:
-            raise CoordinationError("a DocWriter writes in its folder, not on a branch: --docwriter or --branch, not both")
-        if browser and (docwriter or branch):
-            raise CoordinationError("a Browser's actor is neither a DocWriter nor on a branch: --browser alone")
+        chosen = [x for x in APPS if app.get(x.name)]
+        if chosen and branch:
+            raise CoordinationError(f"a {chosen[0].label}'s actor works in its folder, not on a branch: "
+                                    f"--{chosen[0].name} or --branch, not both")
+        if len(chosen) > 1:
+            raise CoordinationError("an actor is one app's at most: "
+                                    + " or ".join(f"--{x.name} alone" for x in chosen))
         if approve and not branch:
             raise CoordinationError("--approve is for an actor on a branch of its own (--branch): each change it makes "
                                     "there waits for the user in the Editor")
@@ -359,10 +368,8 @@ class Coordination:
         name = naming.clean(name)
         made = on = None
         mode = bs.get("permission_mode") or "auto"
-        if docwriter:
-            row, made = self._new_docwriter(g, cwd or "", harness, model, name)
-        elif browser:
-            row, made = self._new_browser(g, cwd or "", harness, model, name)
+        if chosen:
+            row, made = self._new_of(chosen[0], g, cwd or "", harness, model, name)
         else:
             if branch:
                 row, on = self._new_on_branch(g, cwd or "", harness, model, mode, approve)
@@ -376,7 +383,7 @@ class Coordination:
         self._keep(g, me["channel"], "new", to, text)
         if self.ring is not None:
             self.ring(g)
-        return {"started": True, "actor": self._view(to, me), **({"browser" if browser else "docwriter": made} if made else {}),
+        return {"started": True, "actor": self._view(to, me), **({chosen[0].name: made} if made else {}),
                 **({"branch": on} if on else {})}
 
     def _new_on_branch(self, gatherer: str, cwd: str, harness: str, model: Optional[str], mode: str,
@@ -400,31 +407,19 @@ class Coordination:
         row = next(r for r in self.started.list() if r["session_id"] == got["session_id"])
         return row, {k: b[k] for k in ("branch", "project", "worktree", "approve")}
 
-    def _new_docwriter(self, gatherer: str, cwd: str, harness: str, model: Optional[str],
-                       name: Optional[str]) -> Tuple[dict, dict]:
-        """A new DocWriter on `cwd` (docwriter.py's `create`), its actor named `name`, else as DocWriter names it, once
-        its first message is sent: (its actor's session, as the dashboard's table has it; {key, root})."""
-        if self.docwriters is None:
-            raise CoordinationError("this dashboard runs no DocWriter")
+    def _new_of(self, app: App, gatherer: str, cwd: str, harness: str, model: Optional[str],
+                name: Optional[str]) -> Tuple[dict, dict]:
+        """A new one of `app` on `cwd` (its running part's `create`), its actor named `name`, else as the app names it
+        ("<label> · <folder>"), once its first message is sent: (its actor's session, as the dashboard's table has
+        it; {key, root})."""
+        running = self.apps.get(app.name)
+        if running is None:
+            raise CoordinationError(f"this dashboard runs no {app.label}")
         try:
-            got = self.docwriters.create(gatherer, cwd, harness, model)
-        except dw.DocWriterError as exc:
-            raise CoordinationError(f"no DocWriter started: {exc}") from None
-        self.docwriters.name_actor(got["key"], name)
-        row = next(r for r in self.started.list() if r["session_id"] == got["channel"])
-        return row, {"key": got["key"], "root": got["root"]}
-
-    def _new_browser(self, gatherer: str, cwd: str, harness: str, model: Optional[str],
-                     name: Optional[str]) -> Tuple[dict, dict]:
-        """A new Browser in `cwd` (browser.py's `create`), its actor named `name`, else "Browser · <folder>", once its
-        first message is sent: (its actor's session, as the dashboard's table has it; {key, root})."""
-        if self.browsers is None:
-            raise CoordinationError("this dashboard runs no Browser")
-        try:
-            got = self.browsers.create(gatherer, cwd, harness, model)
-        except bw.BrowserError as exc:
-            raise CoordinationError(f"no Browser started: {exc}") from None
-        self.browsers.name_actor(got["key"], name)
+            got = running.create(gatherer, cwd, harness, model)
+        except app.error as exc:
+            raise CoordinationError(f"no {app.label} started: {exc}") from None
+        running.name_actor(got["key"], name)
         row = next(r for r in self.started.list() if r["session_id"] == got["channel"])
         return row, {"key": got["key"], "root": got["root"]}
 
@@ -647,16 +642,6 @@ def _due(w: sqlite3.Row) -> Optional[str]:
     """The status a watch's target was over with, when its watcher could not be told then (DUE); else None."""
     outcome = w["outcome"] or ""
     return outcome[len(DUE):].split(":", 1)[0] or None if outcome.startswith(DUE) else None
-
-
-def _docwriter_of(session: dict) -> Optional[str]:
-    """The key of the DocWriter whose actor the session is (its `role`, docwriter.py's `create`), or None."""
-    try:
-        role = json.loads(session.get("role") or "null")
-    except ValueError:
-        return None
-    key = role.get("docwriter") if isinstance(role, dict) else None
-    return key if isinstance(key, str) and key else None
 
 
 def _name(a: Optional[dict]) -> Optional[str]:

@@ -534,7 +534,7 @@ def synctex(checkout: str, body: dict) -> dict:
     points from the page's top left}; else a place in the PDF (`page`, `x`, `y`) to its source {file (in the
     checkout), line}. {ok: false, reason} with no answer: "no-synctex", the build wrote none (no -synctex=1);
     "no-tool", no `synctex` here; "no-match"."""
-    from . import docwriter
+    from .docwriter import synctex as found      # DocWriter's SyncTeX, which the preview shares
     full = inside(checkout, str(body.get("pdf") or ""))
     if full is None or not os.path.isfile(full):
         raise PreviewError(f"no PDF {body.get('pdf')!r} in {checkout}")
@@ -543,7 +543,7 @@ def synctex(checkout: str, body: dict) -> dict:
         return {"ok": False, "reason": "no-synctex"}
     if shutil.which("synctex") is None:
         return {"ok": False, "reason": "no-tool"}
-    return docwriter.synctex(checkout, {**body, "pdf": full})
+    return found(checkout, {**body, "pdf": full})
 
 
 def _texty(body: bytes) -> bool:

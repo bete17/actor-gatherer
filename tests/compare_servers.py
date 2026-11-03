@@ -48,14 +48,28 @@ def old_server_source(rev):
 
 
 def old_server(source):
-    """The old server module, beside the package's own (its relative imports the package's)."""
+    """The old server module, beside the package's own (its relative imports the package's). What it calls of the
+    package that has changed since is given to it as it calls it (`_as_before`)."""
     import ag_dashboard
     mod = types.ModuleType("ag_dashboard.server_before_fastapi")
     mod.__file__ = os.path.join(os.path.dirname(ag_dashboard.__file__), "server.py")   # its static/ and vendor/
     mod.__package__ = "ag_dashboard"
     sys.modules[mod.__name__] = mod
     exec(compile(source, mod.__file__, "exec"), mod.__dict__)   # noqa: S102 - our own file, from git
+    _as_before(mod)
     return mod
+
+
+def _as_before(mod):
+    """The old server's calls of what changed after it: Coordination, given each app's running part as an argument of
+    its own (docwriters=, browsers=), takes them all by the app's name (apps=, apps.py) since the apps went behind one
+    list (DESIGN.md's B3)."""
+    from ag_dashboard import coordination
+
+    class Coordination(coordination.Coordination):
+        def __init__(self, *args, docwriters=None, browsers=None, **kw):
+            super().__init__(*args, apps={"docwriter": docwriters, "browser": browsers}, **kw)
+    mod.coordination = types.SimpleNamespace(**{**vars(coordination), "Coordination": Coordination})
 
 
 def ask(port, method, path, headers=None, body=None):

@@ -30,8 +30,8 @@ from typing import Optional
 
 import harness_kit
 
-from . import (actions, avatars, branches, browser, coordination, data, docwriter, editor, home, live, migrating,
-               page_build, preview, saved, sessions)
+from . import (actions, apps, avatars, branches, coordination, data, editor, home, live, migrating, page_build, preview,
+               saved, sessions)
 
 STATIC, INDEX = page_build.STATIC, page_build.INDEX   # frontend/'s build (vite.config.ts), built by page_build.py
 BUILD = page_build.COMMAND
@@ -46,8 +46,8 @@ LLM_SECONDS = 10.0          # how long the Gatherer's call log is reused before 
 KEEPALIVE = 15.0            # the most a stream stays silent
 COALESCE = 0.03             # after a wake, how long to wait for the rest of a burst (a call stores many events)
 SHARED_SECONDS = 2.0        # a home read for one stream given to another woken by the same change: at most this old
-MAX_BODY = 30_000_000       # the largest request body taken: a message, or an image pasted into one
-DOCWRITER_BODY = 32_000_000  # the largest a DocWriter's: a document's state, a file dropped into its folder
+MAX_BODY = 30_000_000       # the largest request body taken: a message, or an image pasted into one (an app's
+                            # page's writes: its own, apps.py's `max_body`)
 MAX_ALSO = 8                # the most other actors one stream follows (the page shows at most 4 panes)
 THREADS = 1000              # the most requests and stream waits at once, each in a thread, as http.server's had one each
 STOP_SECONDS = 2.0          # how long a stop waits for requests still being answered (its streams end at once)
@@ -156,16 +156,15 @@ class Server:
         self.known = known
         self.sessions = sessions.Sessions(on_change=self.hub.ring)     # a session's state: its gatherer's streams
         self.editors = editor.Editors()                                # the files open in the Editor panel
-        self.listener = self.fallback = self.rest = self.address_file = self.docwriters = self.browsers = self.previews = None   # for server_close, which a failed bind calls
+        self.listener = self.fallback = self.rest = self.address_file = self.previews = None   # for server_close,
+        self.apps = {}                                                                          # which a failed bind calls
         self.socket = self.app = self._uvicorn = self._done = self._failed = None
         self._lock = threading.Lock()
         self._shared, self._sharing = {"version": None, "at": 0.0, "value": None}, threading.Lock()
-        self.docwriters = docwriter.DocWriters(self.sessions)          # the DocWriters' documents, tools and notices
-        self.browsers = browser.Browsers(self.sessions)                # the Browsers' Chrome, tabs and tools
+        self.apps = {a.name: a.start(self.sessions) for a in apps.APPS}   # each app's running part, by its name
         self.branches = branches.Branches(self.editors, self.sessions, self.hub.ring)   # the actors' own branches
         self.crew = coordination.Coordination(self.sessions, self.hub.ring, watch=live_updates,   # actors' `ag actors`
-                                              docwriters=self.docwriters, branched=self.branches,
-                                              browsers=self.browsers)
+                                              branched=self.branches, apps=self.apps)
         self.previews = preview.Runs()                                 # the projects' previews, run
         self.keeps_actions = False
         try:
@@ -177,7 +176,8 @@ class Server:
         except BaseException:
             self.server_close()
             raise
-        docwriter.ORIGIN = browser.ORIGIN = f"http://127.0.0.1:{self.server_port}"   # where their actors reach it
+        for a in apps.APPS:                                            # where their actors reach it
+            a.served_at(f"http://127.0.0.1:{self.server_port}")
         self.keeps_actions = live_updates and not actions.ENABLED     # the reader's actions kept in the gatherers
         actions.ENABLED = actions.ENABLED or live_updates             # (actions.py), while it serves
         self.migrating = migrating.start(self.hub.ring) if live_updates else None   # an older gatherer's tables, once
@@ -212,8 +212,9 @@ class Server:
     def read_home(self) -> dict:
         """The home as the page gets it: with the sessions' state, and what a new session starts from -- the
         harnesses it can run on here (sessions.py's `available`); the shells open, and the user's home directory,
-        which the page shows their directories under as ~. A name held for a session's terminal is typed there once
-        its turn is over (`rename_due`). Its agents as read before (data.py's `Kept`), where kept."""
+        which the page shows their directories under as ~; what each app says of itself (apps.py's `home`: whether
+        one can be made here). A name held for a session's terminal is typed there once its turn is over
+        (`rename_due`). Its agents as read before (data.py's `Kept`), where kept."""
         started = self.sessions
         got = data.home(started.list(), self.known)
         if started.renames:
@@ -223,9 +224,7 @@ class Server:
                 "terminals": sessions.TERMINALS, "harnesses": sessions.available(), "shells": started.shells(),
                 "home_dir": os.path.expanduser("~"), "editor": editor.AVAILABLE,
                 "branches": self.branches.listed() if self.branches is not None else [],
-                "docwriter": docwriter.AVAILABLE and os.path.isfile(os.path.join(docwriter.VENDOR, "index.html")),
-                "browser": self.browsers is not None and browser.available(),
-                "browser_profile": browser.mode() if self.browsers is not None else None}
+                **{k: v for a in apps.APPS for k, v in a.home(self.apps.get(a.name)).items()}}
 
     def dialog(self, sid: str) -> Optional[dict]:
         """What a session's terminal -- the dashboard's -- shows asking the user now, where a message typed into it
@@ -296,8 +295,8 @@ class Server:
     def server_close(self) -> None:
         """Everything stopped: uvicorn (if it still serves), the parts, the socket, the sessions' agents and shells."""
         self._stop()
-        for part in (self.listener, self.fallback, self.rest, self.editors, self.crew, self.branches, self.docwriters,
-                     self.browsers, self.previews):
+        for part in (self.listener, self.fallback, self.rest, self.editors, self.crew, self.branches,
+                     *self.apps.values(), self.previews):
             if part is not None:
                 part.close()
         if self.keeps_actions:

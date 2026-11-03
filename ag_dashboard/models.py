@@ -8,7 +8,9 @@ field not named here is kept (`extra="allow"`): the models say what the page rea
 
 from typing import Any, Dict, List, Optional, Union
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, create_model
+
+from . import apps
 
 Number = Union[int, float]
 
@@ -62,9 +64,9 @@ class Gatherer(Answer):
     created: Optional[Number] = None
 
 
-class Home(Answer):
+class _Home(Answer):
     """The home (/api/home, and the stream's `home`): every gatherer and its actors, what the reader keeps of them, and
-    what a new session starts from."""
+    what a new session starts from; what each app says of itself (`Home`)."""
 
     home: Optional[str] = None
     now: Optional[Number] = None
@@ -85,9 +87,11 @@ class Home(Answer):
     home_dir: Optional[str] = None
     editor: Optional[bool] = None
     branches: Optional[List[Any]] = None
-    docwriter: Optional[bool] = None
-    browser: Optional[bool] = None
-    browser_profile: Optional[str] = None
+
+
+#: The home with each app's own fields (apps.py's `home_fields`: whether one can be made here, ...).
+Home = create_model("Home", __base__=_Home, __doc__=_Home.__doc__, __module__=__name__,
+                    **{k: (Optional[t], None) for k, t in apps.home_fields().items()})
 
 
 class Agent(Answer):

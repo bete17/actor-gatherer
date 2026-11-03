@@ -68,6 +68,7 @@ VENDOR = os.path.join(HERE, "vendor", "docwriter")
 GUARD = os.path.join(HERE, "docwriter_guard.py")
 INSTRUCTIONS = os.path.join(VENDOR, "instructions.md")   # DocWriter's system prompt, as build.mjs takes it out
 ORIGIN = "http://127.0.0.1:4200"   # where the actors reach the dashboard (its MCP server): set by server.py's `serve`
+MCP_NAME = "docwriter-doc"  # its MCP server's name: the tools' names, as the harness shows them, carry it
 KEY = re.compile(r"[0-9a-f]{16}")
 POLL = 0.5                  # seconds between looks at each open file, and each previewed one
 LINGER = 30.0               # seconds a document stays open after its last page goes
@@ -80,6 +81,7 @@ PREVIEW_KEEP = 3600.0       # seconds a previewed file is watched after it was l
 HOOK_TIMEOUT = 300          # seconds a hook's command may run
 HOOK_KEEP = 2000            # the last characters of a hook's output kept
 MAX_TEXT = 5_000_000        # the largest file read as text
+MAX_BODY = 32_000_000       # the largest body its page writes: a document's state, a file dropped into its folder
 SKIPPED = frozenset({".git", "node_modules", ".svelte-kit", "build", ".DS_Store", "__pycache__", ".venv"})
 SOURCES = frozenset({"md", "markdown", "txt", "json", "yaml", "yml", "tex", "ltx", "sty", "cls", "bib"})
 BINARY = frozenset({"pdf", "png", "jpg", "jpeg", "gif", "webp", "svg", "ico", "bmp", "tif", "tiff", "zip", "gz", "tar",
@@ -612,21 +614,32 @@ def instructions(root: str) -> str:
             f"request.\n\n{prompt}").strip()
 
 
+def available() -> bool:
+    """Whether a DocWriter can be made here: pycrdt, and its page built (vendor/docwriter/)."""
+    return AVAILABLE and os.path.isfile(os.path.join(VENDOR, "index.html"))
+
+
+def key_of(s: dict) -> Optional[str]:
+    """The key of the DocWriter whose actor the session is (its `role`, {"docwriter": key}), or None."""
+    try:
+        role = json.loads(s.get("role") or "null")
+    except ValueError:
+        return None
+    key = role.get("docwriter") if isinstance(role, dict) else None
+    return key if isinstance(key, str) and KEY.fullmatch(key) else None
+
+
 def launch_args(s: dict) -> List[str]:
     """What a DocWriter actor's harness is started with besides its own options (sessions.py), as its harness takes them
     (harness_kit's): DocWriter's document tools (the MCP server here: `mcp_args`), its instructions
     (`instruction_args`), and a guard refusing the harness's own edit tools on an open document (`edit_guard_args`,
     where it runs one: Claude Code's hook). [] for any other session."""
-    try:
-        role = json.loads(s.get("role") or "null")
-    except ValueError:
-        role = None
-    key = role.get("docwriter") if isinstance(role, dict) else None
-    if not key or not KEY.fullmatch(str(key)):
+    key = key_of(s)
+    if key is None:
         return []
     base = f"{ORIGIN}/docwriter/w/{key}"
     h = harness_kit.get(s.get("harness") or harness_kit.DEFAULT)
-    tools = h.mcp_args(mcp.NAME, f"{base}/mcp") if h is not None else None
+    tools = h.mcp_args(MCP_NAME, f"{base}/mcp") if h is not None else None
     if tools is None:
         return []                                    # a harness given no MCP server's tools here: none to write with
     guard = f"{shlex.quote(sys.executable)} {shlex.quote(GUARD)} {shlex.quote(base + '/guard')} {shlex.quote(h.name)}"
@@ -769,7 +782,7 @@ class DocWriters:
         if tab not in self._tabs(key)["order"]:
             return None
         return (f"{tab} is open in DocWriter, where the author reviews each change: propose this one with "
-                f"mcp__{mcp.NAME}__edit_doc (or write_doc for the whole file) instead. The file changes when the "
+                f"mcp__{MCP_NAME}__edit_doc (or write_doc for the whole file) instead. The file changes when the "
                 f"author accepts it.")
 
     # -- the page's streams and what it keeps

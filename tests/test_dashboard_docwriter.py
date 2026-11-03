@@ -45,7 +45,8 @@ class McpTest(unittest.TestCase):
     TOOLS = [{"name": "edit_doc", "description": "d", "inputSchema": {"type": "object"}}]
 
     def call(self, message, call=None):
-        return mcp.handle(json.dumps(message).encode(), self.TOOLS, call or (lambda n, a: mcp.result(f"{n} {a}")))
+        return mcp.handle(json.dumps(message).encode(), self.TOOLS, call or (lambda n, a: mcp.result(f"{n} {a}")),
+                          docwriter.MCP_NAME)
 
     def test_initialize_lists_and_calls(self):
         status, got = self.call({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-03-26"}})

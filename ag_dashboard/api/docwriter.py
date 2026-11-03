@@ -34,9 +34,11 @@ router = APIRouter(route_class=DocWriterErrors)
 
 
 def _writers(srv) -> "docwriter.DocWriters":
-    if srv.docwriters is None:
+    """The dashboard's DocWriters (server.py's `apps`), else not found."""
+    dws = srv.apps.get("docwriter")
+    if dws is None:
         raise Answered(not_found())
-    return srv.docwriters
+    return dws
 
 
 async def _raw(request: Request) -> bytes:
@@ -121,7 +123,8 @@ def built(srv: Parts, key: Key, rest: str) -> Response:
 def mcp_server(srv: Parts, key: Key, raw: Raw) -> Response:
     """The MCP server its actor calls (mcp.py): its tools, run by the DocWriter's page."""
     dws = _writers(srv)
-    status, value = mcp.handle(raw, dws.tools.tools(), lambda name, args: dws.tools.call(key, name, args))
+    status, value = mcp.handle(raw, dws.tools.tools(), lambda name, args: dws.tools.call(key, name, args),
+                               docwriter.MCP_NAME)
     return answer(value, status) if value is not None else send(202, b"", "text/plain")
 
 
@@ -224,11 +227,11 @@ def other(srv: Parts, key: Key, rest: str, body: Json) -> Response:
 def create(srv: Parts, body: Body) -> Response:
     """{gatherer, cwd, harness?, model?}: a new DocWriter on `cwd`, its actor a new session of `harness` in the
     gatherer (docwriter.py's `create`) -> its settings: {key, ...}."""
-    if srv.docwriters is None:
+    dws = srv.apps.get("docwriter")
+    if dws is None:
         return not_found()
-    return answer(srv.docwriters.create(str(body.get("gatherer") or ""), str(body.get("cwd") or ""),
-                                        str(body.get("harness") or harness_kit.DEFAULT),
-                                        str(body.get("model") or "") or None))
+    return answer(dws.create(str(body.get("gatherer") or ""), str(body.get("cwd") or ""),
+                             str(body.get("harness") or harness_kit.DEFAULT), str(body.get("model") or "") or None))
 
 
 @router.get("/docwriter-mark.svg")

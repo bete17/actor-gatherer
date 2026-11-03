@@ -16,7 +16,7 @@ from sse_starlette import EventSourceResponse
 from starlette.exceptions import HTTPException
 from starlette.responses import Response
 
-from .. import browser, editor, preview, server, sessions
+from .. import editor, preview, server, sessions
 
 LOCAL = ("127.0.0.1", "localhost", "::1")      # the names of this host a page on it is reached by
 REFUSED = "only the dashboard's own page may do that"
@@ -103,23 +103,19 @@ Decimal = Annotated[float, BeforeValidator(_decimal)]       # digits, with one p
 def _read_error(exc: Exception) -> Response:
     if isinstance(exc, (editor.EditorError, preview.PreviewError)):
         return failure(400, str(exc))
-    if isinstance(exc, browser.BrowserError):
-        return failure(exc.status, str(exc))
     return failure(500, f"{type(exc).__name__}: {exc}")
 
 
 def _write_error(exc: Exception) -> Response:
-    if isinstance(exc, browser.BrowserError):
-        return failure(exc.status, str(exc))
     if isinstance(exc, ValueError):          # a session's, an editor's, a preview's... error; a body not JSON
         return failure(400, str(exc), **({"box": exc.box} if isinstance(exc, sessions.NotAtBox) else {}))
     return failure(500, f"{type(exc).__name__}: {exc}")
 
 
 class Errors(APIRoute):
-    """A route whose errors are answered as the page reads them, JSON {error}: a GET's an editor's or a preview's 400, a
-    Browser's its own status, any other 500; a POST's a Browser's its own status, any other ValueError (a session's, a
-    body not a JSON object...) 400 -- with `box` when its terminal's message box cannot take it now -- any other 500."""
+    """A route whose errors are answered as the page reads them, JSON {error}: a GET's an editor's or a preview's 400,
+    any other 500; a POST's ValueError (a session's, a body not a JSON object...) 400 -- with `box` when its terminal's
+    message box cannot take it now -- any other 500. An app's routes answer its own errors (api/<name>.py)."""
 
     def failed(self, request: Request, exc: Exception) -> Response:
         return _read_error(exc) if request.method == "GET" else _write_error(exc)
