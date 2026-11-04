@@ -265,6 +265,17 @@ describe("Turns", () => {
     expect(host.calls).toContainEqual(["setChatView", "terminal"]);
   });
 
+  it("does not show the latest turn done while a message is on its way to open the next", () => {
+    const { page } = testPage(turns(1), { running: false, status: "idle" });
+    expect(page.draw().querySelector(".fl-done")).not.toBeNull();
+    // sent here, the page not yet told the actor runs: its status still idle
+    const node = page.draw({ mine: [{ text: "And now?", at: NOW * 1000 }] });
+    expect(node.querySelector(".fl-done")).toBeNull();
+    expect(node.querySelector("#fl-turn-0 > .fl-pending")).not.toBeNull();
+    page.draw({ mine: [] });
+    expect(node.querySelector(".fl-done")).not.toBeNull();
+  });
+
   it("stacks what was written mid-turn on the turn's message", () => {
     const t = turn(0, { more: [{ text: "Also this.", kind: "mid_turn" }] });
     const { page } = testPage([t, turn(1)], {
