@@ -32,10 +32,18 @@ const addChanged = (all) => all.reduce((a, x) => !x ? a : !a ? [...x] : [a[0] + 
 // What the disk said of a call, where ag's hook server checked it as it ran (files.py's `checked`)
 const CHECKED = { true: ["checked", "What the call showed of this file matched the file on disk right after it ran"],
   false: ["not as on disk", "What the call showed of this file did not match the file on disk right after it ran"] };
-let filesLoading = Promise.resolve();
+// One load at a time, and at most one more after it, for all that asked while it ran -- not one each: a stream
+// message asks with every change, and while a load is held up (the browser's connections all taken by streams:
+// 03-settings.js's loadedSoon) they would pile up, each to be fetched in turn once it goes through.
+let filesLoading = null, filesAgain = null;
 function loadFiles() {
-  filesLoading = filesLoading.then(loadFilesNow, loadFilesNow);
-  return filesLoading;
+  if (!filesLoading) {
+    const now = loadFilesNow();
+    filesLoading = now.then(() => {}, () => {}).then(() => { filesLoading = null; });   // its caller has its failure
+    return now;
+  }
+  if (!filesAgain) filesAgain = filesLoading.then(() => { filesAgain = null; return loadFiles(); });
+  return filesAgain;
 }
 async function loadFilesNow() {
   if (!state.selected || SNAPSHOT) return;

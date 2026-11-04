@@ -103,6 +103,20 @@ class AgentsTest(HomeBase):
             self.assertEqual(alone[0], whole, stop)
         self.assertEqual(data.actors("none", {"c1"}, []), [])                 # no such gatherer: none
 
+    def test_a_session_taken_up_again_after_long_runs_from_its_message_on(self):
+        """Its process not known, its turn unfinished and its last call long ago: over. A new message stored -- as its
+        call's read began, the read recorded only once ag has checked and built for it -- and it runs, at once."""
+        stale = data.STALE_SECONDS
+        data.STALE_SECONDS = 0.5
+        self.addCleanup(setattr, data, "STALE_SECONDS", stale)
+        self.carried()
+        codex_items.CodexItems(self.m).insert("g", user("go on", 300), channel_id="c1")   # the turn unfinished
+        self.assertEqual(self.status()[:2], (data.RUNNING, False))
+        time.sleep(0.6)
+        self.assertEqual(self.status()[:2], (data.IDLE, False))                # long ago, no process known: over
+        codex_items.CodexItems(self.m).insert("g", user("and now this", 301), channel_id="c1")   # taken up again
+        self.assertEqual(self.status()[:2], (data.RUNNING, False))
+
     def test_the_turn_from_the_pending_answer_and_its_stop_reason(self):
         self.pend([{"type": "agent_message", "payload": {}, "text": "Done."}], "end_turn")
         self.assertEqual(self.status()[:2], (data.IDLE, True))

@@ -67,7 +67,7 @@ function streamTake(name, data, mine = () => true, sel = null) {
       const got = JSON.parse(data);
       if (name === "home") {
         takeHome(got);
-        await loadChat();                            // a session's state: its messages may have moved on too
+        await loadedSoon(loadChat());                // a session's state: its messages may have moved on too
         if (!state.selected && !PANE) {              // the first agent to appear: shown, and watched
           const first = got.gatherers.find((g) => g.agents.length);
           if (first) { state.selected = [first.name, firstAgent(first).channel]; await loadAgent(); render(true); connect(); }
@@ -75,10 +75,29 @@ function streamTake(name, data, mine = () => true, sel = null) {
       } else {
         const [g, c, agent] = name === "actor" ? [got.gatherer, got.channel, got.agent] : [...(sel || []), got];
         if (!isAt(state.selected, g, c)) return;     // for an actor no longer shown
-        await takeAgent(agent); await loadChat();
+        await loadedSoon(Promise.all([takeAgent(agent), loadChat()]));   // takeAgent keeps the agent at once
       }
       render();
     } catch (err) { setLive(`Not updated: ${err.message}`); }
   });
+}
+// What a stream message loads besides what it says -- the conversation (loadChat), the context of the agent's newest
+// call (takeAgent) -- waited on at most LOAD_WAIT_MS before what it says is drawn, then drawn again once it is loaded.
+// A load held up never holds back the actor's status, which the stream brings itself: a browser keeps six
+// connections to a server, and the page's streams (its own, a terminal's, the Editor's, its preview's) may hold
+// them all, so a fetch waits for one to close -- Chat showed a turn done while its terminal, already streaming,
+// worked on, until some stream closed. Messages after it are taken meanwhile, not waiting on loads of their own while
+// one is held up (`held`): theirs would be too. A load finishes in its own time, and what it brought is drawn then.
+const LOAD_WAIT_MS = 400;
+let held = 0;                                        // loads still under way past their wait
+function loadedSoon(work) {
+  let now = "waiting";                               // then "done" in time, or "late"
+  const late = () => { if (now === "waiting") { now = "late"; held++; } };
+  const done = work.then(() => {}, () => {}).then(() => {
+    if (now === "late") { held--; render(); }
+    now = "done";
+  });
+  if (held) { late(); return Promise.resolve(); }
+  return Promise.race([done, new Promise((r) => setTimeout(() => { late(); r(); }, LOAD_WAIT_MS))]);
 }
 

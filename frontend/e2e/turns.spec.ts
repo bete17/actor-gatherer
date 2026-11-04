@@ -200,6 +200,29 @@ test("shows the latest turn over: the actor done under it", async ({ page }) => 
   await expect(talk(page).locator(".fl-turn.on .fl-stopped")).toHaveCount(0);
 });
 
+test("shows the actor at work once the stream says so, while its conversation's load is held up", async ({ page }) => {
+  // the browser's connections all taken by streams: a load the page asks for waits for one to close (here: never);
+  // the stream, open already, says the actor runs -- said once, as a stream open all along would: the page draws
+  // again as a stream opens, so after it, it fails to (a stream that ends is tried again at once)
+  let held = false,
+    said = false;
+  await page.route("**/api/files?*", (route) => (held ? undefined : route.continue()));
+  await page.route("**/api/stream*", async (route) => {
+    if (!held || said) return route.abort(); // until then: the page as it loaded
+    said = true;
+    const home = await (await route.fetch({ url: new URL("/api/home", route.request().url()).href })).json();
+    for (const g of home.gatherers)
+      for (const a of g.agents) Object.assign(a, { status: "running", running: true, turn_over: false });
+    await route.fulfill({ contentType: "text/event-stream", body: `event: home\ndata: ${JSON.stringify(home)}\n\n` });
+  });
+  await openActor(page, CLAUDE);
+  await expect(talk(page).locator(".fl-turn.on .fl-finished .now")).toHaveText("Done");
+  await page.waitForTimeout(300); // the actor's own loads over: their draw is not what shows it at work
+  held = true; // the stream's next try (EventSource tries again by itself) has it
+  await expect(talk(page).locator(".fl-working:not(.fl-finished) .now")).toHaveText("Working…", { timeout: 10_000 });
+  await expect(talk(page).locator(":scope > .fl-done")).toHaveCount(0);
+});
+
 test("draws the actor's first turn once stored, where the actor waved hello", async ({ page }) => {
   // the actor's files with no turn stored yet, until `stored`
   let stored = false;
