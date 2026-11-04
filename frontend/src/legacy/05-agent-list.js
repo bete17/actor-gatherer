@@ -49,7 +49,8 @@ async function keepChoice(name, choice) {
   state.home.hiding = { ...(state.home.hiding || {}) };
   if (choice) state.home.hiding[name] = choice; else delete state.home.hiding[name];
   if (SNAPSHOT) return;                            // a snapshot has no server: this page only
-  try { state.home.hiding = await post("/api/hiding", { gatherer: name, choice }); }
+  const asked = homesTaken;                        // its answer kept unless a home came meanwhile (takeHome)
+  try { const got = await post("/api/hiding", { gatherer: name, choice }); if (!homeSince(asked)) state.home.hiding = got; }
   catch (err) { setLive(`Not saved: ${err.message}`); }
 }
 // The reader's name for a gatherer, kept by the server (titles.py, `home.titles`) and shown in place of its own, which
@@ -63,7 +64,8 @@ function retitle(g) {
   if (nameInput) { nameInput.focus(); nameInput.select(); }
 }
 async function keepTitle(gname, text) {
-  try { state.home.titles = await post("/api/title", { gatherer: gname, title: text }); }
+  const asked = homesTaken;
+  try { const got = await post("/api/title", { gatherer: gname, title: text }); if (!homeSince(asked)) state.home.titles = got; }
   catch (err) { setLive(`Not named: ${err.message}`); }
   renderAgents();
 }
@@ -71,7 +73,7 @@ async function setHidden(g, hide) {
   const kept = keepChoice(g.name, hide ? "hidden" : stale(g) ? "shown" : "");
   renderAgents();
   await kept;
-  renderAgents();
+  redrawList();
 }
 // Actors saved for later, kept by the server (saved.py, `home.saved`: {gatherer: {channel: when}}) so every
 // dashboard on this home shows the same. One saved is listed under Saved in its gatherer once it is closed, not
@@ -90,9 +92,10 @@ async function setSaved(gname, a, save) {
   if (!save) folderGuess(gname, (_, mine) => { for (const n of Object.keys(mine)) mine[n] = mine[n].filter((c) => c !== channel); });
   renderAgents();
   if (SNAPSHOT) return;                            // a snapshot has no server: this page only
-  try { state.home.saved = await post("/api/saved", { gatherer: gname, channel, saved: save }); }
+  const asked = homesTaken;
+  try { const got = await post("/api/saved", { gatherer: gname, channel, saved: save }); if (!homeSince(asked)) state.home.saved = got; }
   catch (err) { setLive(`Not saved: ${err.message}`); }
-  renderAgents();
+  redrawList();
 }
 // The folders of a gatherer's saved actors, kept by the server till deleted, empty or not (saved.py,
 // `home.saved_folders`: {gatherer: {folder: [the channels in it, as saved]}}). A saved actor is in one or in none:
@@ -126,7 +129,7 @@ function toggleFolder(gname, name) {
   renderAgents();
 }
 // the page's own copy changed as the server will change it (`change(saved of the gatherer, its folders)`), so the
-// list shows it at once; the server's answer, or the next home, has the last word
+// list shows it at once; the server's answer, or the next home, has the last word (whichever is newer: takeHome)
 function folderGuess(gname, change) {
   const saved = structuredClone(state.home.saved || {}), folders = structuredClone(state.home.saved_folders || {});
   change(saved[gname] = saved[gname] || {}, folders[gname] = folders[gname] || {});
@@ -137,14 +140,15 @@ async function folderPost(gname, body, change) {
   folderGuess(gname, change);
   renderAgents();
   if (SNAPSHOT) return;                            // a snapshot has no server: this page only
+  const asked = homesTaken;
   try {
     const got = await post("/api/saved/folders", { gatherer: gname, ...body });
-    state.home.saved = got.saved; state.home.saved_folders = got.folders;
+    if (!homeSince(asked)) { state.home.saved = got.saved; state.home.saved_folders = got.folders; }
   } catch (err) {
-    [state.home.saved, state.home.saved_folders] = before;
+    if (!homeSince(asked)) [state.home.saved, state.home.saved_folders] = before;
     setLive(`Not done: ${err.message}`);
   }
-  renderAgents();
+  redrawList();
 }
 // the actor saved, in `folder` (null: in none)
 function fileActor(gname, a, folder) {
@@ -205,6 +209,7 @@ function gathererCounts(g) {
 function renderAgents() {
   if (PANE) return;                                  // a frame has no list: the page around it has
   if (listDrag && !listDrag.force) { listDrag.later = true; return; }   // an actor dragged: once it is over
+  drawn.agents = listSignature();                    // what render() compares a home's with
   renderFolded();
   const aside = document.getElementById("agents");
   const was = listPlaces(aside);

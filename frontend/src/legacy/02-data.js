@@ -106,6 +106,15 @@ async function loadContext(readId) {
 // table, a scrolled list or a tooltip stays as it is.
 const drawn = { agents: null, main: null, who: null };
 const signature = (value) => JSON.stringify(value);
+// What the list draws from: kept as `drawn.agents` by renderAgents whoever calls it -- a home, or the reader's own
+// action, which draws at once -- so a home that only confirms that action draws nothing anew (a row drawn again under
+// the pointer as the reader presses it to drag starts no drag). "ago" texts: every 30 s.
+const listSignature = () => signature([state.home.gatherers, state.home.hook_servers, state.home.hiding, state.home.titles,
+  state.home.saved, state.home.saved_folders, state.home.seen, state.home.harnesses, state.home.shells, state.home.branches,
+  paneSig(), opened(selectedInfo()), Math.floor(Date.now() / AGO_MS)]);
+// The list drawn again only if what it draws from changed since: after an action's answer, which mostly says what the
+// page guessed and drew already -- a list drawn anew for nothing, as a drag begins, loses its row.
+const redrawList = () => { if (listSignature() !== drawn.agents) renderAgents(); };
 async function refresh(userAction = false) {
   const main = document.getElementById("main");
   if (userAction) main.classList.add("stale");     // dimmed only while what the reader asked for loads
@@ -179,12 +188,8 @@ function render(userAction = false) {
     if (!heldDraw) heldDraw = setTimeout(() => { heldDraw = null; render(); }, TYPING_MS - since + 10);
     return;
   }
-  const agents = signature([state.home.gatherers, state.home.hook_servers, state.home.hiding, state.home.titles, state.home.saved, state.home.seen, state.home.harnesses,
-    state.home.shells, state.home.branches, paneSig(),
-    opened(selectedInfo()),
-    Math.floor(Date.now() / AGO_MS)]);
-  // "ago" texts: every 30 s; not while a form in the list is open, which a redraw would empty
-  if ((userAction || agents !== drawn.agents) && !((state.adding || state.renaming) && !userAction)) { renderAgents(); drawn.agents = agents; }
+  // not while a form in the list is open, which a redraw would empty
+  if ((userAction || listSignature() !== drawn.agents) && !((state.adding || state.renaming) && !userAction)) renderAgents();
   const view = mainSignature();
   if (userAction || view !== drawn.main) { const end = chatAtEnd(); keepingPlace(renderMain); drawn.main = view; if (end) chatToEnd(); }
   drawWho();

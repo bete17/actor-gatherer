@@ -1156,13 +1156,23 @@ class ExpectTest(ChromeBase):
         x, y = self.middle(b)
         slow_again = ("(globalThis.__agRuns = (globalThis.__agRuns || 0) + 1) < 2 || "   # the second time: holding `acts`
                       "(() => { const t = Date.now(); while (Date.now() - t < 150) {} return !!document.body; })()")
+        checks, again, check = [], threading.Event(), self.bs._check
+
+        def checking(*args):
+            checks.append(args)
+            if len(checks) == 2:                                            # checked again: `acts` held
+                again.set()
+            return check(*args)
         done = []
-        agent = threading.Thread(target=lambda: done.append(self.call("click", ref=a, expect=[{"js": slow_again}])))
-        agent.start()
-        time.sleep(0.05)                                                    # the user clicks while it checks again
-        self.b.input([{"type": "mouse", "kind": "mousePressed", "x": x, "y": y, "button": "left", "buttons": 1, "clickCount": 1},
-                      {"type": "mouse", "kind": "mouseReleased", "x": x, "y": y, "button": "left", "clickCount": 1}])
-        agent.join(10)
+        # the check's 150 ms well within its limit, on a slow machine too (CI's ran past 200 ms); and the user's click
+        # sent once it is checked again, not after a time it might not be by
+        with mock.patch.object(self.bs, "_check", side_effect=checking), mock.patch.object(browser, "EXPECT_TIME", 5000):
+            agent = threading.Thread(target=lambda: done.append(self.call("click", ref=a, expect=[{"js": slow_again}])))
+            agent.start()
+            self.assertTrue(again.wait(10))                                 # the user clicks while it checks again
+            self.b.input([{"type": "mouse", "kind": "mousePressed", "x": x, "y": y, "button": "left", "buttons": 1, "clickCount": 1},
+                          {"type": "mouse", "kind": "mouseReleased", "x": x, "y": y, "button": "left", "clickCount": 1}])
+            agent.join(10)
         self.assertFalse(done[0].get("isError"), done[0])
         self.assertEqual(self.text("evaluate", expression="order.textContent"), "AB")
 
