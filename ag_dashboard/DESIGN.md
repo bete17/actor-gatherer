@@ -347,6 +347,16 @@ What went another way, and why:
   preview or DocWriter queue, its Browser viewer) is let go -- and its waiting thread woken -- as soon as the page
   disconnects, where the old one noticed at its next write (up to 15 s). A server stopping ends every open stream, so
   uvicorn's wait for connections to close is short.
+- **The page's streams share one WebSocket** (`api/ws.py`, `/api/ws`; the page's `core/api/stream.ts`), added after
+  the move. A browser keeps at most six HTTP/1.1 connections to the dashboard open, for all its tabs together, and an
+  EventSource holds one for as long as it is open: two tabs, or one with a terminal, an Editor and a Preview, held them
+  all, and every other request the page made (a message sent, Chat's turns, a key typed) waited in the browser for one
+  to close. On the socket, each stream is opened by its URL and runs as that GET would -- the same route, its checks,
+  what it holds let go when the page lets it go -- its events passed on as they come; the routes are unchanged and
+  still answer a plain GET. Only the dashboard's own page may open the socket (its Origin is this host's: a page
+  elsewhere may open a WebSocket to any server). `stream(url)` behaves as `new EventSource(url)`, tried again as one
+  is; where the socket never works (a dashboard without wsproto), each stream is an EventSource again. A pane's frame
+  opens a socket of its own. DocWriter's page, built apart (vendor/docwriter), still uses an EventSource.
 - **uvicorn runs in a thread of its own** under `Server.serve_forever()`, on the socket `serve()` bound (so port 0
   works and `server_port` is known at once): the caller's thread keeps Ctrl-C and `__main__.py`'s SIGTERM and SIGHUP
   handlers, and `shutdown()` and `server_close()` work as socketserver's did, so the tests and `__main__` are unchanged.
@@ -441,5 +451,5 @@ Checked on each project's current default branch (2026-11-02). None matches all 
 | [VS Code](https://github.com/microsoft/vscode/tree/main/src/vs/workbench/contrib) | `src/vs/workbench/contrib/<feature>/browser/*.contribution.ts` | Features that register themselves, and import rules between layers checked by lint. Very large. |
 | [ttyd](https://github.com/tsl0922/ttyd/tree/main/html/src) | `html/src/components/terminal/` | A terminal component around xterm.js, and a whole UI built into one inlined HTML file, as our snapshots are. Preact; its server is C. |
 
-None of them streams over server-sent events as ours does; they use WebSockets, socket.io or polling. Only
-`core/api/stream.ts` and the stream routers deal with it.
+None of them streams over server-sent events as ours did; they use WebSockets, socket.io or polling. Ours now go over
+one WebSocket per page (`core/api/stream.ts`, `api/ws.py`), still written as server-sent events by their routes.

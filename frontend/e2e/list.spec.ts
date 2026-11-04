@@ -1,5 +1,5 @@
 // The list of actors (page.html: "the agent list", "the list folded, or over the whole page").
-import { expect, test } from "./test";
+import { expect, streamsAsRequests, test } from "./test";
 import { CLAUDE, CODEX, GATHERER, masks, open } from "./home";
 
 test("lists the gatherer's actors, each by its name alone: hovered, a card says who it is", async ({ page }) => {
@@ -78,6 +78,7 @@ test("the rail starts a new actor in a gatherer: its harness picked beside the r
     for (const h of home.harnesses) home.harness_info[h] = { ...home.harness_info[h], runs: true };
     await route.fulfill({ json: home });
   });
+  await streamsAsRequests(page);
   await page.route("**/api/stream*", (route) => route.abort());
   const asked: { gatherer: string; cwd: string; harness: string }[] = [];
   await page.route("**/api/sessions", async (route) => {
@@ -129,6 +130,7 @@ test("the rail's avatars have the list's bookmark and ×, over their corners: pr
     claude.chattable = true;
     await route.fulfill({ json: home });
   });
+  await streamsAsRequests(page);
   await page.route("**/api/stream*", (route) => route.abort());
   const saved: unknown[] = [],
     stopped: unknown[] = [];
@@ -200,6 +202,7 @@ test("lists a saved actor by its status while open, and under Saved once closed"
     };
     await route.fulfill({ json: home });
   });
+  await streamsAsRequests(page);
   await page.route("**/api/stream*", (route) => route.abort());
   await open(page);
   const claude = page.locator("#agents button.agent", { hasText: CLAUDE });
@@ -362,6 +365,7 @@ test("lists a closed saved actor in its folder, folded till opened", async ({ pa
     home.saved_folders = { [GATHERER]: { Paper: [codex.channel], Empty: [] } };
     await route.fulfill({ json: home });
   });
+  await streamsAsRequests(page);
   await page.route("**/api/stream*", (route) => route.abort());
   await open(page);
   const savedLine = page.locator("#agents .saved-line");

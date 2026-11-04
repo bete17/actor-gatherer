@@ -106,7 +106,7 @@ function bwListen(b) {
   if (b.es || SNAPSHOT) return;
   const q = new URLSearchParams({ page: BW_PAGE, ...(typeof VideoDecoder === "function" ? { video: "1" } : {}),
                                   ...(document.hidden ? { hidden: "1" } : {}) });
-  const es = b.es = new EventSource(`/browser/w/${b.key}/stream?${q}`);
+  const es = b.es = window.agNext.stream(`/browser/w/${b.key}/stream?${q}`);
   es.addEventListener("state", (ev) => {
     const was = bwSignature();
     b.state = JSON.parse(ev.data);

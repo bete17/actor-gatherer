@@ -87,7 +87,7 @@ async function termSend() {
 // What the process prints: everything kept at first (a page that comes back sees the screen), then as it comes.
 function termListen(sid) {
   if (term.es || SNAPSHOT) return;
-  const es = new EventSource(`/api/terminal?session_id=${encodeURIComponent(sid)}`);
+  const es = window.agNext.stream(`/api/terminal?session_id=${encodeURIComponent(sid)}`);
   term.es = es;
   if (term.opened)                                   // one opened elsewhere (a message sent): at the size drawn here
     post("/api/terminal/resize", { session_id: sid, cols: term.xterm.cols, rows: term.xterm.rows }).catch(() => {});

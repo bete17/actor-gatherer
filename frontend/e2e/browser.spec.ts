@@ -1,7 +1,7 @@
 // The Browser view (20-browser.js): what the agent did on the page, said in a line under it (bwFeed) and outlined on it
 // (bwOutline) -- from a Browser's stream, scripted here: the test home has no Browser, nor a Chrome to run one.
 import type { Page } from "@playwright/test";
-import { expect, test } from "./test";
+import { expect, streamsAsRequests, test } from "./test";
 import { CLAUDE, GATHERER, NOW, openActor } from "./home";
 
 const KEY = "0123456789abcdef";
@@ -40,6 +40,7 @@ async function browserActors(page: Page) {
       if (a.harness === "claude") a.session = { ...(a.session || {}), role: JSON.stringify({ browser: KEY }) };
     await route.fulfill({ json: home });
   });
+  await streamsAsRequests(page);
   await page.route("**/api/stream*", (route) => route.abort());
   await page.route(`**/browser/w/${KEY}/resize`, (route) => route.fulfill({ json: {} }));
 }

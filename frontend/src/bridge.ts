@@ -3,6 +3,7 @@
 // (the stream's home) and calls of it (ag's settings; the renderers it draws with, `ui`; Chat's turns, `chat`). The old
 // page hands back `window.agLegacy`: what the new code calls of it. Each side goes once nothing calls it.
 import { useDashboard } from "./core/store";
+import { stream } from "./core/api/stream";
 import type { Home } from "./core/api/types";
 import {
   ansiHtml,
@@ -31,6 +32,8 @@ export interface AgLegacy {
 }
 
 const agNext = Object.freeze({
+  /** A stream of the dashboard's, as `new EventSource(url)`, on the page's one WebSocket (core/api/stream.ts). */
+  stream,
   /** The stream's home, as the old page takes it (04-seen.js's takeHome). */
   home: (home: Home) => useDashboard.getState().setHome(home),
   settings: Object.freeze({

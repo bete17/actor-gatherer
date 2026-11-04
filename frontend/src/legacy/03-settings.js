@@ -33,12 +33,12 @@ function keepingPlace(draw) {
   window.scrollTo(0, pageY);
 }
 // The server's stream for the selected agent: `home` and `agent` at once, then each time one changes
-// (the server is woken by ag's notifications). EventSource reconnects by itself, and a new stream
+// (the server is woken by ag's notifications). It reconnects by itself, as an EventSource does, and a new stream
 // starts with both again, so nothing is missed while it was down. Reopened when the selection
 // changes; closed while paused. A message for an agent no longer selected is dropped.
-// The other panes' actors come on it too (`also`, each an `actor`), handed to their frames: a browser keeps
-// only six connections to a server open, and a stream holds one for as long as it is open. A frame has no
-// stream of its own: the page around it streams for it.
+// It goes on the page's one WebSocket with its other streams (src/core/api/stream.ts), not on one of the six
+// connections a browser keeps open to a server. The other panes' actors come on it too (`also`, each an `actor`),
+// handed to their frames: a frame has no stream of its own, so the server reads the home once for the page.
 function connect() {
   if (PANE) { state.stream = PANE.stream; paneUrl(); PANE.shows(window, state.selected); return; }
   if (state.stream) { state.stream.close(); state.stream = null; }
@@ -46,7 +46,7 @@ function connect() {
   const sel = state.selected, also = panes.others.filter((p) => !isShell(p.c));   // a shell: nothing to stream but its terminal
   const q = [...(sel && !isShell(sel[1]) ? [`gatherer=${encodeURIComponent(sel[0])}`, `channel=${encodeURIComponent(sel[1])}`] : []),
     ...(also.length ? [`also=${encodeURIComponent(JSON.stringify(also.map((p) => [p.g, p.c])))}`] : [])];
-  const es = new EventSource("/api/stream" + (q.length ? "?" + q.join("&") : ""));
+  const es = window.agNext.stream("/api/stream" + (q.length ? "?" + q.join("&") : ""));
   state.stream = es;
   panes.actors.clear();
   const mine = () => state.stream === es;

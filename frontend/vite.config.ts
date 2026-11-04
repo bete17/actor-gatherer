@@ -30,7 +30,7 @@ export default defineConfig({
       // the Host kept as the page's, as the dashboard's own-page check (server.py's own_page) expects
       ["/api", "/avatars", "/vendor", "/views", "/preview", "/browser", "/docwriter"].map((p) => [
         p,
-        { target: dashboard, changeOrigin: false },
+        { target: dashboard, changeOrigin: false, ws: true }, // ws: the page's streams' socket, /api/ws
       ]),
     ),
   },
