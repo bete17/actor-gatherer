@@ -3,19 +3,51 @@ a Yjs document each -- their edits, saves and conflicts with the file on disk.""
 
 import base64
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from starlette.responses import Response
 
-from .. import editor
+from .. import chooser, editor
 from .common import Body, Errors, Events, Parts, answer, event, local_only, queue_events
 
 router = APIRouter(route_class=Errors)
 
 
+LOOPBACK = frozenset({"127.0.0.1", "::1", "localhost"})
+
+
+def _here(request: Request) -> bool:
+    """Whether the page asking is on this machine: the system's dialog opens on this machine's screen."""
+    return bool(request.client) and request.client.host in LOOPBACK
+
+
 @router.get("/api/edit/list", dependencies=[Depends(local_only)])
-def listing(srv: Parts, dir: str = "", root: str = "") -> Response:  # noqa: A002 - the query's name
-    """editor.listing(D, R): the directory D under R, each entry with who edits it."""
-    return answer(srv.editors.listing(dir, root))
+def listing(request: Request, srv: Parts, dir: str = "", root: str = "") -> Response:  # noqa: A002 - the query's name
+    """editor.listing(D, R): the directory D under R, each entry with who edits it; `choose`, what the system's Open
+    dialog is called (chooser.name: "Finder", ...) for a page on this machine that it opens on, else null -- said with
+    an error too (400), so a folder that cannot be listed can still be left through the dialog."""
+    choose = chooser.name() if _here(request) else None
+    try:
+        return answer({**srv.editors.listing(dir, root), "choose": choose})
+    except editor.EditorError as exc:
+        return answer({"error": str(exc), "choose": choose}, 400)
+
+
+@router.get("/api/edit/files", dependencies=[Depends(local_only)])
+def file_list(dir: str = "", root: str = "") -> Response:  # noqa: A002 - the query's name
+    """editor.file_list(D, R): {dir, files (paths from D), more, git}, the files under D (under R) for Go to file."""
+    return answer(editor.file_list(dir, root))
+
+
+@router.post("/api/edit/choose", dependencies=[Depends(local_only)])
+def choose(request: Request, body: Body) -> Response:
+    """{what ("file", "folder"), start}: the system's Open dialog (chooser.choose), opened at the folder S on this
+    machine -- for a page on it only -- answered once it is: {path}, null if it was cancelled. 409: one is open already."""
+    if not _here(request):
+        raise chooser.ChooseError("The dialog would open on the dashboard's machine, not this one")
+    try:
+        return answer({"path": chooser.choose(str(body.get("what") or ""), str(body.get("start") or ""))})
+    except chooser.Busy as exc:
+        return answer({"error": str(exc)}, 409)
 
 
 @router.get("/api/edit/place", dependencies=[Depends(local_only)])
@@ -73,6 +105,13 @@ def settle(srv: Parts, body: Body) -> Response:
     file's in their place ("theirs"), or both -> its state."""
     return answer(srv.editors.settle(str(body.get("path") or ""), str(body.get("root") or ""),
                                      str(body.get("conflict") or ""), str(body.get("take") or "")))
+
+
+@router.post("/api/edit/create", dependencies=[Depends(local_only)])
+def create(body: Body) -> Response:
+    """{path, root, dir}: a new empty file -- or folder (dir true) -- at P under R, the folders above it made too ->
+    {path (links followed), dir}; refused where anything is already."""
+    return answer(editor.create(str(body.get("path") or ""), str(body.get("root") or ""), bool(body.get("dir"))))
 
 
 @router.post("/api/edit/zone/clear")
