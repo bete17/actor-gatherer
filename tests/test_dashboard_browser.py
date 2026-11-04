@@ -29,7 +29,9 @@ HOLDS = [{"js": "document.documentElement !== null"}]
 
 
 def checked(name: str, args: dict) -> dict:
-    """`args`, with HOLDS as their `expect` if the tool needs one and they have none."""
+    """`args`, with HOLDS as their `expect` if the tool needs one and they have none -- and a script, what it does."""
+    if name == "evaluate" and "says" not in args:
+        args = {**args, "says": "reading the page for a test"}
     lists = name == "tabs" and (args.get("action") or "list") == "list"
     return args if name not in browser.ACTS or lists or "expect" in args else {**args, "expect": HOLDS}
 
@@ -1391,13 +1393,25 @@ class ToldTest(ChromeBase):
 
     def test_while_it_acts_what_it_does_is_said(self):
         seen = []
-        slow = threading.Thread(target=lambda: self.call("evaluate", expression="new Promise((r) => setTimeout(r, 600))"))
+        slow = threading.Thread(target=lambda: self.call("evaluate", expression="new Promise((r) => setTimeout(r, 600))",
+                                                         says="reading the result links"))
         slow.start()
         self.until(lambda: (seen.append(self.b.state()["acting"]) or seen[-1]) is not None)
         slow.join()
-        self.assertEqual(seen[-1]["label"], "Running a script")
-        self.assertEqual(self.told()["text"], "Ran a script")
+        self.assertEqual(seen[-1]["label"], "Reading the result links")       # what it is for, in the agent's words
+        self.assertEqual(self.told()["text"], "Ran a script reading the result links")
         self.assertIsNone(self.b.state()["acting"])
+        n = len(self.b.state()["actions"])
+        got = self.bs.call(self.key, "evaluate", {"expression": "1", "expect": HOLDS})   # without: refused, not shown
+        self.assertIn("evaluate needs `says`", got["content"][0]["text"])
+        self.assertEqual(len(self.b.state()["actions"]), n)
+        real = browser.Browsers._t_snapshot
+        with mock.patch.object(browser.Browsers, "_t_snapshot", lambda *a: (time.sleep(0.4), real(*a))[1]):
+            looking = threading.Thread(target=lambda: self.call("snapshot"))
+            looking.start()
+            self.assertTrue(self.until(lambda: self.b.state()["reading"] == "Looking at the page"))   # as it looks
+            looking.join()
+        self.assertEqual(self.b.state()["reading"], "")
 
     def test_a_check_that_failed_says_what_its_row_reads_now_and_what_the_user_did(self):
         delete, row = self.delete_in_row_1(), self.row(1)
@@ -1589,6 +1603,25 @@ class WatchedTest(ChromeBase):
         self.call("click", ref=self.a)
         self.assertLess(time.time() - start, browser.PACE)
         self.assertEqual(self.js("order.textContent"), "AA")
+
+    def test_what_acts_outside_the_page_is_shown_where_it_acts(self):
+        seen = []
+        def coming(name, **args):
+            seen.clear()
+            t = threading.Thread(target=lambda: self.call(name, **args))
+            t.start()
+            self.until(lambda: (seen.append(self.b.state()["next"]) or seen[-1]) is not None)
+            t.join()
+            return seen[-1]
+        page = self.write("other.html", "<title>Other</title><p>hi")
+        nxt = coming("navigate", url=page)
+        self.assertEqual((nxt["tool"], nxt["cue"], nxt["box"]), ("navigate", {"url": f"file://{page}"}, None))
+        self.assertEqual(coming("press", key="Enter")["cue"], {"key": "Enter"})
+        self.assertEqual(coming("scroll", direction="up")["cue"], {"direction": "up"})
+        self.assertEqual(coming("tabs", action="new")["cue"], {"action": "new", "index": None})
+        self.assertEqual(coming("tabs", action="switch", index=1)["cue"], {"action": "switch", "index": 1})
+        nxt = coming("evaluate", expression="document.title", says="reading the title")     # a script: shown coming too
+        self.assertEqual(nxt["label"], "Reading the title")
 
     def test_esc_stops_the_action_shown_coming_and_every_one_after_until_the_user_s_next_message(self):
         t, done = self.in_thread("click", ref=self.a)

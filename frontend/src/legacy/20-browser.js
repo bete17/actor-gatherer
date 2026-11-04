@@ -75,7 +75,9 @@ function bwFor(k) {
   b.chooser = bwShield(el("div", { class: "dialog chooser", hidden: "" }));
   b.dl = bwShield(el("div", { class: "dl", hidden: "" }));
   b.stage = el("div", { class: "bw-stage", tabindex: "0", "aria-label": "The page: click to use it, as the agent does" },
-    b.img, b.cv, b.acting, b.agentPtr, b.dragBox, b.hint, b.tip, b.dl, b.dialog, b.chooser, b.cover);
+    b.img, b.cv, b.acting, b.agentPtr, b.keycap = el("kbd", { class: "keycap", hidden: "", "aria-hidden": "true" }),
+    b.scrollCue = el("div", { class: "scroll-cue", hidden: "", "aria-hidden": "true" }),
+    b.dragBox, b.hint, b.tip, b.dl, b.dialog, b.chooser, b.cover);
   b.feed = bwFeed(b);
   b.host = el("div", { class: "bw" }, b.bar, b.tabs, b.stage, b.feed.root);
   bwInput(b);
@@ -201,6 +203,7 @@ function bwDraw(b) {
     bwPoint(b, a.box);
     if (a.tool === "click" && b.pressed !== a.label + a.box.join()) { b.pressed = a.label + a.box.join(); bwPress(b); }
   } else if (b.outlined === "doing" || b.outlined === "next") bwOutline(b, null);
+  bwCue(b, nx || a);
   if (!nx && !a && !b.agentPtr.hidden && !b.agentIdle) b.agentIdle = setTimeout(() => { b.agentPtr.hidden = true; b.agentIdle = 0; }, 2500);
   bwFeedDraw(b);
   if (b.outlined && b.outlinedAt !== bwSpot(b)) bwOutline(b, null);   // another page, or tab: it is not there
@@ -263,6 +266,23 @@ function bwPress(b) {
   void b.agentPtr.offsetWidth;
   b.agentPtr.classList.add("press");
 }
+// Where an action acts outside the page (browser.py's `_cue`), pointed at as it comes and while it is done: the address
+// bar, filled with the address it opens; Back, Forward, Reload; the tab it switches to or closes, or + for a new one;
+// the key it presses on the page as a whole, as a key cap; the way it scrolls the page, as an arrow.
+function bwCue(b, c) {
+  const t = c ? c.tool : "", x = (c && c.cue) || {};
+  const mark = (node, on) => { if (node) node.classList.toggle("coming", !!on); };
+  mark(b.back, t === "back"); mark(b.fwd, t === "forward"); mark(b.reload, t === "reload");
+  mark(b.addr, t === "navigate");
+  if (t === "navigate" && x.url && document.activeElement !== b.addr) b.addr.value = x.url;
+  mark(b.newTab, t === "tabs" && x.action === "new");
+  mark(b.tabs.querySelector(".add"), t === "tabs" && x.action === "new");
+  b.tabs.querySelectorAll(".t").forEach((n, i) => mark(n, t === "tabs" && x.action !== "new" && i === Number(x.index) - 1));
+  b.keycap.hidden = !(t === "press" && x.key);
+  if (t === "press" && x.key) b.keycap.textContent = x.key;
+  b.scrollCue.hidden = !(t === "scroll" && x.direction);
+  if (t === "scroll" && x.direction) b.scrollCue.dataset.dir = x.direction;
+}
 // Esc, or Stop: the agent's actions stopped -- the one shown coming, the rest of its steps -- until the user's next
 // message (browser.py's `stop`). Offered while it acts, or is about to, and not stopped already.
 const bwStoppable = (b) => { const st = b.state || {}; return !st.halted && !!(st.next || st.acting || st.playing); };
@@ -305,16 +325,24 @@ function bwFeedDraw(b) {
     void f.root.offsetWidth;
     f.root.classList.add("fresh");
   }
-  f.root.classList.toggle("idle", !doing && !last);
+  if (st.reading) {                                  // looking at the page: said a moment, however quick the look
+    b.reading = st.reading;
+    b.readUntil = performance.now() + 700;
+    clearTimeout(b.readTimer);
+    b.readTimer = setTimeout(() => bwFeedDraw(b), 720);
+  }
+  const reading = !doing && b.reading && (st.reading || performance.now() < b.readUntil) ? b.reading : "";
+  f.root.classList.toggle("reading", !!reading);
+  f.root.classList.toggle("idle", !doing && !last && !reading);
   f.root.classList.toggle("doing", !!doing);
   f.root.classList.toggle("no", !doing && !!last && !last.ok && !st.halted);
   f.root.classList.toggle("halted", !doing && !!st.halted);
   f.stop.hidden = !bwStoppable(b);
-  const said = doing ? `${doing.label}…` : st.halted ? "You stopped the agent (Esc): it waits for your next message"
+  const said = doing ? `${doing.label}…` : reading ? `${reading}…` : st.halted ? "You stopped the agent (Esc): it waits for your next message"
     : last ? last.text : "The agent has done nothing on the page yet";
   if (f.text.textContent !== said) f.text.textContent = said;
   f.line.title = doing || !last ? "" : last.detail ? `${last.text}\n\nWhat the agent was told:\n${last.detail}` : last.text;
-  if (!doing && last && !st.halted) { f.when.dataset.ago = String(last.at / 1000); f.when.textContent = ago(last.at / 1000); }
+  if (!doing && !reading && last && !st.halted) { f.when.dataset.ago = String(last.at / 1000); f.when.textContent = ago(last.at / 1000); }
   else { delete f.when.dataset.ago; f.when.textContent = ""; }
   f.line.disabled = !acts.length;
   if (!acts.length && b.feedOpen) bwFeedOpen(b, false);

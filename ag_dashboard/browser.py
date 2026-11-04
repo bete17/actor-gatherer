@@ -996,6 +996,7 @@ class Browser:
         self.acting_since = 0.0                          # when it began that
         self.doing = ""                                  # what the agent does now, as the user is told it
         self.doing_tool = ""                             # with which tool
+        self.doing_cue: dict = {}                        # and where outside the page it acts: `_cue`
         self.on: Optional[dict] = None                   # what its action is on (`Browsers._seen`)
         self.checked: List[dict] = []                    # its action's checks (`expect`)
         self.shown: collections.deque = collections.deque(maxlen=SHOWN_KEEP)   # its latest actions, as the user
@@ -1425,7 +1426,7 @@ class Browser:
 
     def state(self) -> dict:
         with self.lock:
-            acting = {"label": self.doing, "box": self.acting.get("box"), "tool": self.doing_tool} \
+            acting = {"label": self.doing, "box": self.acting.get("box"), "tool": self.doing_tool, "cue": self.doing_cue} \
                 if self.acting and not self.acting_until and self.doing else None   # while it acts (`shown`: after)
             tab = self.tabs[self.active] if self.tabs else None
             return {"tabs": [{"title": t.title, "url": t.url, "loading": t.loading} for t in self.tabs],
@@ -1433,6 +1434,7 @@ class Browser:
                     "acting": acting, "dialog": tab.dialog if tab else None, "error": self.error,
                     "actions": [{k: a[k] for k in ("i", "at", "ok", "text", "box", "detail")} for a in self.shown],
                     "next": self.next, "playing": bool(self.playing), "halted": self.halt.is_set(),
+                    "reading": self.doing if self.doing_tool in READS else "",
                     "running": self.chrome.running(), "viewport": list(self.viewport[:2]),
                     "chrome": self.chrome.which(), "allow": self.chrome.status == "allow", "video": self.video.ok,
                     "video_off": "" if self.video.ok else self.video.why,
@@ -2350,6 +2352,27 @@ def _site(url: str) -> str:
     return short if len(short) <= 60 else short[:59] + "…"
 
 
+#: The tools that only look at the page: shown as they look ("Looking at the page"), with no pause.
+READS = frozenset({"snapshot", "screenshot", "console"})
+
+
+def _cue(name: str, args: dict) -> dict:
+    """Where an action acts outside the page, for the view to point at it: the address it opens (its address bar), the
+    tab it switches to, closes or opens (its tabs), the key it presses on the page as a whole, the way it scrolls it."""
+    if name == "navigate":
+        try:
+            return {"url": _url(str(args.get("url") or ""))}
+        except BrowserError:
+            return {}
+    if name == "tabs" and args.get("action") in ("new", "switch", "close"):
+        return {"action": args["action"], "index": args.get("index")}
+    if name == "press" and not args.get("ref"):
+        return {"key": str(args.get("key") or "")[:30]}
+    if name == "scroll" and not args.get("ref"):
+        return {"direction": args.get("direction") if args.get("direction") in ("up", "down", "left", "right") else "down"}
+    return {}
+
+
 def _context(b: "Browser", name: str, args: dict) -> dict:
     """What an action's words to the user need from before it: the tab it switches to or closes (its title), the
     dialog it answers."""
@@ -2431,6 +2454,10 @@ def _phrases(b: "Browser", name: str, args: dict, on: Optional[dict], ctx: dict)
         if action == "close":
             return f"Closing {n}", f"Closed {n}", f"Didn't close {n}"
         return "", "", ""
+    if name == "evaluate" and str(args.get("says") or "").strip():
+        says = " ".join(str(args["says"]).split())[:90]
+        on_it = f" on {it}{within}" if it else ""
+        return f"{says[:1].upper()}{says[1:]}{on_it}", f"Ran a script {says}{on_it}", f"Didn't run the script {says}"
     if name == "evaluate":
         on_it = f" on {it}{within}" if it else ""
         return f"Running a script{on_it}", f"Ran a script{on_it}", "Didn't run a script" + (f" on {it}" if it else "")
@@ -2445,8 +2472,10 @@ def _phrases(b: "Browser", name: str, args: dict, on: Optional[dict], ctx: dict)
         return f"Answering {what}", f"{did} {what}", f"Didn't answer {what}"
     if name == "wait" and args.get("text"):
         return f"Waiting for {_q(str(args['text']), 40)}", "", ""
-    if name == "screenshot" and it:
-        return f"Looking at {it}", "", ""
+    if name in ("snapshot", "screenshot"):
+        return (f"Looking at {it}" if it else "Looking at the page"), "", ""
+    if name == "console":
+        return "Reading the page's console", "", ""
     return "", "", ""
 
 
@@ -3046,6 +3075,8 @@ REF = {"type": "string", "description": "the element's ref: e12 from a snapshot,
 ACTS = frozenset({"click", "type", "press", "select", "hover", "scroll", "navigate", "back", "forward", "reload", "tabs",
                   "evaluate", "upload"})
 MAX_CHECKS = 20
+SAYS = {"type": "string", "description": "What the script does, in a few words for the user, who sees them as it runs, "
+                                         "beginning with a verb in -ing: 'reading the result links', 'clearing the cart'"}
 #: The agent told, when the user stopped it with Esc: the action about to be done (STOPPED), and each after (HALTED).
 STOPPED = ("Not done: the user pressed Esc to stop you, before this was done.\n"
            "Act on the page again only after their next message: tell them where you stopped, and wait.")
@@ -3154,7 +3185,7 @@ TOOLS = [
     _tool("console", "The page's console: its messages, errors and failed loads, latest last; `clear`: then forgotten.",
           {"clear": {"type": "boolean"}}),
     _acting("evaluate", "Run a JavaScript expression in the page (awaited), its value as JSON; with `ref`, the element "
-          "is `el`.", {"expression": {"type": "string"}, "ref": REF}, ["expression"]),
+          "is `el`.", {"expression": {"type": "string"}, "ref": REF, "says": SAYS}, ["expression", "says"]),
     _tool("wait", "Wait until `text` shows in the page (at most `seconds`, 10 by default, 60 at most), or for `seconds`.",
           {"text": {"type": "string"}, "seconds": {"type": "number"}}),
     _tool("dialog", "Answer the page's alert, confirm or prompt: accept (with `text` for a prompt) or dismiss it.",
@@ -3416,6 +3447,9 @@ class Browsers:
         ctx = _context(b, name, args)
         with b.lock:
             b.doing, b.doing_tool, b.on, b.checked = _phrases(b, name, args, None, ctx)[0], name, None, []
+            b.doing_cue = _cue(name, args)
+        if name in READS and b.doing:                    # shown as it looks (no pause)
+            b._publish()
         try:
             b.live(loaded=True)
             self.chrome.touch()
@@ -3427,12 +3461,16 @@ class Browsers:
                                   "Answer it with the dialog tool first.", error=True)
             if acts:
                 checks = _checks(name, args.get("expect"))
+                if name == "evaluate" and not str(args.get("says") or "").strip():
+                    raise BrowserError("Not done: evaluate needs `says` -- what the script does, in a few words for "
+                                       "the user, who sees them as it runs: 'reading the result links'. Call it again "
+                                       "with it.")
                 b.checked, formed = checks, True
             if listed and b.halt.is_set():               # the user stopped it (Esc): until their next message
                 raise BrowserError(HALTED)
             if acts:
                 self._expect(b, checks, begun)               # as the page is: a false one refused, holding nothing
-            if listed and name != "evaluate":            # (a script: nothing to see coming)
+            if listed:
                 self._lead_in(b, name, args)
             if acts:
                 b.acts.acquire()
@@ -3522,7 +3560,7 @@ class Browsers:
                 pass
             box = b.box_of(cdp, tab, at[1])
         with b.lock:
-            b.next = {"label": b.doing, "box": box, "tool": name}
+            b.next = {"label": b.doing, "box": box, "tool": name, "cue": _cue(name, args)}
         b._publish()
         try:
             if b.halt.wait(PACE):
@@ -4083,6 +4121,7 @@ class Browsers:
         if args.get("ref"):
             tab, node, obj = b.resolve(str(args["ref"]))
             self._unchanged(b, cdp, tab, node, _canon(args["ref"]))
+            b.acting_on("running a script", b.box_of(cdp, tab, node))   # its element outlined
         self._let_go(b)                                  # it may run a while: the user's input not held up by it
         if args.get("ref"):
             got = cdp.call("Runtime.callFunctionOn", {"objectId": obj, "returnByValue": True, "awaitPromise": True,

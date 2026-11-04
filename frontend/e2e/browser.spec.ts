@@ -293,3 +293,75 @@ test("the page says whether it shows the view: when it joins, and as its tab is 
   });
   await expect.poll(() => watched).toEqual([{ page: id, visible: false }]);
 });
+
+// Each action that acts outside the page, held coming: what the view points at
+const CUES: { name: string; next: object; check: (page: Page) => Promise<void> }[] = [
+  {
+    name: "opening a page fills the address bar with the address, lit",
+    next: { label: "Opening ballotpedia.org", box: null, tool: "navigate", cue: { url: "https://ballotpedia.org/" } },
+    check: async (page) => {
+      const addr = page.locator(".bw-bar input[aria-label=Address]");
+      await expect(addr).toHaveClass(/\bcoming\b/);
+      await expect(addr).toHaveValue("https://ballotpedia.org/");
+    },
+  },
+  {
+    name: "going back lights Back",
+    next: { label: "Going back", box: null, tool: "back", cue: {} },
+    check: async (page) => {
+      await expect(page.locator(".bw-bar button[aria-label=Back]")).toHaveClass(/\bcoming\b/);
+      await expect(page.locator(".bw-bar button[aria-label=Reload]")).not.toHaveClass(/\bcoming\b/);
+    },
+  },
+  {
+    name: "a key pressed on the page as a whole shows as a key cap",
+    next: { label: "Pressing Enter", box: null, tool: "press", cue: { key: "Enter" } },
+    check: async (page) => {
+      await expect(page.locator(".bw-stage .keycap")).toBeVisible();
+      await expect(page.locator(".bw-stage .keycap")).toHaveText("Enter");
+    },
+  },
+  {
+    name: "a scroll of the whole page shows an arrow its way",
+    next: { label: "Scrolling up", box: null, tool: "scroll", cue: { direction: "up" } },
+    check: async (page) => {
+      await expect(page.locator(".bw-stage .scroll-cue")).toBeVisible();
+      await expect(page.locator(".bw-stage .scroll-cue")).toHaveAttribute("data-dir", "up");
+    },
+  },
+];
+for (const c of CUES)
+  test(`shown coming: ${c.name}`, async ({ page }) => {
+    await browserActors(page);
+    await page.route(`**/browser/w/${KEY}/stream*`, (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        body: events([{ actions: [OLD], next: c.next }], "", 60000),
+      }),
+    );
+    await openActor(page, CLAUDE);
+    await expect(page.locator(".bw-feed .line .tx")).toHaveText(`Next: ${(c.next as { label: string }).label}…`);
+    await c.check(page);
+  });
+
+test("the agent looking at the page is said in the line, a moment, however quick", async ({ page }) => {
+  await browserActors(page);
+  let joins = 0;
+  await page.route(`**/browser/w/${KEY}/stream*`, (route) => {
+    joins += 1;
+    const states =
+      joins === 1
+        ? [
+            { actions: [OLD], reading: "Looking at the page" },
+            { actions: [OLD], reading: "" },
+          ]
+        : [{ actions: [OLD] }];
+    return route.fulfill({ status: 200, contentType: "text/event-stream", body: events(states, "", 60000) });
+  });
+  await openActor(page, CLAUDE);
+  const tx = page.locator(".bw-feed .line .tx");
+  await expect(tx).toHaveText("Looking at the page…");
+  await expect(page.locator(".bw-feed")).toHaveClass(/\breading\b/);
+  await expect(tx).toHaveText(OLD.text); // then the latest action again
+});

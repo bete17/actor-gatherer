@@ -52,6 +52,26 @@
   border: 2px solid #E8590C; box-sizing: border-box; opacity: 0; }
 .bw-stage .agent-pointer.press .ripple { animation: bw-ripple .55s ease-out; }
 @keyframes bw-ripple { from { opacity: .9; transform: scale(.3); } to { opacity: 0; transform: scale(1.5); } }
+/* where an action acts outside the page (bwCue): the Browser's own controls lit, a key cap, an arrow for a scroll */
+.bw-bar button.coming, .bw-tabs .coming { background: color-mix(in srgb, #E8590C 18%, transparent); color: #E8590C;
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, #E8590C 60%, transparent); }
+.bw-bar input.coming { outline: 2px solid #E8590C; outline-offset: -1px; }
+.bw-stage .keycap { position: absolute; left: 50%; bottom: 22px; transform: translateX(-50%); z-index: 2; pointer-events: none;
+  padding: 6px 14px; border-radius: 8px; border: 1.5px solid #E8590C; border-bottom-width: 3px; background: var(--surface);
+  color: var(--ink); font: 600 15px/1.2 system-ui, -apple-system, sans-serif; box-shadow: 0 4px 14px rgba(0, 0, 0, .2);
+  animation: bw-cue-in .2s ease-out; }
+.bw-stage .scroll-cue { position: absolute; z-index: 2; pointer-events: none; width: 38px; height: 38px; border-radius: 50%;
+  display: grid; place-items: center; background: #E8590C; color: #fff; font: 700 20px/1 system-ui, sans-serif;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .25); animation: bw-cue-in .2s ease-out; }
+.bw-stage .scroll-cue[data-dir="down"] { left: calc(50% - 19px); bottom: 16px; }
+.bw-stage .scroll-cue[data-dir="up"] { left: calc(50% - 19px); top: 16px; }
+.bw-stage .scroll-cue[data-dir="left"] { left: 16px; top: calc(50% - 19px); }
+.bw-stage .scroll-cue[data-dir="right"] { right: 16px; top: calc(50% - 19px); }
+.bw-stage .scroll-cue[data-dir="down"]::before { content: "↓"; }
+.bw-stage .scroll-cue[data-dir="up"]::before { content: "↑"; }
+.bw-stage .scroll-cue[data-dir="left"]::before { content: "←"; }
+.bw-stage .scroll-cue[data-dir="right"]::before { content: "→"; }
+@keyframes bw-cue-in { from { opacity: 0; } }
 @keyframes bw-flash {
   from { background: color-mix(in srgb, var(--bw-a) 24%, transparent); box-shadow: 0 0 0 9px color-mix(in srgb, var(--bw-a) 30%, transparent); }
   to { background: transparent; box-shadow: 0 0 0 3px color-mix(in srgb, var(--bw-a) 22%, transparent); }
@@ -78,6 +98,8 @@
 .bw-feed.no .line { background: color-mix(in srgb, var(--bw-no) 10%, transparent); }
 .bw-feed.fresh .line { animation: bw-fresh 1.2s ease-out; }
 .bw-feed.halted .line { background: color-mix(in srgb, var(--bw-no) 10%, transparent); }
+.bw-feed.reading .tx { color: var(--ink-2); }
+.bw-feed.reading .dot { background: var(--muted); animation: bw-busy 1s ease-in-out infinite alternate; }
 .bw-feed.halted .dot { background: var(--bw-no); border-radius: 2px; }
 /* Stop (Esc): while the agent acts, or is about to */
 .bw-feed .stop { flex: none; display: inline-flex; align-items: center; gap: 6px; height: 20px; margin: 0 6px; padding: 0 4px 0 8px;
@@ -101,6 +123,7 @@
   .bw-stage .acting:is(.done, .no) { animation: bw-fade 3s ease-in forwards; }
   .bw-feed.doing .dot, .bw-feed.fresh .line, .bw-stage .acting.next, .bw-stage .agent-pointer.press .ripple { animation: none; }
   .bw-stage .agent-pointer { transition: none; }
+  .bw-stage :is(.keycap, .scroll-cue), .bw-feed.reading .dot { animation: none; }
 }
 .bw-stage .drag { position: absolute; border: 1.5px dashed #2563EB; background: color-mix(in srgb, #2563EB 10%, transparent); pointer-events: none; }
 .bw-stage .hint { position: absolute; left: 50%; top: 8px; transform: translateX(-50%); padding: 4px 12px; border-radius: 999px;
