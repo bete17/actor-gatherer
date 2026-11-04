@@ -228,6 +228,15 @@ function pvListen(pv) {
   });
   on("preview", (p) => { if (pv.about) pv.about.preview = p; pvDraw(); edHead(); });
 }
+// ⌘↵ (Ctrl+Enter elsewhere) anywhere in the Editor -- the file, its tree, its header, the preview beside, the PDF's viewer:
+// Execute. Taken before CodeMirror's own (a blank line below); a text box (the preview's form) keeps its own Enter.
+function edExecKey(ev) {
+  if (ev.key !== "Enter" || !(MAC ? ev.metaKey : ev.ctrlKey) || ev.shiftKey || ev.altKey || ev.isComposing) return;
+  const t = ev.target;
+  if (t && t.closest && t.closest("input, textarea, select")) return;
+  ev.preventDefault(); ev.stopPropagation();
+  if (!ev.repeat) edExecute();                       // held down: once
+}
 // The header's Execute: the panel opened, and the preview run -- or, with none set, its form, prefilled with a guess;
 // an actor's command not yet let run, asked about first.
 async function edExecute() {
@@ -540,6 +549,7 @@ function pvPdfHooks(pv, f) {
   if (!box || box.agSync) return;
   box.agSync = true;
   box.addEventListener("dblclick", (ev) => pvFromPdf(pv, f, ev));
+  box.ownerDocument.addEventListener("keydown", edExecKey, true);   // ⌘↵ in the viewer: Execute, as in the Editor
 }
 async function pvFromPdf(pv, f, ev) {
   const app = pvPdfApp(f), at = ev.target && ev.target.closest && ev.target.closest(".page");
@@ -588,7 +598,7 @@ const edTexToPdf = () => {
   return !!(sh && sh.kind === "pdf" && sh.exists && pv.pdf && ed.file && /\.(tex|ltx)$/i.test(ed.file)
     && pv.about && edUnder(ed.file, pv.about.checkout));
 };
-// `at`: the place in the file (⌘/Ctrl+double-click's); else the cursor's.
+// `at`: the place in the file (a double-click's); else the cursor's.
 async function edToPdf(at = null) {
   const pv = ed.pv, s = ed.s;
   if (!edTexToPdf() || !s || !s.view) return;
@@ -597,18 +607,14 @@ async function edToPdf(at = null) {
   const got = await pvSync(pv, { mode: "forward", file: ed.file, line: l.number, column: head - l.from });
   if (got && ed.pv === pv) pvPdfMark(pv.pdf, got);
 }
-// ⌘+double-click (Ctrl+ elsewhere) in a TeX source: that place in the PDF -- taken before CodeMirror's own double-click
-// (a word selected, ⌘ adding it as one more cursor), the cursor left there alone.
-const edToPdfKey = (ev) => MAC ? ev.metaKey : ev.ctrlKey;
+// A double-click in a TeX source's text: that place in the PDF too -- the word under it selected by CodeMirror, as
+// always (a modifier held, or a button of a box in the text: CodeMirror's or the box's alone).
 function edToPdfClick(ev) {
-  if (ev.button !== 0 || ev.detail !== 2 || !edToPdfKey(ev)) return;
-  const s = ed.s;
-  if (!s || !s.view || !edTexToPdf()) return;
+  if (ev.button !== 0 || ev.detail !== 2 || ev.metaKey || ev.ctrlKey || ev.altKey || ev.shiftKey) return;
+  const s = ed.s, t = ev.target;
+  if (!s || !s.view || !edTexToPdf() || !s.view.contentDOM.contains(t) || (t.closest && t.closest("button, input, a"))) return;
   const at = s.view.posAtCoords({ x: ev.clientX, y: ev.clientY });
-  if (at == null) return;
-  ev.preventDefault(); ev.stopPropagation();
-  s.view.dispatch({ selection: { anchor: at } });
-  edToPdf(at);
+  if (at != null) edToPdf(at);
 }
 // The place SyncTeX found, scrolled to in the viewer (its zoom kept) and marked, fading.
 function pvPdfMark(f, got) {
@@ -1325,8 +1331,8 @@ function edHead() {
       "aria-label": "Wrap long lines", onclick: () => edSetWrap(!ed.wrap) }, strokeIcon(ICONS.wrap, 15)),
     el("label", { class: "ed-auto", title: "Save the file a moment after each edit to it, yours or another's: the actors read it as it is typed. Not while a conflict with the file waits." },
       el("input", { type: "checkbox", checked: ed.auto ? "" : null, onchange: (ev) => edSetAuto(ev.target.checked) }), "Auto-save"),
-    edTexToPdf() ? el("button", { type: "button", class: "ed-topdf", onclick: edToPdf,
-      title: `Show the cursor's line in the PDF beside (SyncTeX), or ${MAC ? "⌘" : "Ctrl"}+double-click a line. Double-click the PDF to come back to its source.` }, "→ PDF") : null,
+    edTexToPdf() ? el("button", { type: "button", class: "ed-topdf", onclick: () => edToPdf(),
+      title: "Show the cursor's line in the PDF beside (SyncTeX), or double-click a word of the source. Double-click the PDF to come back to its source." }, "→ PDF") : null,
     edExecBtn(),
     el("button", { type: "button", class: "primary", title: nc ? "Write it to the file on disk, your lines kept where they conflict (⌘S / Ctrl+S)" : "Write it to the file on disk (⌘S / Ctrl+S)",
       disabled: s && st && (st.dirty || st.missing) ? null : "", onclick: () => s && edSave(s) }, "Save"),
@@ -1468,10 +1474,11 @@ function edExecBtn() {
   const pv = ed.pv, p = pv && pv.about && pv.about.preview, r = pv && pv.run;
   const running = !!(pv && (pv.busy || (r && r.state === "running")));
   return el("button", { type: "button", class: "ed-exec" + (running ? " busy" : ""), disabled: pv && pv.busy ? "" : null,
-    title: p ? (p.needs_ok ? `An actor set this project's preview: ${p.command}. Press to see it, and let it run`
+    title: (p ? (p.needs_ok ? `An actor set this project's preview: ${p.command}. Press to see it, and let it run`
       : `Run ${p.command || "nothing"}${p.show ? `, and show ${p.show}` : ", and show what it prints"}, beside the file`)
-      : "Run this project's preview, and show what it makes beside the file: the first time, set what it runs",
-    onclick: edExecute }, strokeIcon(ICONS.play, 13), "Execute");
+      : "Run this project's preview, and show what it makes beside the file: the first time, set what it runs")
+      + " (⌘↵ / Ctrl+Enter)",
+    onclick: edExecute, "aria-keyshortcuts": MAC ? "Meta+Enter" : "Control+Enter" }, strokeIcon(ICONS.play, 13), "Execute");
 }
 // Shown or hidden as `state.editor` says, drawn the first time it is shown: called by each draw of the main view.
 function edMount() {
@@ -1490,7 +1497,7 @@ function edMount() {
     ed.tree = el("div", { class: "ed-rows", role: "tree", "aria-label": "The folder's files" });
     ed.head = el("div", { class: "ed-head" });
     ed.body = el("div", { class: "ed-body" + (ed.wrap ? " wrap" : "") });
-    ed.body.addEventListener("mousedown", edToPdfClick, true);     // before CodeMirror's: ⌘+double-click, to the PDF
+    ed.body.addEventListener("mousedown", edToPdfClick, true);     // before CodeMirror's: a double-click, to the PDF too
     ed.side = el("aside", { class: "ed-changes files", hidden: "", "aria-label": "An actor's changes to the file" });
     ed.pvSide = el("aside", { class: "ed-pv", hidden: "", "aria-label": "The project's preview" });
     ed.brs = el("div", { class: "ed-brs" });
@@ -1502,6 +1509,7 @@ function edMount() {
     const treeGrip = colGrip(), sideGrip = colGrip(), pvGrip = colGrip();
     ed.host = el("div", { class: "ed" }, ed.fold, nav, treeGrip,
       el("div", { class: "ed-main" }, ed.head, el("div", { class: "ed-work" }, ed.body, sideGrip, ed.side, pvGrip, ed.pvSide)));
+    ed.host.addEventListener("keydown", edExecKey, true);          // ⌘↵: Execute
     widthGrip(treeGrip, "ag-dashboard-editor-tree-width", nav, "width", 120, (x) => x - nav.getBoundingClientRect().left);
     widthGrip(sideGrip, "ag-dashboard-editor-changes-width", ed.side, "width", 200, (x) => ed.side.getBoundingClientRect().right - x);
     widthGrip(pvGrip, "ag-dashboard-editor-preview-width", ed.pvSide, "width", 220, (x) => ed.pvSide.getBoundingClientRect().right - x);
