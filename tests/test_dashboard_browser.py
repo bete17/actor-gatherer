@@ -9,6 +9,7 @@ import http.server
 import json
 import os
 import queue
+import socket
 import subprocess
 import sys
 import tempfile
@@ -22,6 +23,15 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from ag_dashboard import browser, home as dashboard_home, mcp, sessions  # noqa: E402
+
+#: A check that holds on any page: for the tests of other things than checks, which an acting tool needs (ExpectTest).
+HOLDS = [{"js": "document.documentElement !== null"}]
+
+
+def checked(name: str, args: dict) -> dict:
+    """`args`, with HOLDS as their `expect` if the tool needs one and they have none."""
+    lists = name == "tabs" and (args.get("action") or "list") == "list"
+    return args if name not in browser.ACTS or lists or "expect" in args else {**args, "expect": HOLDS}
 
 PAGE = """<!doctype html><title>Shop checkout</title>
 <div class="card"><h1>Checkout</h1>
@@ -536,9 +546,8 @@ class ServerTest(Home):
         self.assertEqual(got.exception.code, 404)
 
 
-@unittest.skipUnless(browser.available(), "no Chrome here")
-class ChromeTest(Home):
-    """The whole of it against a real Chrome, headless: the agent's tools, the user's input and picks, the screen."""
+class ChromeBase(Home):
+    """A Browser in a real Chrome, headless, and the tests' ways to use it."""
 
     def setUp(self):
         super().setUp()
@@ -549,7 +558,7 @@ class ChromeTest(Home):
         self.b = self.bs.get(self.key)
 
     def call(self, name: str, **args) -> dict:
-        return self.bs.call(self.key, name, args)
+        return self.bs.call(self.key, name, checked(name, args))
 
     def text(self, name: str, **args) -> str:
         got = self.call(name, **args)
@@ -586,6 +595,23 @@ class ChromeTest(Home):
         while time.time() < end and not check():
             time.sleep(0.05)
         return check()
+
+    def js(self, expression: str):
+        """`expression`'s value in the shown page, run as the page's own script would be: no tool, so no check."""
+        tab = self.b.tab()
+        return self.bs.chrome.cdp().call("Runtime.evaluate", {"expression": expression, "returnByValue": True},
+                                         tab.session)["result"].get("value")
+
+    def click_as_user(self, ref: str) -> None:
+        """A click of the user's, in the view, on the element `ref` names."""
+        x, y = self.middle(ref)
+        self.b.input([{"type": "mouse", "kind": "mousePressed", "x": x, "y": y, "button": "left", "buttons": 1, "clickCount": 1},
+                      {"type": "mouse", "kind": "mouseReleased", "x": x, "y": y, "button": "left", "clickCount": 1}])
+
+
+@unittest.skipUnless(browser.available(), "no Chrome here")
+class ChromeTest(ChromeBase):
+    """The whole of it against a real Chrome, headless: the agent's tools, the user's input and picks, the screen."""
 
     def test_the_agent_and_the_user_use_one_tab(self):
         self.assertIn('"Shop checkout"', self.text("navigate", url=os.path.join(self.root, "index.html")))
@@ -975,6 +1001,350 @@ class ChromeTest(Home):
         self.assertNotIn("(loading)", got)
 
 
+INVOICES = """<!doctype html><title>Invoices</title>
+<button id="move" onclick="move()">Sort by date</button> <button id="swap" onclick="swap()">Sort in place</button>
+<button onclick="this.textContent = this.textContent === 'Show more' ? 'Show less' : 'Show more'">Show more</button>
+<button id="a" onclick="order.textContent += 'A'">Agent's</button> <button id="b" onclick="order.textContent += 'B'">User's</button>
+<ul id="rows">
+  <li><span>Invoice #4411</span> <button onclick="del(this)">Delete</button> <button onclick="del(this)">Remove #4411</button></li>
+  <li><span>Invoice #4412</span> <button onclick="del(this)">Delete</button> <button onclick="del(this)">Remove #4412</button></li>
+</ul>
+<input id="note" aria-label="Note"> <input id="pw" type="password" aria-label="Password" value="hunter2">
+<p id="out"></p><p id="order"></p>
+<script>
+var pageVar = 1;
+function move() { const ul = document.getElementById('rows'); ul.prepend(ul.lastElementChild); }   // the rows move
+function swap() {                                    // the rows stay, what they show swapped: a list redrawn in place
+  const lis = [...document.querySelectorAll('#rows li')];
+  const ids = lis.map((li) => li.querySelector('span').textContent.slice(9)).reverse();
+  lis.forEach((li, i) => { li.querySelector('span').textContent = 'Invoice #' + ids[i];
+                           li.querySelectorAll('button')[1].textContent = 'Remove #' + ids[i]; });
+}
+function del(b) { out.textContent = 'deleted ' + b.closest('li').querySelector('span').textContent; }
+</script>"""
+
+
+class Counting:
+    """A lock that counts how often it is taken: a Browser's `acts`, watched."""
+
+    def __init__(self):
+        self.lock, self.taken = threading.Lock(), 0
+
+    def acquire(self, *args, **kw):
+        got = self.lock.acquire(*args, **kw)
+        self.taken += bool(got)
+        return got
+
+    def release(self):
+        self.lock.release()
+
+    def locked(self):
+        return self.lock.locked()
+
+    def __enter__(self):
+        self.acquire()
+        return self
+
+    def __exit__(self, *exc):
+        self.release()
+
+
+@unittest.skipUnless(browser.available(), "no Chrome here")
+class ExpectTest(ChromeBase):
+    """An action's checks (`expect`), against a real Chrome: the user changes the page between the agent's snapshot and
+    its action, as they may while it thinks."""
+
+    def setUp(self):
+        super().setUp()
+        self.text("navigate", url=self.write("invoices.html", INVOICES))
+        self.outline = self.text("snapshot")
+
+    def row(self, n: int) -> str:
+        """The ref of row n's list item, from 1, as the page has it now."""
+        tab, _, _ = self.b.resolve(self.ref(self.outline, 'button "Sort by date'))
+        cdp = self.bs.chrome.cdp()
+        root = cdp.call("DOM.getDocument", {"depth": 0}, tab.session)["root"]["nodeId"]
+        node = cdp.call("DOM.querySelector", {"nodeId": root, "selector": f"#rows li:nth-child({n})"}, tab.session)["nodeId"]
+        backend = cdp.call("DOM.describeNode", {"nodeId": node}, tab.session)["node"]["backendNodeId"]
+        return self.b._ref(tab.target, backend)
+
+    def delete_in_row_1(self) -> str:
+        return next(x for x in self.outline.splitlines() if x.strip().startswith('- button "Delete"')).split("[")[1].split("]")[0]
+
+    def said(self, got: dict) -> str:
+        return "\n".join(c["text"] for c in got["content"] if c.get("type") == "text")
+
+    def test_an_action_needs_its_checks_and_one_must_check_something(self):
+        sort = self.ref(self.outline, 'button "Sort by date')
+        for expect, says in ((None, "needs `expect`"), ([], "needs `expect`"), ([{"ref": sort}], "has no `js`"),
+                             ([{"js": "true"}], "the same whatever the page shows"),
+                             (["  'yes' "], "the same whatever the page shows")):
+            got = self.bs.call(self.key, "click", {"ref": sort} if expect is None else {"ref": sort, "expect": expect})
+            self.assertTrue(got.get("isError"))
+            self.assertIn(says, self.said(got))
+        self.assertEqual(self.page_says(), "")
+        self.assertIn("1 (shown): Invoices", self.text("tabs"))            # listing the tabs acts on nothing
+        self.assertNotIn("expect", self.bs.call(self.key, "dialog", {"accept": True})["content"][0]["text"])
+        listed = {t["name"]: t["inputSchema"] for t in browser.TOOLS}
+        for name in browser.ACTS - {"tabs"}:
+            self.assertIn("expect", listed[name]["required"], name)
+        self.assertNotIn("expect", listed["snapshot"].get("properties", {}))
+        self.assertIn("expect", listed["tabs"]["properties"])
+        self.assertIn("Assume the user is using the page while you think", browser.instructions(self.root))
+
+    def test_rows_the_user_sorted_the_check_follows_the_row_and_the_right_one_is_deleted(self):
+        delete = self.delete_in_row_1()
+        self.click_as_user(self.ref(self.outline, 'button "Sort by date'))
+        self.assertTrue(self.until(lambda: "4412" in self.js("rows.firstElementChild.innerText")))
+        self.until(lambda: any("Sort by date" in w for _, w in self.b.lately))
+        got = self.call("click", ref=delete, expect=[{"ref": self.row(2), "js": "el.innerText.includes('#4411')"}])
+        self.assertFalse(got.get("isError"), got)
+        self.assertEqual(self.page_says(), "deleted Invoice #4411")         # its row moved with it: still #4411's
+        self.assertIn('Meanwhile, the user: clicked button "Sort by date"', self.said(got))
+        self.assertNotIn("Meanwhile", self.said(self.call("click", ref=delete)))   # told once
+
+    def test_a_row_redrawn_in_place_with_another_invoice_is_not_acted_on(self):
+        delete, row = self.delete_in_row_1(), self.row(1)
+        self.click_as_user(self.ref(self.outline, 'button "Sort in place'))
+        self.assertTrue(self.until(lambda: "4412" in self.js("rows.firstElementChild.innerText")))
+        self.until(lambda: any("Sort in place" in w for _, w in self.b.lately))
+        got = self.call("click", ref=delete, expect=[{"js": "document.title === 'Invoices'"},
+                                                     {"ref": row, "js": "el.innerText.includes('#4411')"}])
+        self.assertTrue(got.get("isError"))
+        said = self.said(got)
+        self.assertIn("Not done: expect 2 is false: el.innerText.includes('#4411')", said)
+        self.assertIn('reading "Invoice #4412 Delete Remove #4412"', said)  # what is there now
+        self.assertIn('Since your last snapshot', said)
+        self.assertIn('the user: clicked button "Sort in place"', said)
+        self.assertEqual(self.page_says(), "")                              # not clicked
+
+    def test_an_element_that_is_no_longer_what_the_snapshot_showed_is_not_acted_on(self):
+        remove = self.ref(self.outline, 'button "Remove #4411')
+        self.js("swap()")                                                   # the page itself, this time
+        got = self.call("click", ref=remove)
+        self.assertTrue(got.get("isError"))
+        said = self.said(got)
+        self.assertIn(f'{remove} was button "Remove #4411" in your snapshot; it is button "Remove #4412" now', said)
+        self.assertIn("clicked, typed and navigated nothing since your last snapshot", said)
+        self.assertEqual(self.page_says(), "")
+        self.text("snapshot")                                               # seen again: it is what it is now
+        self.call("click", ref=remove)
+        self.assertEqual(self.page_says(), "deleted Invoice #4412")
+
+    def test_what_the_agent_s_own_action_changed_is_not_taken_for_a_change(self):
+        toggle = self.ref(self.outline, 'button "Show more')
+        self.assertIn('Clicked button "Show more"', self.text("click", ref=toggle))
+        self.assertIn('Clicked button "Show less"', self.text("click", ref=toggle))
+
+    def test_a_check_runs_apart_from_the_page_s_scripts_and_may_neither_run_long_nor_wait(self):
+        note, pw = self.ref(self.outline, 'textbox "Note'), self.ref(self.outline, 'textbox "Password')
+        self.text("type", ref=note, text="hi", expect=[{"ref": note, "js": "el.value === '' && typeof pageVar === 'undefined'"}])
+        self.assertEqual(self.text("evaluate", expression="typeof __agExpectEl + ' ' + note.value"), "undefined hi")
+        said = self.said(self.call("type", ref=pw, text="x", expect=[{"ref": pw, "js": "el.value === ''"}]))
+        self.assertIn("is false", said)
+        self.assertNotIn("hunter2", said)                                   # a password's value never
+        start = time.time()
+        said = self.said(self.call("click", ref=note, expect=[{"js": "(() => { while (true) {} })()"}]))
+        self.assertLess(time.time() - start, 3)
+        self.assertIn("Not done: expect 1 failed: it ran longer than 200 ms", said)
+        self.assertIn("may not wait", self.said(self.call("click", ref=note, expect=[{"js": "Promise.resolve(true)"}])))
+        self.assertIn("failed: ReferenceError", self.said(self.call("click", ref=note, expect=[{"js": "nothing.here"}])))
+        self.assertIn("could not be checked", self.said(self.call("click", ref=note, expect=[{"ref": "e999", "js": "!!el"}])))
+
+    def test_the_user_s_click_waits_until_the_agent_s_checked_action_is_done(self):
+        a, b = self.ref(self.outline, "button \"Agent's"), self.ref(self.outline, "button \"User's")
+        x, y = self.middle(b)
+        slow_again = ("(globalThis.__agRuns = (globalThis.__agRuns || 0) + 1) < 2 || "   # the second time: holding `acts`
+                      "(() => { const t = Date.now(); while (Date.now() - t < 150) {} return !!document.body; })()")
+        done = []
+        agent = threading.Thread(target=lambda: done.append(self.call("click", ref=a, expect=[{"js": slow_again}])))
+        agent.start()
+        time.sleep(0.05)                                                    # the user clicks while it checks again
+        self.b.input([{"type": "mouse", "kind": "mousePressed", "x": x, "y": y, "button": "left", "buttons": 1, "clickCount": 1},
+                      {"type": "mouse", "kind": "mouseReleased", "x": x, "y": y, "button": "left", "clickCount": 1}])
+        agent.join(10)
+        self.assertFalse(done[0].get("isError"), done[0])
+        self.assertEqual(self.text("evaluate", expression="order.textContent"), "AB")
+
+    def test_a_false_check_is_refused_holding_nothing_and_a_true_one_is_run_again_holding_the_lock(self):
+        acts = self.b.acts = Counting()
+        row, delete = self.row(1), self.delete_in_row_1()
+        with mock.patch.object(self.bs, "_check", wraps=self.bs._check) as checked_:
+            got = self.call("click", ref=delete, expect=[{"ref": row, "js": "el.innerText.includes('#9999')"}])
+            self.assertTrue(got.get("isError"))
+            self.assertEqual((acts.taken, checked_.call_count), (0, 1))     # refused at the first: the lock untaken
+            got = self.call("click", ref=delete, expect=[{"ref": row, "js": "el.innerText.includes('#4411')"}])
+            self.assertFalse(got.get("isError"), got)
+            self.assertEqual((acts.taken, checked_.call_count), (1, 3))     # true: again, holding it, then done
+        self.assertFalse(acts.locked())
+        self.assertEqual(self.page_says(), "deleted Invoice #4411")
+
+    def test_a_false_check_slow_to_answer_holds_up_not_the_user_s_click(self):
+        a, b = self.ref(self.outline, "button \"Agent's"), self.ref(self.outline, "button \"User's")
+        x, y = self.middle(b)
+        real = self.bs._check
+
+        def slow(*args):                       # Chrome slow to answer it (a busy page, say), the page itself not held
+            time.sleep(0.2)
+            return real(*args)
+        done = []
+        with mock.patch.object(self.bs, "_check", side_effect=slow):
+            agent = threading.Thread(target=lambda: done.append(
+                self.call("click", ref=a, expect=[{"js": "document.title === 'Not this page'"}])))
+            agent.start()
+            time.sleep(0.05)                                                # the user clicks while it checks
+            t0 = time.time()
+            self.b.input([{"type": "mouse", "kind": "mousePressed", "x": x, "y": y, "button": "left", "buttons": 1,
+                           "clickCount": 1},
+                          {"type": "mouse", "kind": "mouseReleased", "x": x, "y": y, "button": "left", "clickCount": 1}])
+            took = time.time() - t0
+            agent.join(10)
+        self.assertLess(took, 0.1)                                          # not waiting out the check (~0.15 s left)
+        self.assertIn("is false", self.said(done[0]))
+        self.assertEqual(self.text("evaluate", expression="order.textContent"), "B")   # theirs; the agent's, not done
+
+    def test_a_check_true_then_false_as_the_action_comes_is_refused_the_lock_let_go_before_it_is_said(self):
+        row, delete = self.row(1), self.delete_in_row_1()
+        real, runs, held = self.bs._check, [], []
+
+        def check(*args):
+            got = real(*args)
+            runs.append(got)
+            if len(runs) == 1:
+                self.js("swap()")                                           # between the two: the page changes
+            return got
+        real_ax = self.b._ax
+        with mock.patch.object(self.bs, "_check", side_effect=check), \
+                mock.patch.object(self.b, "_ax", side_effect=lambda *a: held.append(self.b.acts.locked()) or real_ax(*a)):
+            got = self.call("click", ref=delete, expect=[{"ref": row, "js": "el.innerText.includes('#4411')"}])
+        self.assertEqual([ok for ok, _ in runs], [True, False])
+        self.assertIn("Not done: expect 1 is false: el.innerText.includes('#4411')", self.said(got))
+        self.assertIn('reading "Invoice #4412', self.said(got))
+        self.assertEqual(held, [False])                                     # what is there now: read, the lock let go
+        self.assertFalse(self.b.acts.locked())
+        self.assertEqual(self.page_says(), "")
+
+    def page(self, name: str, title: str, body: str = "") -> str:
+        return self.write(name, f"<!doctype html><title>{title}</title><h1>{title}</h1>{body}")
+
+    def silent(self) -> str:
+        """A site that takes the connection and never answers (the user's mielections.us)."""
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        s.listen(8)
+        held = []
+
+        def hold():
+            while True:
+                try:
+                    held.append(s.accept()[0])
+                except OSError:
+                    return
+        threading.Thread(target=hold, daemon=True).start()
+        self.addCleanup(lambda: [c.close() for c in held + [s]])
+        return f"http://127.0.0.1:{s.getsockname()[1]}/results"
+
+    def test_a_check_of_another_tab_runs_in_its_page_and_the_tab_shown_stays(self):
+        self.text("tabs", action="new", url=self.page("two.html", "Two"))
+        self.text("tabs", action="switch", index=1)
+        got = self.bs.call(self.key, "tabs", {"action": "switch", "index": 2,
+                                              "expect": [{"tab": 2, "js": "document.title === 'Two'"}]})
+        self.assertFalse(got.get("isError"), got)
+        self.assertEqual(self.b.active, 1)
+        self.text("tabs", action="switch", index=1)
+        cdp = self.bs.chrome.cdp()                                          # tab 2 goes elsewhere, behind
+        cdp.call("Page.navigate", {"url": "file://" + self.page("three.html", "Three")}, self.b.tabs[1].session)
+        self.assertTrue(self.until(lambda: self.b._retitle(self.b.tabs[1]) or self.b.tabs[1].title == "Three"))
+        got = self.bs.call(self.key, "tabs", {"action": "switch", "index": 2,
+                                              "expect": [{"tab": 2, "js": "document.title === 'Two'"}]})
+        self.assertTrue(got.get("isError"))
+        self.assertIn("Not done: expect 1 is false: document.title === 'Two'\nTab 2 is \"Three\"", self.said(got))
+        self.assertEqual(self.b.active, 0)                                  # not switched
+        self.b.close_tab(1)                                                 # the user closes it
+        got = self.bs.call(self.key, "tabs", {"action": "close", "index": 2,
+                                              "expect": [{"tab": 2, "js": "document.title === 'Three'"}]})
+        self.assertIn("Not done: expect 1 could not be checked: no tab 2: there are 1", self.said(got))
+        self.assertEqual(len(self.b.tabs), 1)
+        got = self.bs.call(self.key, "tabs", {"action": "switch", "index": 1, "expect": [{"tab": 0, "js": "1 < 2 && !!document"}]})
+        self.assertIn("is not a tab's number", self.said(got))
+
+    def test_a_check_of_an_element_in_another_tab_does_not_show_that_tab(self):
+        row = self.row(1)                                                   # in tab 1
+        self.text("tabs", action="new", url=self.page("two.html", "Two"))  # tab 2, shown
+        for expect, says in (([{"ref": row, "js": "el.innerText.includes('#9999')"}], "is false"),
+                             ([{"ref": row, "tab": 2, "js": "el.innerText.includes('#4411')"}],
+                              f"is false: {row} is in tab 1 now, not tab 2")):
+            got = self.bs.call(self.key, "scroll", {"direction": "down", "expect": expect})
+            self.assertTrue(got.get("isError"))
+            self.assertIn(says, self.said(got))
+            self.assertEqual(self.b.active, 1)                              # still the tab the user sees
+        got = self.bs.call(self.key, "scroll", {"direction": "down",
+                                                "expect": [{"ref": row, "tab": 1, "js": "el.innerText.includes('#4411')"}]})
+        self.assertFalse(got.get("isError"), got)
+        self.assertEqual(self.b.active, 1)
+
+    def test_the_agent_s_navigation_to_a_site_that_never_answers_is_stopped(self):
+        url = self.silent()
+        with mock.patch.object(browser, "NAV_WAIT", 2.0):
+            t0 = time.time()
+            got = self.call("navigate", url=url)
+            self.assertLess(time.time() - t0, 5)
+            said = self.said(got)
+            self.assertTrue(got.get("isError"))
+            self.assertIn(f"Not opened: {url} did not answer in 2 s, so its loading was stopped", said)
+            self.assertIn('The tab shows "Invoices" — file://', said)
+            t0 = time.time()                                                # its page answers again at once
+            self.assertIn("Invoices", self.text("snapshot"))
+            self.assertLess(time.time() - t0, 2)
+            got = self.call("tabs", action="new", url=url)                 # a new tab's, the same
+            self.assertIn(f"Opened a new tab (2), shown now, but {url} did not answer in 2 s", self.said(got))
+            self.assertIn("about:blank", self.text("snapshot"))
+        time.sleep(1)
+        self.assertEqual(self.b.tabs[0].url, "file://" + os.path.join(self.root, "invoices.html"))   # gone nowhere
+
+    def test_a_navigation_the_user_cuts_short_says_what_they_did_and_holds_them_up_not(self):
+        url = self.silent()
+        self.page("two.html", "Two")
+        self.text("navigate", url=self.page("go.html", "Go", '<a href="two.html" style="display:block;font-size:40px">'
+                                                           "to Two</a>"))
+        x, y = self.middle(self.ref(self.text("snapshot"), 'link "to Two"'))
+        done = []
+        with mock.patch.object(browser, "NAV_WAIT", 10.0):
+            agent = threading.Thread(target=lambda: done.append(self.call("navigate", url=url)))
+            agent.start()
+            time.sleep(1.0)                                                 # its site is not answering
+            t0 = time.time()
+            self.b.input([{"type": "mouse", "kind": "mousePressed", "x": x, "y": y, "button": "left", "buttons": 1,
+                           "clickCount": 1},
+                          {"type": "mouse", "kind": "mouseReleased", "x": x, "y": y, "button": "left", "clickCount": 1}])
+            self.assertLess(time.time() - t0, 1)                            # the user's click waits on no site
+            agent.join(10)
+        said = self.said(done[0])
+        self.assertTrue(done[0].get("isError"))
+        self.assertIn(f"Not opened: {url} did not open: the page went elsewhere before it answered", said)
+        self.assertIn("the user: clicked", said)
+        self.assertIn('The tab shows "Two"', said)
+
+    def test_the_user_s_navigation_to_a_slow_site_holds_up_neither_them_nor_the_agent_s_checks(self):
+        url, b_ = self.silent(), self.ref(self.outline, "button \"User's")
+        x, y = self.middle(b_)
+        going = threading.Thread(target=lambda: self.assertRaises(browser.BrowserError, self.b.navigate, url))
+        going.start()                                                       # the user's: up to CALL_WAIT
+        self.addCleanup(going.join, 25)
+        self.addCleanup(lambda: self.bs.chrome.cdp().call("Page.stopLoading", {}, self.b.tab().session))
+        time.sleep(0.5)
+        t0 = time.time()
+        self.b.input([{"type": "mouse", "kind": "mouseMoved", "x": x, "y": y}])
+        self.assertLess(time.time() - t0, 1)                                # the lock is not held for the site
+        with mock.patch.object(browser, "EXPECT_WAIT", 1.0):
+            t0 = time.time()
+            got = self.call("click", ref=self.ref(self.outline, "button \"Agent's"), expect=[{"js": "!!document.body"}])
+            self.assertLess(time.time() - t0, 4)                            # its page answers nothing meanwhile
+        self.assertTrue(got.get("isError"))
+        self.assertIn("could not be checked: its page answered nothing in 1 s -- it is busy, or still opening another "
+                      "page", self.said(got))
+
+
 @unittest.skipUnless(browser.available(), "no Chrome here")
 class UsersChromeTest(Home):
     """"mine" against a stand-in for the user's Chrome -- one with its debugging on (headless here, a profile of its
@@ -1002,7 +1372,7 @@ class UsersChromeTest(Home):
         self.b = self.bs.get(self.cfg["key"])
 
     def text(self, name: str, **args) -> str:
-        got = self.bs.call(self.cfg["key"], name, args)
+        got = self.bs.call(self.cfg["key"], name, checked(name, args))
         self.assertFalse(got.get("isError"), got)
         return got["content"][0]["text"]
 

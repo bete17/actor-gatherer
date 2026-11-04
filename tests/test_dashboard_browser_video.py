@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from ag_dashboard import browser, browser_video, sessions  # noqa: E402
-from test_dashboard_browser import Home  # noqa: E402
+from test_dashboard_browser import Home, checked  # noqa: E402
 
 
 def chunk(t: str, n: int = 0, **more) -> dict:
@@ -142,7 +142,7 @@ class VideoChromeTest(Home):
     def test_the_screen_comes_as_video_at_the_view_s_size_and_a_click_as_a_small_chunk(self):
         self.b.live()
         self.b.resize(800, 600, 2.0)
-        self.bs.call(self.cfg["key"], "navigate", {"url": os.path.join(self.root, "index.html")})
+        self.bs.call(self.cfg["key"], "navigate", checked("navigate", {"url": os.path.join(self.root, "index.html")}))
         v = self.b.join(video=True)
         self.addCleanup(self.b.leave, v)
         got = self.watch(v, lambda g: (1600, 1200) in self.keys(g))
@@ -155,7 +155,7 @@ class VideoChromeTest(Home):
         self.assertIsNone(self.b.tab().cast)                   # every page watching decodes video: no JPEG frames
         self.b.input([{"type": "mouse", "kind": "mousePressed", "x": 30, "y": 30, "button": "left", "buttons": 1, "clickCount": 1},
                       {"type": "mouse", "kind": "mouseReleased", "x": 30, "y": 30, "button": "left", "clickCount": 1}])
-        self.bs.call(self.cfg["key"], "type", {"ref": self.ref("textbox \"Email\""), "text": "me@example.com"})
+        self.bs.call(self.cfg["key"], "type", checked("type", {"ref": self.ref("textbox \"Email\""), "text": "me@example.com"}))
         got = self.watch(v, lambda g: any(n == "video" and c["t"] == "delta" for n, c in g), 5)
         deltas = [c for n, c in got if n == "video" and c["t"] == "delta"]
         self.assertTrue(deltas)
@@ -166,7 +166,7 @@ class VideoChromeTest(Home):
         self.assertIn("frame", [n for n, _ in got])
 
     def ref(self, starts: str) -> str:
-        outline = self.bs.call(self.cfg["key"], "snapshot", {})["content"][0]["text"]
+        outline = self.bs.call(self.cfg["key"], "snapshot", checked("snapshot", {}))["content"][0]["text"]
         line = next(x for x in outline.splitlines() if starts in x)
         return line.split("[", 1)[1].split("]", 1)[0]
 
@@ -178,7 +178,7 @@ class VideoChromeTest(Home):
         self.assertTrue(self.keys(self.watch(v, lambda g: bool(self.keys(g)))), self.b.video.why)
         first = self.b.video.tab
         t0 = time.time()
-        opened = self.bs.call(self.cfg["key"], "tabs", {"action": "new", "url": os.path.join(self.root, "two.html")})
+        opened = self.bs.call(self.cfg["key"], "tabs", checked("tabs", {"action": "new", "url": os.path.join(self.root, "two.html")}))
         self.assertFalse(opened.get("isError"), f"{opened} after {time.time() - t0:.1f}s")
         got = self.watch(v, lambda g: bool(self.keys(g)) and self.b.video.tab is self.b.tab() is not first)
         why = (f"video on {self.b.video.tab and self.b.video.tab.url}, "
@@ -186,7 +186,7 @@ class VideoChromeTest(Home):
         self.assertIsNot(self.b.video.tab, first, why)
         self.assertIs(self.b.video.tab, self.b.tab(), why)
         self.assertTrue(self.keys(got))
-        self.bs.call(self.cfg["key"], "navigate", {"url": os.path.join(self.root, "index.html")})
+        self.bs.call(self.cfg["key"], "navigate", checked("navigate", {"url": os.path.join(self.root, "index.html")}))
         got = self.watch(v, lambda g: any(n == "video" for n, _ in g), 5)
         self.assertTrue([n for n, _ in got if n == "video"])  # still captured after the tab went to another page
 
@@ -207,7 +207,7 @@ class VideoChromeTest(Home):
   .observe(document.querySelector('title'), { childList: true, characterData: true, subtree: true });</script>""")
         self.b.live()
         self.b.resize(700, 500, 1.0)
-        self.bs.call(self.cfg["key"], "navigate", {"url": os.path.join(self.root, "mine.html")})
+        self.bs.call(self.cfg["key"], "navigate", checked("navigate", {"url": os.path.join(self.root, "mine.html")}))
         v = self.b.join(video=True)
         self.addCleanup(self.b.leave, v)
         got = self.watch(v, lambda g: bool(self.keys(g)))
