@@ -311,6 +311,47 @@ test("files saved actors in folders: made from the Saved line, filled by draggin
   }
 });
 
+test("an action's answer, come late, does not undo a change the stream brought meanwhile", async ({ page }) => {
+  // The page deletes a folder; its answer ({folders: {}}) comes after the stream brought a folder made since (CI's
+  // Linux machine holds an answer ~40 ms): the folder stays. The stream sends a home only when it differs from the
+  // last it sent, so an answer let undo it would have it gone till the next change.
+  await open(page);
+  const folders = async () =>
+    ((await (await page.request.get("/api/home")).json()).saved_folders || {})[GATHERER] || {};
+  const make = (name: string) =>
+    page.request.post("/api/saved/folders", { data: { gatherer: GATHERER, do: "new", name } });
+  const savedLine = page.locator("#agents .saved-line");
+  const folder = (name: string) => page.locator("#agents .folder-line", { hasText: name });
+  let release = () => {};
+  const held = new Promise<void>((r) => (release = r));
+  try {
+    await make("Old");
+    await expect(savedLine).toContainText("1 folder");
+    await savedLine.click(); // opened: its folders listed
+    await page.route("**/api/saved/folders", async (route) => {
+      const answer = await route.fetch(); // done by the server now; its answer held back
+      await held;
+      await route.fulfill({ response: answer });
+    });
+    await folder("Old").hover();
+    await folder("Old").locator(".folder-act.delete").click();
+    await expect.poll(folders).toEqual({});
+    await make("Later");
+    await expect(folder("Later")).toBeVisible(); // the stream's home
+    const answered = page.waitForResponse("**/api/saved/folders");
+    release();
+    await answered;
+    await page.waitForTimeout(300); // the answer taken
+    await expect(folder("Later")).toBeVisible();
+    await expect(savedLine).toContainText("1 folder");
+  } finally {
+    release();
+    await page.unrouteAll({ behavior: "wait" });
+    for (const name of Object.keys(await folders()))
+      await page.request.post("/api/saved/folders", { data: { gatherer: GATHERER, do: "delete", name } });
+  }
+});
+
 test("lists a closed saved actor in its folder, folded till opened", async ({ page }) => {
   await page.route("**/api/home", async (route) => {
     const home = await (await route.fetch()).json();

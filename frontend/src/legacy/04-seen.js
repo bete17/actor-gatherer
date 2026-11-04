@@ -44,9 +44,19 @@ async function tellSeen(looked) {
   try { await post("/api/seen", { seen: looked }); return true; }
   catch (err) { setLive(`Not saved: ${err.message}`); return false; }
 }
+// Homes taken so far: the first, then each the stream sends. What an action of the reader's changes in the home -- a
+// gatherer hidden or named, an actor saved, a folder -- shows at once, then the server's answer (every choice of its
+// kind, as kept after it) takes its place; but not where a home came while it was asked (`homeSince(asked)`, `asked`:
+// `homesTaken` as it was sent). That home was read after the action's change, so has it, and maybe another made since
+// (by the gatherer agent, another page) that the answer, read before, would undo till something else changed -- the
+// stream sends a home only when it differs from the last it sent; or before it, and the stream sends the next once
+// the change is rung.
+let homesTaken = 0;
+const homeSince = (asked) => homesTaken !== asked;
 // Each actor's key, and what the reader has seen of a new home: what the server kept (everything, before
 // it kept any); the selected actor, while the page is visible.
 function takeHome(home) {
+  homesTaken++;
   window.agNext.home(home);                        // the new code's store has it too (src/bridge.ts)
   for (const g of home.gatherers) for (const a of g.agents) {
     a.key = key(g.name, a.channel);
