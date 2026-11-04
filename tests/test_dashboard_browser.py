@@ -692,9 +692,10 @@ class ChromeTest(ChromeBase):
         self.assertEqual((seen["frame"]["w"], seen["frame"]["h"]), (640, 480))
         self.assertTrue(base64.b64decode(seen["frame"]["data"]).startswith(b"\xff\xd8"))   # a JPEG
 
-    def test_a_site_is_told_it_is_ordinary_chrome_but_driven(self):
-        """Some sites refuse headless Chrome by its user agent (Figma's CloudFront: a 403 "Request blocked"): pages,
-        their workers and requests see ordinary Chrome's, and its client hints in full; navigator.webdriver stays."""
+    def test_a_site_is_told_it_is_ordinary_chrome_not_driven(self):
+        """Some sites refuse headless Chrome by its user agent (Figma's CloudFront: a 403 "Request blocked"), Google's
+        sign-in a Chrome that says it is driven: pages, their workers and requests see ordinary Chrome's user agent, its
+        client hints in full, and navigator.webdriver false (AUTOMATION_HIDDEN)."""
         url = self.serve("ua.html", "<!doctype html><title>UA</title>")
         self.text("navigate", url=url)
         seen = json.loads(self.text("evaluate", expression="""(async () => ({ua: navigator.userAgent,
@@ -705,7 +706,7 @@ class ChromeTest(ChromeBase):
         self.assertNotIn("Headless", seen["ua"])
         self.assertRegex(seen["ua"], r" Chrome/\d+\.0\.0\.0 ")
         self.assertEqual(seen["worker"], seen["ua"])
-        self.assertIs(seen["driven"], True)
+        self.assertIs(seen["driven"], False)
         hints = seen["hints"]
         self.assertTrue(any(len(b["version"].split(".")) == 4 and b["version"].split(".")[0] in seen["ua"]
                             for b in hints["fullVersionList"]), hints)
@@ -1748,6 +1749,9 @@ class LoginsTest(unittest.TestCase):
         self.assertEqual(browser.site_of(".news.bbc.co.uk"), "bbc.co.uk")
         self.assertEqual(browser.site_of("127.0.0.1"), "127.0.0.1")
         self.assertEqual(browser.site_of("localhost"), "localhost")
+        for features, popup in ((["noopener", "width=500", "height=600"], True), (["popup"], True), (["left=10"], True),
+                                (["noopener"], False), (["noopener", "noreferrer"], False), ([], False), (None, False)):
+            self.assertIs(browser.popup_window(features), popup, features)
 
     def test_a_cookie_as_another_chrome_takes_it(self):
         got = browser.cookie_param({"name": "a", "value": "b", "domain": ".x.com", "path": "/", "expires": -1,

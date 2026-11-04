@@ -490,7 +490,10 @@ function pvResult(pv, url) {
 }
 // A PDF, in pdf.js's viewer (DocWriter's copy, /vendor/pdfjs): one viewer kept from run to run, each new build opened
 // in it where the reader was -- its page, zoom and place (the viewer's `_location`, as a bookmark it opens at) -- not on
-// page 1 again. In the dashboard's colours; the PDF's own scripts not run.
+// page 1 again. In the dashboard's colours; the PDF's own scripts not run. Its sidebar (pages, outline) closed when it
+// opens, whatever the PDF asks (hyperref's PDFs ask for their outline): the reader's toggle opens it, and a new build
+// keeps it as the reader left it.
+const PV_NO_SIDEBAR = 0;                             // pdf.js's SidebarView.NONE
 const pvViewer = (url) => `/vendor/pdfjs/web/viewer.html?file=${encodeURIComponent(url)}`;
 function pvPdf(pv, box, url) {
   const had = pv.pdf;
@@ -507,6 +510,10 @@ async function pvPdfOpen(f, url) {
   if (!app || !app.pdfViewer || !app.initialized) { f.frame.src = pvViewer(url); return; }
   const at = app.pdfViewer._location;
   if (at && at.pdfOpenParams) app.initialBookmark = at.pdfOpenParams.slice(1);
+  try {                                              // its sidebar as it is: open on the same view, or closed
+    const side = app.pdfSidebar ? app.pdfSidebar.visibleView : PV_NO_SIDEBAR;
+    f.frame.contentWindow.PDFViewerApplicationOptions.set("sidebarViewOnLoad", side);
+  } catch (e) { /* an older viewer */ }
   try { await app.open({ url }); } catch (e) { f.frame.src = pvViewer(url); }
 }
 function pvPdfTheme(f) {
@@ -627,6 +634,7 @@ document.addEventListener("webviewerloaded", (ev) => {     // the viewer, before
   try {                                              // its stored preferences would set it again: not read
     w.PDFViewerApplicationOptions.set("disablePreferences", true);
     w.PDFViewerApplicationOptions.set("enableScripting", false);
+    w.PDFViewerApplicationOptions.set("sidebarViewOnLoad", PV_NO_SIDEBAR);
   } catch (e) { /* an older viewer */ }
 });
 // The output, as it comes: written once a frame, kept scrolled to its end unless the reader scrolled up.

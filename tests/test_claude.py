@@ -565,6 +565,70 @@ class HookTest(unittest.TestCase):
         self.assertEqual(client.asked, [])
 
 
+class StoredSearchClient(FakeClient):
+    """Answers with a tool search the channel stored earlier (loading `mcp__web__type`) in front of the events."""
+
+    async def request(self, op, body=None, timeout=None):
+        answer = await super().request(op, body, timeout)
+        if "context" in answer:
+            answer["context"] = SEARCH + answer["context"]
+        return answer
+
+
+#: An earlier turn's tool search, as stored: its call and its result, a reference to the tool it loaded.
+SEARCH = [{"type": "tool_call", "payload": {"role": "assistant", "content": [
+              {"type": "tool_use", "id": "toolu_s", "name": "ToolSearch", "input": {"query": "select:mcp__web__type"}}]}},
+          {"type": "tool_output", "payload": {"role": "user", "content": [
+              {"type": "tool_result", "tool_use_id": "toolu_s",
+               "content": [{"type": "tool_reference", "tool_name": "mcp__web__type"}]}]}}]
+
+
+def references(messages):
+    return [r for m in messages for b in (m["content"] if isinstance(m.get("content"), list) else [])
+            if b.get("type") == "tool_result" and isinstance(b.get("content"), list) for r in b["content"]]
+
+
+class ToolReferencesTest(unittest.TestCase):
+    """A tool search's stored result names a tool the request may no longer offer (Claude Code compacted its own
+    history since, or the tool's MCP server was not connected yet when the turn began): the API refuses such a
+    reference ("Tool reference 'mcp__ag-browser__type' not found in available tools", job_apps 2026-11-03)."""
+
+    def test_a_reference_to_a_tool_not_offered_is_made_words(self):
+        out = back.to_messages(SEARCH, [], offered={"Bash", "ToolSearch"})
+        self.assertEqual(references(out), [{"type": "text", "text": "Loaded mcp__web__type. It is not available now."}])
+        self.assertEqual(out[0], SEARCH[0]["payload"])                  # the call itself as it was
+
+    def test_a_reference_to_a_tool_offered_stays(self):
+        for offered in ({"mcp__web__type"}, None):                      # None: nothing to check against
+            out = back.to_messages(SEARCH, [], offered=offered)
+            self.assertEqual(references(out), [{"type": "tool_reference", "tool_name": "mcp__web__type"}], offered)
+
+    def test_a_tool_defined_inline_counts_as_offered(self):
+        added = {"role": "system", "content": [{"type": "tool_addition", "tool": {"type": "tool_definition",
+                                                "definition": {**TOOL, "name": "mcp__web__type"}}}]}
+        out = back.only_offered_references([added] + [e["payload"] for e in SEARCH], set())
+        self.assertEqual(references(out), [{"type": "tool_reference", "tool_name": "mcp__web__type"}])
+
+    def test_only_the_missing_references_of_a_result_change(self):
+        result = {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t", "content": [
+            {"type": "tool_reference", "tool_name": "a"}, {"type": "tool_reference", "tool_name": "b"}]}]}
+        out = back.only_offered_references([result], {"a"})
+        self.assertEqual(references(out), [{"type": "tool_reference", "tool_name": "a"},
+                                           {"type": "text", "text": "Loaded b. It is not available now."}])
+        self.assertEqual(result["content"][0]["content"][1]["type"], "tool_reference")    # the input is not changed
+
+    def test_the_hook_checks_the_references_against_the_request_s_tools(self):
+        for tools, kept in (([{"name": "Bash"}, {"name": "ToolSearch"}], False),
+                            ([{"name": "ToolSearch"}, {"name": "mcp__web__type", "defer_loading": True}], True)):
+            body = {"model": "m", "system": [{"type": "text", "text": "SYS"}], "tools": tools,
+                    "messages": first_turn(), "metadata": {}}
+            req = SimpleNamespace(method="POST", path="/v1/messages", label="ag-x",
+                                  headers={"X-Claude-Code-Session-Id": "sess"}, body=body)
+            out = HookTest.run_hook(None, req, StoredSearchClient())
+            self.assertEqual([r["type"] for r in references(out["messages"])],
+                             ["tool_reference" if kept else "text"], tools)
+
+
 class StoreClient:
     """A stand-in for the context manager's server: stores each event once by its id, in order, answers a
     rewrite with everything stored -- as a read before any build does -- and `latest` with the newest stored."""

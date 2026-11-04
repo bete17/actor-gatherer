@@ -4,9 +4,10 @@ manager's events (to_events.py), and the context back as messages (to_messages.p
 from ag.integrations.tools.ag_orchestrator.adaptor import CHANNEL, AG, CWD, HarnessAdaptor
 
 import copy
+from typing import Optional
 
 from .to_events import CONTEXT, EVENT_TYPES, HARNESS, OUTPUTS, Continuity, to_events
-from .to_messages import to_messages
+from .to_messages import offered_tools, to_messages
 
 
 class ClaudeAdaptor(HarnessAdaptor):
@@ -22,15 +23,18 @@ class ClaudeAdaptor(HarnessAdaptor):
     properties = (CHANNEL, CWD)
     system_messages = "keep"
     continuity = None       # where the request carries on (to_events.py), for an adaptor `for_channel` made
+    offered = None          # the names of the tools the request offers (to_messages.offered_tools); None: unchecked
 
-    def for_channel(self, continuity: Continuity) -> "ClaudeAdaptor":
-        """This adaptor, for one request of a channel: its events' ids carry on from the channel's stored ones."""
+    def for_channel(self, continuity: Continuity, tools: Optional[list] = None) -> "ClaudeAdaptor":
+        """This adaptor, for one request of a channel: its events' ids carry on from the channel's stored ones, and
+        the context's tool search references name only tools the request's `tools` offers."""
         a = copy.copy(self)
         a.continuity = continuity
+        a.offered = offered_tools(tools)
         return a
 
     def to_events(self, messages: list):
         return to_events(messages, self.continuity, self.event_types)
 
     def to_messages(self, context: list, messages: list):
-        return to_messages(context, messages, self.system_messages)
+        return to_messages(context, messages, self.system_messages, self.offered)

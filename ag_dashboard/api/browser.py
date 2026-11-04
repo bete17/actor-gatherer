@@ -100,7 +100,8 @@ def mcp_server(srv: Parts, key: Key, raw: Raw) -> Response:
     bs = _browsers(srv)
     if bs is None:
         return not_found()
-    status, value = mcp.handle(raw, browser.TOOLS, lambda name, args: bs.call(key, name, args), browser.NAME)
+    status, value = mcp.handle(raw, browser.TOOLS, lambda name, args: bs.call(key, name, args), browser.NAME,
+                               at=mcp.endpoint("browser", key))
     return answer(value, status) if value is not None else send(202, b"", "text/plain")
 
 
