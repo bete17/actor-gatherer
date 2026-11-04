@@ -280,7 +280,8 @@ class RoleTest(unittest.TestCase):
                                         "cwd": "/work"})
         self.assertEqual(args[0], "--mcp-config")
         server = json.loads(args[1])["mcpServers"][browser.NAME]
-        self.assertEqual(server, {"type": "http", "url": "http://127.0.0.1:4999/browser/w/0123456789abcdef/mcp"})
+        self.assertEqual(server, {"type": "http", "url": "http://127.0.0.1:4999/browser/w/0123456789abcdef/mcp",
+                                  "alwaysLoad": True})                     # not held back behind its tool search
         self.assertEqual(args[2], "--append-system-prompt")
         self.assertIn("<browser_state>", args[3])
         self.assertIn("/work", args[3])
@@ -1456,6 +1457,85 @@ class ToldTest(ChromeBase):
         self.js("document.querySelectorAll('button')[2].remove()")
         self.assertIsNone(self.b.where(13))                                  # gone
         self.assertIsNone(self.b.where(99))
+
+
+@unittest.skipUnless(browser.available(), "no Chrome here")
+class StepsTest(ChromeBase):
+    """`steps`: several actions in one call, in order, each with its own checks; stopped at the first not done."""
+
+    def setUp(self):
+        super().setUp()
+        self.text("navigate", url=self.write("invoices.html", INVOICES))
+        self.outline = self.text("snapshot")
+        self.note, self.a, self.b_ = (self.ref(self.outline, 'textbox "Note'), self.ref(self.outline, "button \"Agent's"),
+                                      self.ref(self.outline, "button \"User's"))
+
+    def said(self, got: dict) -> str:
+        return "\n".join(c["text"] for c in got["content"] if c.get("type") == "text")
+
+    def test_each_runs_in_order_its_checks_of_what_the_steps_before_did_and_the_rest_stop_at_one_not_done(self):
+        typed = {"ref": self.note, "js": "el.value === 'hello'"}
+        got = self.bs.call(self.key, "steps", {"steps": [
+            {"tool": "type", "ref": self.note, "text": "hello", "expect": [{"ref": self.note, "js": "el.value === ''"}]},
+            {"tool": "click", "ref": self.a, "expect": [typed]},
+            {"tool": "click", "ref": self.b_, "expect": [typed]}]})
+        self.assertFalse(got.get("isError"), got)
+        said = self.said(got)
+        self.assertIn('Step 1 of 3, type: Typed 5 characters into textbox "Note"', said)
+        self.assertIn("Step 3 of 3, click: Clicked button \"User's\"", said)
+        self.assertEqual(self.js("order.textContent"), "AB")
+        self.assertEqual([a["text"] for a in self.b.state()["actions"]][-3:],
+                         ['Typed "hello" into "Note"', "Clicked \"Agent's\"", "Clicked \"User's\""])   # each shown
+        got = self.bs.call(self.key, "steps", {"steps": [
+            {"tool": "click", "ref": self.a, "expect": [typed]},
+            {"tool": "click", "ref": self.b_, "expect": [{"ref": self.note, "js": "el.value === 'bye'"}]},
+            {"tool": "click", "ref": self.a, "expect": [typed]},
+            {"tool": "click", "ref": self.a, "expect": [typed]}]})
+        self.assertTrue(got.get("isError"))
+        said = self.said(got)
+        self.assertIn("Step 2 of 4, click: Not done: expect 1 is false: el.value === 'bye'", said)
+        self.assertIn("Stopped there: steps 3-4 not run.", said)
+        self.assertEqual(self.js("order.textContent"), "ABA")            # the first only
+        self.assertFalse(self.b.state()["actions"][-1]["ok"])
+
+    def test_text_appended_goes_at_the_end_of_what_the_field_holds(self):
+        self.js("note.value = 'michigan primary results'")
+        self.text("type", ref=self.note, text=" 2026", append=True)
+        self.assertEqual(self.js("note.value"), "michigan primary results 2026")   # not at its start, where focus put it
+        self.js("note.setSelectionRange(0, 8)")                              # some of it selected: still at the end
+        self.text("type", ref=self.note, text="!", append=True)
+        self.assertEqual(self.js("note.value"), "michigan primary results 2026!")
+        self.text("type", ref=self.note, text="new")                         # not appended: what it holds replaced
+        self.assertEqual(self.js("note.value"), "new")
+
+    def test_the_page_after_them_with_snapshot(self):
+        more = self.ref(self.outline, 'button "Show more')
+        got = self.bs.call(self.key, "steps", {"steps": [{"tool": "click", "ref": more, "expect": [
+            {"ref": more, "js": "el.innerText === 'Show more'"}]}], "snapshot": True})
+        said = self.said(got)
+        self.assertIn('Step 1 of 1, click: Clicked button "Show more"', said)
+        self.assertIn("The page after them:\npage: Invoices", said)
+        self.assertIn('button "Show less"', said)
+
+    def test_a_step_is_one_of_the_tools_that_act_given_as_its_own_call_or_as_json(self):
+        got = self.bs.call(self.key, "steps", {"steps": [{"tool": "snapshot"}, {"tool": "click", "ref": self.a,
+                                                                                 "expect": HOLDS}]})
+        self.assertTrue(got.get("isError"))
+        self.assertIn('a step is a call of one of', self.said(got))
+        self.assertIn("Stopped there: step 2 not run.", self.said(got))
+        self.assertEqual(self.js("order.textContent"), "")
+        n = len(self.b.state()["actions"])
+        got = self.bs.call(self.key, "steps", {"steps": [{"tool": "click", "ref": self.a}]})   # no checks: its slip
+        self.assertIn("needs `expect`", self.said(got))
+        self.assertEqual(len(self.b.state()["actions"]), n)               # not shown the user
+        got = self.bs.call(self.key, "steps", {"steps": json.dumps([{"tool": "click", "args": {"ref": self.a},
+                                                                      "expect": HOLDS}])})
+        self.assertFalse(got.get("isError"), got)
+        self.assertEqual(self.js("order.textContent"), "A")
+        self.assertIn("needs a list of steps", self.said(self.bs.call(self.key, "steps", {"steps": []})))
+        listed = {t["name"]: t for t in browser.TOOLS}
+        self.assertEqual(listed["steps"]["inputSchema"]["required"], ["steps"])
+        self.assertIn("## Several actions in one call", browser.instructions(self.root))
 
 
 class UsersChromeTest(Home):

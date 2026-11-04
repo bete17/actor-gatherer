@@ -46,8 +46,9 @@ piece is:
     what the user points  `pick`: an element (the one under a click, its tag, text, CSS path, HTML, styles, role and name,
     at                    and a picture of it) or an area (a picture of it, its text): p1, p2, ... a ref the tools take
     the agent's tools     `TOOLS` + mcp.py: snapshot, click, type, press, select, hover, scroll, navigate, back, forward,
-                          reload, tabs, screenshot, console, evaluate, wait, dialog, upload: an MCP server the actor
-                          reaches at /browser/w/<key>/mcp, each call run here, on the tab -- with or without a page open.
+                          reload, tabs, screenshot, console, evaluate, wait, dialog, upload, and `steps` (several of
+                          them in one call, in order, stopped at the first not done): an MCP server the actor reaches
+                          at /browser/w/<key>/mcp, each call run here, on the tab -- with or without a page open.
                           One that acts (ACTS) carries `expect`, the agent's checks of what it relies on that the user
                           could have changed meanwhile -- JavaScript run in the page twice (`Browsers.call`): as it is,
                           a false one refused then, holding nothing; again right before the action, the user's input
@@ -2924,6 +2925,9 @@ def instructions(root: str) -> str:
         "- `snapshot` shows the page's elements, each with a ref ([e12]); act on an element by its ref. What you do may "
         "change the page: take a new snapshot before acting on what you have not seen.\n"
         "- A ref that stopped working means the page changed (by you, the user, or the page itself): take a new snapshot.\n"
+        "- To search a site whose search address you know (https://www.google.com/search?q=..., a site's own ?q= "
+        "page), `navigate` to that address instead of typing into its search box: one call, and some sites -- Google "
+        "among them -- answer a search typed into the page seconds slower than the same search opened by address.\n"
         "- Each message from the user ends with <browser_state>: the page they were on, what they did in the browser "
         "since their last message, and the elements or areas they picked to point at what they mean (p1, p2, ...: "
         "refs the tools take, as e-refs, each with a picture of it you can read).\n"
@@ -2958,7 +2962,16 @@ def instructions(root: str) -> str:
         "check to get past it: when one fails, the user changed something -- take a new snapshot, see what they did, "
         "and decide again (ask them if their change makes the task unclear).\n"
         "- An action is also refused if its element's role or name is not what your snapshot showed: the page put "
-        "something else there.").strip()
+        "something else there.\n\n"
+        "## Several actions in one call\n\n"
+        "Each call you make is a round trip the user waits through. When you know your next few actions without "
+        "looking at the page again -- filling in a form's fields, typing a search and pressing Enter, ticking several "
+        "boxes, then submitting -- do them in one `steps` call, not one call each. Each step is a tool's call as you "
+        "would make it alone, with its own `expect`; in it, also check what the steps before it should have done (the "
+        "field you typed into holds your text, the menu you opened is open), so a step that went wrong stops the rest. "
+        "The steps run in order and stop at the first that is not done. Pass `snapshot: true` to get the page after "
+        "them instead of taking a snapshot in another call. Steps can act only on elements you have seen: end them "
+        "at a step that opens another page, and look at it before going on.").strip()
 
 
 def launch_args(s: dict) -> List[str]:
@@ -2999,6 +3012,9 @@ REF = {"type": "string", "description": "the element's ref: e12 from a snapshot,
 ACTS = frozenset({"click", "type", "press", "select", "hover", "scroll", "navigate", "back", "forward", "reload", "tabs",
                   "evaluate", "upload"})
 MAX_CHECKS = 20
+#: What a step of `steps` may be: a tool that acts, `wait` for what one brings about, `dialog` for one it opens.
+STEP_TOOLS = ACTS | {"wait", "dialog"}
+MAX_STEPS = 20
 EXPECT = {"type": "array", "minItems": 1, "maxItems": MAX_CHECKS,
           "description": "What this action relies on that the user could have changed: they may be using the page "
                          "while you think and write this call. Each check runs in the page right before the action, "
@@ -3106,6 +3122,15 @@ TOOLS = [
           {"accept": {"type": "boolean"}, "text": {"type": "string"}}, ["accept"]),
     _acting("upload", "Give a file input files from this machine.",
           {"ref": REF, "paths": {"type": "array", "items": {"type": "string"}}}, ["ref", "paths"]),
+    _tool("steps", "Several actions in one call, done in order: each step a call of one of these tools, as you would "
+          "make it alone -- {\"tool\": \"type\", \"ref\": \"e3\", \"text\": \"Jane\", \"expect\": [...]} -- its own "
+          "`expect` run right before it, which may also check what the steps before it should have done (the field "
+          "now holds the text typed). It stops at the first step not done: the steps after it are not run. "
+          "`snapshot`: the page's snapshot after them, done or not.",
+          {"steps": {"type": "array", "minItems": 1, "maxItems": MAX_STEPS,
+                     "items": {"type": "object", "required": ["tool"],
+                               "properties": {"tool": {"type": "string", "enum": sorted(STEP_TOOLS)}}}},
+           "snapshot": {"type": "boolean", "description": "the page's snapshot after the steps"}}, ["steps"]),
 ]
 
 
@@ -3343,6 +3368,8 @@ class Browsers:
         Browser's `acts` from them until it has acted: the user's input waits those few milliseconds, as theirs is not
         to land between a check and the action (`_users`). What the user did since the agent last looked is told.
         The user is shown what it does, and once done or not, what it did, or didn't and why (`_done`, `_refused`)."""
+        if name == "steps":
+            return self._steps(key, args)
         b = self.get(key)
         begun = time.time()
         acts = name in ACTS and not (name == "tabs" and (args.get("action") or "list") == "list")
@@ -3380,6 +3407,46 @@ class Browsers:
             self._let_go(b)
             b.doing = ""
             b.acted()
+
+    def _steps(self, key: str, args: dict) -> dict:
+        """`steps`: each step run as its own tool's call would be (`call`: its checks, what the user is shown), in
+        order, until one is not done -- the rest not run. Its result: each step's, numbered; with `snapshot`, the page
+        after them."""
+        steps = args.get("steps")
+        if isinstance(steps, str):                       # (the list as JSON, as some harnesses pass one)
+            try:
+                steps = json.loads(steps)
+            except ValueError:
+                pass
+        if not isinstance(steps, list) or not steps:
+            return mcp.result("Not done: `steps` needs a list of steps, each {\"tool\": ..., then that tool's own "
+                              "arguments, with its `expect`}", error=True)
+        if len(steps) > MAX_STEPS:
+            return mcp.result(f"Not done: at most {MAX_STEPS} steps in one call", error=True)
+        out, failed = [], False
+        for i, step in enumerate(steps, 1):
+            tool = step.get("tool") if isinstance(step, dict) else None
+            if tool not in STEP_TOOLS:
+                got = mcp.result(f"Not done: a step is a call of one of {', '.join(sorted(STEP_TOOLS))} "
+                                 f"(\"tool\"), not {json.dumps(tool)}", error=True)
+            else:
+                given = step.get("args") if isinstance(step.get("args"), dict) else {}
+                got = self.call(key, tool, {**given, **{k: v for k, v in step.items() if k not in ("tool", "args")}})
+            said = "\n".join(c.get("text", "") for c in got.get("content") or [] if c.get("type") == "text")
+            out.append({"type": "text", "text": f"Step {i} of {len(steps)}, {tool}: {said}"})
+            out.extend(c for c in got.get("content") or [] if c.get("type") != "text")
+            if got.get("isError"):
+                failed = True
+                left = len(steps) - i
+                if left:
+                    out.append({"type": "text", "text": f"Stopped there: step {i + 1} not run." if left == 1 else
+                                f"Stopped there: steps {i + 1}-{len(steps)} not run."})
+                break
+        if args.get("snapshot"):
+            snap = self.call(key, "snapshot", {})
+            out.append({"type": "text", "text": "The page after them:\n" + "\n".join(
+                c.get("text", "") for c in snap.get("content") or [] if c.get("type") == "text")})
+        return {"content": out, **({"isError": True} if failed else {})}
 
     def _done(self, b: Browser, name: str, args: dict, ctx: dict, got: dict, begun: float) -> None:
         """An action done, shown the user (`Browser.show`): what it did, and the element it was on (marked by this
@@ -3753,6 +3820,8 @@ class Browsers:
                                                       "returnByValue": True}, tab.session).get("result", {}).get("value")
             if had and not text:
                 _press(cdp, tab, "Backspace")
+        else:                    # the caret at its end: focus may leave it at the start, or on a selection it replaces
+            cdp.call("Runtime.callFunctionOn", {"objectId": obj, "functionDeclaration": END_JS}, tab.session)
         if text:
             cdp.call("Input.insertText", {"text": text}, tab.session, until=lambda: tab.dialog is not None)
         if args.get("submit") and not tab.dialog:
@@ -4041,6 +4110,14 @@ CLEAR_JS = r"""function () {
   if (this.isContentEditable) { const r = document.createRange(); r.selectNodeContents(this);
     const s = getSelection(); s.removeAllRanges(); s.addRange(r); return !!this.textContent; }
   return false;
+}"""
+#: The caret at the end of a field's text (or an editable element's), nothing selected: what is typed then goes after.
+END_JS = r"""function () {
+  if (typeof this.value === 'string' && typeof this.setSelectionRange === 'function') {
+    try { this.setSelectionRange(this.value.length, this.value.length); return; } catch (e) { /* email, number: none */ }
+  }
+  if (this.isContentEditable) { const r = document.createRange(); r.selectNodeContents(this); r.collapse(false);
+    const s = getSelection(); s.removeAllRanges(); s.addRange(r); }
 }"""
 SELECT_JS = r"""function (values) {
   if (this.localName !== 'select') return 'not a <select>';
