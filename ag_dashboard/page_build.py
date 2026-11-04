@@ -88,14 +88,15 @@ def pnpm() -> List[str]:
         version = ""
     if not _node_ok(version):
         raise NoTools(f"building the dashboard's page needs {NODE_SAID}; this one is {version.strip() or 'unknown'}")
+    # Each by its full path: on Windows these are .cmd files, which subprocess can't start by a bare name
     if shutil.which("corepack"):
-        return ["corepack", "pnpm"]
+        return [shutil.which("corepack"), "pnpm"]
     if shutil.which("pnpm"):
-        return ["pnpm"]
+        return [shutil.which("pnpm")]
     if shutil.which("npx"):
         with open(os.path.join(FRONT, "package.json"), encoding="utf-8") as fh:
             named = json.load(fh).get("packageManager") or "pnpm"
-        return ["npx", "--yes", named.split("+")[0]]
+        return [shutil.which("npx"), "--yes", named.split("+")[0]]
     raise NoTools("building the dashboard's page needs pnpm: Node's corepack, pnpm or npx, and none is on PATH")
 
 
