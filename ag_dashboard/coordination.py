@@ -20,6 +20,10 @@ reach them: `ag actors` (ag/cli/actors.py), run in its shell, asks this dashboar
               checkout by the dashboard (`approve`: each change waiting for the user in the Editor)
     when      the asker told, by an update in its conversation, once an actor's turn is over (WATCHES)
     watches   what the asker asked to be told and has not been yet; `unwatch`, one of them dropped
+    save      an actor of its gatherer saved for later, as the bookmark in the list saves one -- in a folder of the
+              gatherer's Saved list if one is named (made if new), or in none (saved.py); `unsave`, no longer
+    folders   the gatherer's folders of saved actors, and the actors saved in each and in none
+    folder    a folder of them made (`new`), renamed (`rename`) or deleted (`delete`: its actors still saved, in none)
 
 The asker is the actor whose command it is, by the id the command found (its harness's own session variable, else
 sessions.py's ACTOR_VAR, set in every session the dashboard starts): a session started here, by its id or the one it
@@ -76,7 +80,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import harness_kit
 
-from . import actions, branches, data, editor, files, naming, sessions
+from . import actions, branches, data, editor, files, naming, saved, sessions
 from .apps import APPS, App
 
 COORDINATOR = sessions.COORDINATOR
@@ -284,12 +288,16 @@ class Coordination:
     def _sender(self, me: dict) -> dict:
         return {"kind": "coordinator"} if self._is_coordinator(me) else {"kind": "actor", "id": me["channel"], "name": _name(me)}
 
-    def _view(self, a: dict, me: Optional[dict] = None) -> dict:
+    def _view(self, a: dict, me: Optional[dict] = None, kept: Optional[Tuple[dict, dict]] = None) -> dict:
         """An actor as `ag actors` shows it -- by its whole id: a codex thread's opens with the time it was made, so
         codex actors started within a minute share their first characters (a command takes any start of an id that
-        names one actor)."""
+        names one actor). With `kept` -- its gatherer's (_kept) -- whether it is saved, and in which folder."""
         s = a.get("session") or {}
-        return {"id": a["channel"], "channel": a["channel"], "name": NAME if self._is_coordinator(a) else _name(a),
+        mark = {}
+        if kept is not None:
+            key = _saved_as(a, kept[0])
+            mark = {"saved": key is not None, "folder": kept[1].get(key) if key else None}
+        return {**mark, "id": a["channel"], "channel": a["channel"], "name": NAME if self._is_coordinator(a) else _name(a),
                 "status": a.get("status"), "harness": a.get("harness") or s.get("harness"), "cwd": a.get("cwd") or s.get("cwd"),
                 "asked": _clip(_unwrapped(a.get("last_user_message")), ASKED_CHARS),
                 "recap": _clip((a.get("recap") or {}).get("text"), ASKED_CHARS),
@@ -303,7 +311,8 @@ class Coordination:
         shown = [a for a in agents if every or a.get("status") != data.CLOSED or a["channel"] == me["channel"]
                  or self._is_coordinator(a)]
         shown.sort(key=lambda a: (not self._is_coordinator(a), -(a.get("last") or 0)))
-        return {"gatherer": g, "you": me["channel"], "actors": [self._view(a, me) for a in shown],
+        kept = _kept(g)
+        return {"gatherer": g, "you": me["channel"], "actors": [self._view(a, me, kept) for a in shown],
                 "closed": len(agents) - len(shown)}
 
     def show(self, actor: str, ref: str) -> dict:
@@ -312,7 +321,7 @@ class Coordination:
         if a is None:
             raise CoordinationError("the gatherer has no gatherer agent yet")
         got = _latest(g, a["channel"], a.get("cwd"))
-        return {**self._view(a, me), "said": _clip(got.get("said"), SAID_CHARS),
+        return {**self._view(a, me, _kept(g)), "said": _clip(got.get("said"), SAID_CHARS),
                 "asked": _clip(_unwrapped(got.get("asked")), SAID_CHARS) or self._view(a, me)["asked"], "turns": got.get("turns", 0),
                 "now": got.get("now"), "changed": got.get("changed") or []}
 
@@ -474,6 +483,73 @@ class Coordination:
 
     # ---- the page's
 
+    # ---- the user's saved actors, and their folders (saved.py): as the list's bookmark and its folders keep them
+
+    def _saved_ref(self, actor: str, ref: str) -> Tuple[str, dict, dict, str]:
+        """(its gatherer, the asker, the actor `ref` names, the channel it is saved as, or would be)."""
+        g, me, agents = self._asker(actor)
+        a = self._find(g, ref, agents)
+        if a is None:
+            raise CoordinationError("the gatherer has no gatherer agent yet")
+        if self._is_coordinator(a):
+            raise CoordinationError("the gatherer agent is not saved for later: it is always at the top of its gatherer")
+        return g, me, a, _saved_as(a, saved.stored().get(g, {})) or a["channel"]
+
+    def save(self, actor: str, ref: str, folder: Optional[str] = None, unfiled: bool = False) -> dict:
+        """The actor `ref` saved for later: in `folder` if one is named (made if new), in none if `unfiled`, else in
+        the one it was in, if any."""
+        g, me, a, key = self._saved_ref(actor, ref)
+        try:
+            saved.choose(g, key, True, None if unfiled else folder if folder else saved.KEEP)
+        except saved.FolderError as exc:
+            raise CoordinationError(str(exc)) from None
+        self._rang(g)
+        return {"actor": self._view(a, me, _kept(g))}
+
+    def unsave(self, actor: str, ref: str) -> dict:
+        g, me, a, key = self._saved_ref(actor, ref)
+        saved.choose(g, key, False)
+        self._rang(g)
+        return {"actor": self._view(a, me, _kept(g))}
+
+    def folders(self, actor: str) -> dict:
+        """The gatherer's folders, each with the actors saved in it, and the saved actors in none."""
+        g, me, agents = self._asker(actor)
+        kept = _kept(g)
+        by: Dict[str, List[dict]] = {name: [] for name in saved.folders().get(g, {})}
+        unfiled = []
+        for a in sorted(agents, key=lambda a: -(a.get("last") or 0)):
+            v = self._view(a, me, kept)
+            if v["folder"]:
+                by.setdefault(v["folder"], []).append(v)
+            elif v["saved"]:
+                unfiled.append(v)
+        return {"gatherer": g, "folders": [{"name": n, "actors": xs} for n, xs in by.items()], "unfiled": unfiled}
+
+    def folder(self, actor: str, do: str, name: str, to: str = "") -> dict:
+        """A folder of the gatherer's saved actors made (`new`), renamed (`rename`, as `to`) or deleted (`delete`) ->
+        what `folders` says, after, and what was done."""
+        g, _, _ = self._asker(actor)
+        try:
+            if do == "new":
+                saved.make_folder(g, name)
+            elif do == "rename":
+                saved.rename_folder(g, name, to)
+            elif do == "delete":
+                saved.delete_folder(g, name)
+            else:
+                raise CoordinationError("`ag actors folder` new, rename or delete?")
+        except saved.FolderError as exc:
+            raise CoordinationError(str(exc)) from None
+        self._rang(g)
+        return {**self.folders(actor), "done": do, "name": saved.folder_name(name),
+                **({"to": saved.folder_name(to)} if do == "rename" else {})}
+
+    def _rang(self, gatherer: str) -> None:
+        """The pages told: what the list shows besides its actors' data changed (live.py's "list")."""
+        if self.ring is not None:
+            self.ring(gatherer, what="list")
+
     def page_coordinator(self, gatherer: str, cwd: Optional[str] = None, harness: Optional[str] = None) -> dict:
         """The gatherer agent of `gatherer`, for the page to show: started (with no message yet) if it has none."""
         if not sessions.GATHERER.fullmatch(gatherer or ""):
@@ -632,6 +708,18 @@ class Coordination:
 
     def close(self) -> None:
         self.stop.set()
+
+
+def _kept(gatherer: str) -> Tuple[dict, dict]:
+    """What saved.py keeps of `gatherer`: ({channel: when saved}, {channel: its folder})."""
+    return saved.stored().get(gatherer, {}), {c: name for name, cs in saved.folders().get(gatherer, {}).items() for c in cs}
+
+
+def _saved_as(a: dict, saved_ones: dict) -> Optional[str]:
+    """The channel the actor `a` is saved as, of {channel: when}: its own, else the one it was started under (a codex
+    session's, renamed to its thread since), as the page's `savedAs` finds it; None: not saved."""
+    started = (a.get("session") or {}).get("started_as")
+    return a["channel"] if a["channel"] in saved_ones else started if started and started in saved_ones else None
 
 
 def _latest(gatherer: str, channel: str, cwd: Optional[str]) -> dict:

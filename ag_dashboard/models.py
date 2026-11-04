@@ -76,6 +76,7 @@ class _Home(Answer):
     hiding: Optional[Dict[str, Any]] = None
     titles: Optional[Dict[str, Any]] = None
     saved: Optional[Dict[str, Any]] = None
+    saved_folders: Optional[Dict[str, Dict[str, List[str]]]] = None
     seen: Optional[Dict[str, Any]] = None
     harness_info: Optional[Dict[str, Any]] = None
     harness_default: Optional[str] = None

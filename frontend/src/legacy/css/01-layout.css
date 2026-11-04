@@ -60,14 +60,13 @@ button.agent-group:hover { color: var(--ink-2); }
 .agent .avatar .dw-badge { position: absolute; left: -3px; bottom: -3px; width: 13px; height: 13px; display: block; }
 .agent .asked { font-size: 13px; line-height: 1.4; font-weight: 500; color: var(--ink); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
   overflow: hidden; overflow-wrap: anywhere; }
-/* Claude Code's recap of the session, under what it was last asked: smaller, quieter, newer than the message */
-.agent .recap { font-size: 12px; line-height: 1.4; color: var(--ink-2); margin-top: 3px; display: -webkit-box; -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical; overflow: hidden; }
-.agent .recap .lbl { color: var(--muted); font-size: 10px; letter-spacing: .04em; text-transform: uppercase; margin-right: 5px; }
 .agent .asked.none { color: var(--muted); font-weight: 400; font-style: italic; }
-/* The session's name (codex's title for its thread), over what it was last asked, which then steps back */
+/* An actor's one line: its name (its harness's title for the session, or the reader's), else what it was last asked --
+   less bold, as it is not a name -- else that it has had no message */
 .agent .name { font-size: 13px; line-height: 1.4; font-weight: 600; color: var(--ink); white-space: nowrap; overflow: hidden;
   text-overflow: ellipsis; }
+.agent .name.unnamed { font-weight: 500; }
+.agent .name.none { color: var(--muted); font-weight: 400; font-style: italic; }
 .agent .name + .asked { font-size: 12px; font-weight: 400; color: var(--ink-2); -webkit-line-clamp: 2; }
 /* the one shown: its top line clicked names it */
 .agent[aria-current="true"] .name[title], .agent[aria-current="true"] .asked[title] { cursor: text; }
@@ -78,7 +77,6 @@ button.agent-group:hover { color: var(--ink-2); }
 :is(.agent, .gatherer-row) .name-box:focus { border-color: var(--ink-2); }
 .gatherer-row .name-box { flex: 1 1 60%; min-width: 0; width: auto; margin: 4px 8px; font-size: 14px; }
 :is(.agent, .gatherer-row) .name-box::placeholder { color: var(--muted); font-weight: 400; }
-.agent.renaming .name-box + .asked { font-size: 12px; font-weight: 400; color: var(--ink-2); -webkit-line-clamp: 2; }
 .agent .meta { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; margin-top: 4px; font-variant-numeric: tabular-nums; }
 .agent .meta .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--axis); flex: none; }
 .agent .meta .dot.building { background: var(--warning); } .agent .meta .dot.failed { background: var(--critical); }
@@ -110,9 +108,10 @@ button.agent-group:hover { color: var(--ink-2); }
 .status.finished i { background: var(--s1); }
 .status.failed i { background: var(--critical); }
 .status.closed i { background: none; box-shadow: inset 0 0 0 1.5px var(--axis); }
-/* The list's two other shapes (listMode): folded to a rail at the left -- the actors that want the reader or are at
-   work, as their avatars, each with its status's dot -- or over the whole page, the monitor: a column for each
-   status, a card for each actor, saying what it is doing. The panes stay where they are, under it, at their size */
+/* The list's two other shapes (listMode): folded to a rail at the left -- the list small: each gatherer's name over its
+   actors, each its avatar with its status's dot and its name in small under it; hovered, a card saying who it is -- or
+   over the whole page, the monitor: a column for each status, a card for each actor, saying what it is doing. The panes
+   stay where they are, under it, at their size */
 /* the list's buttons: in its own head ("Agents"); in the page's header, where the list is folded or over the page */
 .list-btns { display: flex; gap: 2px; flex: none; }
 header .brand .list-btns { display: none; margin-left: -6px; }
@@ -120,7 +119,7 @@ header .brand .list-btns { display: none; margin-left: -6px; }
 .list-btn { border: 0; background: none; padding: 5px; border-radius: 6px; color: var(--muted); display: inline-flex; align-items: center; flex: none; }
 .list-btn:hover { color: var(--ink); background: var(--wash); }
 .list-btn svg { display: block; }
-:root:is(.list-folded, .list-was-folded) .layout { grid-template-columns: 56px minmax(0, 1fr); }
+:root:is(.list-folded, .list-was-folded) .layout { grid-template-columns: 76px minmax(0, 1fr); }
 :root.list-folded header .brand { justify-content: center; padding: 8px 0; }
 :root.list-folded header :is(h1, .home, .about-btn, .lb-full) { display: none; }
 :root.list-folded header .brand .list-btns { margin: 0; }
@@ -128,15 +127,51 @@ header .brand .list-btns { display: none; margin-left: -6px; }
 .rail, .monitor { display: none; }
 :root.list-folded .rail { display: flex; flex-direction: column; align-items: center; flex: 1; min-height: 0; padding: 8px 0; }
 .rail .r-actors { flex: 1 1 auto; min-height: 0; overflow-y: auto; scrollbar-width: none; display: flex; flex-direction: column; align-items: center;
-  gap: 4px; padding: 6px 0; width: 100%; }
-.rail .r-actor { position: relative; border: 0; background: none; padding: 4px; border-radius: 10px; flex: none; cursor: pointer; }
+  gap: 2px; padding: 4px 0 6px; width: 100%; }
+/* a gatherer: its name (the list's, the reader's title for it), a button folding it as the list does; folded, the
+   counts the list shows for it; a rule between one and the next */
+.rail .r-gatherer { display: flex; flex-direction: column; align-items: center; gap: 1px; width: 100%; flex: none; padding: 2px 0 4px; }
+.rail .r-gatherer + .r-gatherer { border-top: 1px solid var(--grid); padding-top: 6px; margin-top: 2px; }
+.rail .r-gname { display: flex; align-items: flex-start; justify-content: center; gap: 3px; width: 70px; box-sizing: border-box; border: 0; background: none;
+  padding: 3px 3px; border-radius: 5px; color: var(--ink-2); font-family: inherit; font-size: 10px; font-weight: 650; line-height: 1.2;
+  cursor: pointer; }
+.rail .r-gname .tx { min-width: 0; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.rail .r-gname .caret { flex: none; font-size: 7px; line-height: 12px; color: var(--muted); transition: transform .15s; }
+.rail .r-gname[aria-expanded="true"] .caret { transform: rotate(90deg); }
+:root.list-folded .rail .r-gname[aria-expanded="true"] .caret { display: none; }   /* open: its actors under it say so */
+.rail .r-gname:hover, .rail .r-gname:focus-visible { color: var(--ink); background: var(--wash); outline: none; }
+.rail .r-counts { display: flex; flex-wrap: wrap; justify-content: center; gap: 2px 6px; padding: 1px 4px 2px; font-size: 10px; color: var(--ink-2);
+  font-variant-numeric: tabular-nums; }
+.rail .r-counts .count { display: inline-flex; align-items: center; gap: 3px; }
+.rail .r-counts .count i { width: 6px; height: 6px; border-radius: 50%; background: var(--good); }
+.rail .r-counts .count.asking i { background: var(--warning); }
+.rail .r-counts .count.error i { background: var(--critical); }
+/* under its name, "+" and an actor's outline: a new actor in it (railNew); blinking while one starts */
+.rail .r-new { display: flex; align-items: center; justify-content: center; gap: 1px; height: 20px; padding: 0 8px; margin: 0 0 2px;
+  border: 0; border-radius: 6px; background: none; color: var(--muted); font: inherit; font-size: 13px; line-height: 1; cursor: pointer; flex: none; }
+.rail .r-new svg { display: block; pointer-events: none; }
+.rail .r-new:hover, .rail .r-new:focus-visible, .rail .r-new[aria-expanded="true"] { color: var(--ink); background: var(--wash); outline: none; }
+.rail .r-new:disabled { cursor: default; opacity: .45; }
+.rail .r-new:disabled:hover { color: var(--muted); background: none; }
+.rail .r-new.busy { opacity: 1; }
+.rail .r-new.busy svg { animation: term-blink 1s ease-in-out infinite; }
+/* its Saved or Closed, folded as the list folds them: the line that opens them, small */
+.rail .r-fold { border: 0; background: none; padding: 2px 4px; border-radius: 5px; color: var(--muted); font: inherit; font-size: 9.5px;
+  white-space: nowrap; cursor: pointer; font-variant-numeric: tabular-nums; }
+.rail .r-fold:hover, .rail .r-fold:focus-visible { color: var(--ink); background: var(--wash); outline: none; }
+/* an actor: its avatar, its status at its corner, and under it its name, in two short lines at most */
+.rail .r-actor { position: relative; display: flex; flex-direction: column; align-items: center; gap: 2px; width: 70px; box-sizing: border-box;
+  border: 0; background: none; padding: 4px 3px 5px; border-radius: 9px; flex: none; cursor: pointer; color: inherit; font: inherit; }
 .rail .r-actor:hover { background: var(--wash); }
 .rail .r-actor[aria-current="true"] { background: var(--selected); }
 .rail .r-actor[data-open="true"] { background: color-mix(in srgb, var(--selected) 45%, transparent); }
-.rail .r-actor .logo, .rail .r-actor .avatar img { width: 32px; height: 32px; display: block; -webkit-mask-image: none; mask-image: none; }
+.rail .r-actor:focus-visible { outline: 2px solid var(--axis); outline-offset: -2px; }
+.rail .r-pic { position: relative; display: block; }
+.rail .r-actor .logo, .rail .r-actor .avatar img { width: 30px; height: 30px; display: block; -webkit-mask-image: none; mask-image: none; }
 .rail .r-actor .badge, .rail .r-actor .dw-badge { display: none; }
-.rail .r-actor .rd { position: absolute; right: 2px; bottom: 2px; width: 11px; height: 11px; border-radius: 50%; background: var(--axis);
+.rail .r-actor .rd { position: absolute; right: -2px; bottom: -2px; width: 11px; height: 11px; border-radius: 50%; background: var(--axis);
   box-shadow: 0 0 0 2px var(--side); display: flex; align-items: center; justify-content: center; }
+.rail .r-actor:hover .rd { box-shadow: 0 0 0 2px var(--side); }
 .rail .r-actor .rd.running { background: var(--side); color: var(--good); font-size: 11px; line-height: 1; }
 .rail .r-actor .rd.running::before { content: "✻"; animation: term-spin 1.2s steps(1) infinite; animation-delay: var(--spin-at, 0s); }
 .rail .r-actor .rd.asking, .rail .r-actor .rd.building { background: var(--warning); }
@@ -144,10 +179,54 @@ header .brand .list-btns { display: none; margin-left: -6px; }
 .rail .r-actor .rd.background { background: var(--good); }
 .rail .r-actor .rd.finished { background: var(--s1); }
 .rail .r-actor .rd.closed { background: var(--side); box-shadow: 0 0 0 2px var(--side), inset 0 0 0 1.5px var(--axis); }
-.rail hr { width: 24px; border: 0; border-top: 1px solid var(--grid); margin: 3px 0; flex: none; }
+/* its bookmark (top left) and × (top right), the list's, over the corners of its tile beside the avatar: shown while
+   it is hovered, in focus or the one shown; a saved one's bookmark always, filled. Where there is no hovering, the one
+   shown's only (and the bookmarks filled). */
+.rail .r-actor :is(.save-btn, .close-btn) { position: absolute; top: 2px; display: flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; border-radius: 50%; color: var(--muted); cursor: pointer; opacity: 0; transition: opacity .12s; }
+.rail .r-actor .save-btn { left: 2px; }
+.rail .r-actor .close-btn { right: 2px; }
+.rail .r-actor :is(.save-btn, .close-btn) svg { width: 11px; height: 11px; display: block; pointer-events: none; }
+.rail .r-actor:is(:hover, :focus-within, [aria-current="true"]) :is(.save-btn, .close-btn), .rail .r-actor .save-btn.on { opacity: 1; }
+@media (hover: none) { .rail .r-actor:not([aria-current="true"]) .close-btn, .rail .r-actor:not([aria-current="true"]) .save-btn:not(.on) { opacity: 0; } }
+.rail .r-actor .save-btn.on { color: var(--s1); }
+.rail .r-actor .save-btn:is(:hover, :focus-visible) { color: var(--s1); background: var(--surface); outline: none; }
+.rail .r-actor .close-btn:is(:hover, :focus-visible) { color: var(--critical); background: var(--surface); outline: none; }
+.rail .r-name { max-width: 64px; font-size: 9.5px; line-height: 1.2; color: var(--ink-2); text-align: center; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.rail .r-name.none { color: var(--muted); font-style: italic; }
+.rail .r-actor[aria-current="true"] .r-name { color: var(--ink); font-weight: 600; }
 .rail .r-none { color: var(--muted); font-size: 11px; text-align: center; padding: 8px 4px; }
 .rail .r-about { position: relative; margin-top: 6px; }
 .rail .r-about .state-dot { position: absolute; right: 3px; bottom: 4px; box-shadow: 0 0 0 1.5px var(--side); }
+/* the card an actor shows hovered, in the rail or the list (actorCard): who it is, its status, what it was asked, its
+   recap -- beside the rail or the list, the pointer passing through it */
+.actor-card { position: fixed; z-index: 70; width: 300px; max-width: calc(100vw - 16px); box-sizing: border-box; padding: 10px 12px 9px;
+  display: grid; gap: 5px; background: var(--surface); color: var(--ink); border: 1px solid var(--ring); border-radius: 9px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.22); font-size: 12px; line-height: 1.4; pointer-events: none; }
+.actor-card[hidden] { display: none; }
+.actor-card .c-who { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.actor-card .c-who .logo, .actor-card .c-who .avatar img { width: 26px; height: 26px; display: block; }
+.actor-card .c-who .avatar { position: relative; flex: none; }
+.actor-card .c-who .avatar .badge { position: absolute; right: -3px; bottom: -3px; width: 12px; height: 12px; display: block; }
+.actor-card .c-who .avatar .dw-badge { display: none; }
+.actor-card .c-who .tx { min-width: 0; display: grid; }
+.actor-card .c-nm { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical; overflow-wrap: anywhere; }
+.actor-card .c-nm.unnamed { font-weight: 500; }
+.actor-card .c-sub { color: var(--muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.actor-card .c-dir { color: var(--muted); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+.actor-card .c-st { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.actor-card .c-st .status { font-size: 11.5px; }
+.actor-card :is(.c-asked, .c-recap) { color: var(--ink-2); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+  overflow-wrap: anywhere; }
+.actor-card .lbl { color: var(--muted); font-size: 10px; letter-spacing: .04em; text-transform: uppercase; margin-right: 5px; }
+.actor-card .c-bg { color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.actor-card .branchline { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); min-width: 0; }
+.actor-card .branchline .rt { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.actor-card .branchline .wait { flex: none; color: var(--warning); font-weight: 600; }
+.actor-card .c-hint { color: var(--muted); font-size: 10.5px; border-top: 1px solid var(--grid); padding-top: 5px; margin-top: 1px; }
 :root.list-full .side { position: fixed; inset: 0; z-index: 25; border-right: 0; }
 :root.list-full .work { grid-column: 2; grid-row: 1; }
 :root.list-full #agents { display: none; }
@@ -243,7 +322,17 @@ header .brand .list-btns { display: none; margin-left: -6px; }
 @media (max-width: 760px) {
   :root.list-folded .rail { flex-direction: row; padding: 0 8px; border-bottom: 1px solid var(--ring); }
   :root.list-folded .rail .r-actors { flex-direction: row; overflow-x: auto; overflow-y: hidden; padding: 4px 6px; }
-  :root.list-folded .rail hr { width: 0; height: 24px; border-top: 0; border-left: 1px solid var(--grid); margin: 0 3px; }
+  /* across the top of a phone: each gatherer a run of avatars, its name before them, and no names under them */
+  :root.list-folded .rail .r-gatherer { flex-direction: row; width: auto; padding: 0 4px 0 0; gap: 2px; }
+  :root.list-folded .rail .r-gatherer + .r-gatherer { border-top: 0; border-left: 1px solid var(--grid); padding: 0 4px 0 6px; margin: 0; }
+  :root.list-folded .rail .r-gname { width: auto; max-width: 64px; }
+  :root.list-folded .rail .r-new { align-self: center; margin: 0; padding: 0 5px; }
+  :root.list-folded .rail .r-gname[aria-expanded="true"] .caret { display: inline; }
+  :root.list-folded .rail .r-actor { width: auto; padding: 4px; }
+  :root.list-folded .rail .r-name { display: none; }
+  :root.list-folded .rail .r-actor :is(.save-btn, .close-btn) { top: 0; width: 14px; height: 14px; background: var(--side); box-shadow: 0 0 0 1px var(--ring); }
+  :root.list-folded .rail .r-actor .save-btn { left: 0; }
+  :root.list-folded .rail .r-actor .close-btn { right: 0; }
   :root.list-folded .rail .r-about { margin: 0 0 0 6px; }
   :root.list-folded header .brand { justify-content: flex-start; padding: 8px 12px; }
   :root.list-full .monitor { overflow-y: auto; padding: 12px 16px 40px; }    /* the columns one under the other, the page scrolling */

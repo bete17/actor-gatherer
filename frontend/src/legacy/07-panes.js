@@ -381,11 +381,76 @@ function moreStarts(g, hs, where) {
     state.home.terminals !== false ? { icon: ICONS.terminal, text: "Terminal", note: there, run: () => addSession(g, SHELL_START) } : null,
   ].filter(Boolean);
 }
-function openActorMenu(g, hs, button) {
+// `key`: the button's data-pop (the list's "+ actor", or the rail's "+"); `start`: what a harness chosen does.
+function openActorMenu(g, hs, button, key = `actor:${g.name}`, start = (h) => addSession(g, h)) {
   const cwd = startCwd(g);
   const where = cwd ? tildePath(cwd, state.home.home_dir) : "";
-  openPop(`actor:${g.name}`, button, popMenu(where ? `New actor in ${where.replace(/\/+$/, "").split("/").pop() || where}` : `New actor in ${g.name}`,
-    hs.map((h) => ({ mark: harnessBadge(h), text: harnessName(h), run: () => addSession(g, h) })), where));
+  openPop(key, button, popMenu(where ? `New actor in ${where.replace(/\/+$/, "").split("/").pop() || where}` : `New actor in ${g.name}`,
+    hs.map((h) => ({ mark: harnessBadge(h), text: harnessName(h), run: () => start(h) })), where));
+}
+// The rail's "+" under a gatherer's name (renderRail): a new actor in it, as the list's "+ actor" starts one -- on the one
+// harness at once, or on the one picked from a drop-down beside the rail -- in the directory of its most recently active
+// actor. With none (or starting there failed), a box beside the rail asks for the directory first (railNewBox): the list's
+// form, under its gatherer's row, is out of sight with the list folded. Pressed again, what it opened closes.
+const railKey = (g) => `rail:${g.name}`;
+function railNew(g) {
+  const hs = startable(), key = railKey(g), plus = el("span", { class: "plus", "aria-hidden": "true", text: "+" });
+  if (!hs.length) return el("button", { class: "r-new", type: "button", disabled: "", title: noHarness(), "aria-label": noHarness() },
+    plus, strokeIcon(ICONS.agent, 14));
+  const cwd = startCwd(g), where = cwd ? tildePath(cwd, state.home.home_dir) : null;
+  const busy = state.starting && state.starting.gatherer === g.name && hs.includes(String(state.starting.harness));
+  const pops = hs.length > 1 || !cwd;
+  return el("button", { class: "r-new" + (busy ? " busy" : ""), type: "button", "data-pop": key, ...(state.starting ? { disabled: "" } : {}),
+    title: `New actor in ${titleOf(g)}${where ? `, in ${where}` : ""}: ${hs.map(harnessName).join(" or ")}`,
+    "aria-label": `New actor in ${titleOf(g)}`,
+    ...(pops ? { "aria-haspopup": cwd ? "menu" : "dialog", "aria-expanded": String(rowPop.key === key) } : {}),
+    onclick: (ev) => {
+      const button = ev.currentTarget;
+      if (rowPop.key === key) return closePop();
+      if (!cwd) openPop(key, button, railNewBox(g, hs));
+      else if (hs.length > 1) openActorMenu(g, hs, button, key, (h) => railStart(g, h));
+      else railStart(g, hs[0]);
+    } },
+    plus, strokeIcon(ICONS.agent, 14));
+}
+async function railStart(g, harness) {
+  const cwd = startCwd(g);
+  try { await startSession(g.name, cwd, harness); }
+  catch (e) {
+    const button = document.querySelector(`#rail [data-pop="${CSS.escape(railKey(g))}"]`);
+    if (button) openPop(railKey(g), button, railNewBox(g, startable(), harness, cwd, e.message));
+    else setLive(`Not started: ${e.message}`);
+  }
+}
+// The rail's box for a new actor: the directory it works in (the one tried, if starting there failed; else the dashboard's
+// own), the folders the gatherer's actors work in a click away, and a button for each harness: a click on one starts it
+// there, Enter the one tried (or the first). The box closes once it has started; why not, if it cannot, is said in it.
+function railNewBox(g, hs, harness = hs[0], cwd = "", error = "") {
+  const dir = tildePath(cwd || state.home.cwd || "", state.home.home_dir);
+  const err = el("div", { class: "err", role: "alert", text: error });
+  const input = el("input", { type: "text", value: dir, spellcheck: "false", "aria-label": "Working directory", placeholder: "~/projects/my-project",
+    oninput: () => { err.textContent = ""; },
+    onkeydown: (ev) => { if (ev.key === "Enter") { ev.preventDefault(); go(harness); } } });
+  const go = async (h) => {
+    const at = input.value.trim();
+    if (!at) { err.textContent = "Which directory?"; input.focus(); return; }
+    const buttons = [...box.querySelectorAll("button.go")];
+    for (const b of buttons) b.disabled = true;
+    try {
+      await startSession(g.name, at, h);
+      if (rowPop.el === box) closePop();
+    } catch (e) {
+      if (box.isConnected) { err.textContent = e.message; placePop(); } else setLive(`Not started: ${e.message}`);
+    } finally { for (const b of buttons) b.disabled = false; }
+  };
+  const box = el("div", { class: "dw-menu", role: "dialog", "aria-label": `New actor in ${titleOf(g)}` },
+    el("div", { class: "head", text: `New actor in ${titleOf(g)}` }),
+    el("label", {}, "Working directory", input),
+    folderPicks(g, dir, input, err),
+    el("div", { text: "Run it on" }),
+    el("div", { class: "on" }, ...hs.map((h) => el("button", { type: "button", class: "go", onclick: () => go(h) }, harnessBadge(h), harnessName(h)))),
+    err);
+  return box;
 }
 function openMoreMenu(g, hs, button) {
   if (brPick.menu && brPick.menu.g === g.name) return brMenuClose();     // the branch drop-down it opened: pressed again
@@ -419,6 +484,12 @@ function placePop() {
   const box = rowPop.el, button = popButton();
   if (!box || !button) return;
   const r = button.getBoundingClientRect(), h = box.offsetHeight;
+  const rail = button.closest("#rail"), side = rail && rail.getBoundingClientRect();
+  if (side && side.height > side.width) {           // from the rail down the page's side: beside it, level with its button
+    box.style.left = `${Math.round(side.right + 6)}px`;
+    box.style.top = `${Math.round(Math.max(8, Math.min(r.top, window.innerHeight - h - 8)))}px`;
+    return;
+  }
   const below = r.bottom + 4 + h <= window.innerHeight - 8 || r.top - 4 - h < 8;   // above it only where there is room above
   box.style.top = `${Math.round(below ? r.bottom + 4 : r.top - 4 - h)}px`;
   box.style.left = `${Math.round(Math.max(8, Math.min(r.left, window.innerWidth - box.offsetWidth - 8)))}px`;
@@ -463,6 +534,20 @@ function openPop(key, button, box) {
   first.focus({ preventScroll: true });
   if (first.select) { first.setSelectionRange(first.value.length, first.value.length); first.scrollLeft = first.scrollWidth; }   // a folder's end
 }
+// The folders a gatherer's actors work in, newest first, under a box's folder `input` (its `dir` to start with): another
+// a click away. null: none other than `dir`.
+function folderPicks(g, dir, input, err) {
+  const seen = new Set(), folders = [];
+  for (const a of [...g.agents].sort((x, y) => (y.last || 0) - (x.last || 0))) {
+    const d = cwdOf(a);
+    if (d && !seen.has(d)) { seen.add(d); folders.push(tildePath(d, state.home.home_dir)); }
+  }
+  return folders.length > 1 || (folders.length === 1 && folders[0] !== dir) ? el("div", { class: "folders" },
+    el("div", { class: "lbl", text: "Where its actors work" }),
+    ...folders.slice(0, 5).map((d) => el("button", { type: "button", title: d,
+      onclick: () => { input.value = d; err.textContent = ""; input.focus(); input.setSelectionRange(d.length, d.length); } },
+      el("span", { class: "nm", text: d.replace(/\/+$/, "").split("/").pop() || d }), el("span", { class: "at", text: d })))) : null;
+}
 // A new DocWriter -- its own actor -- in a folder of the reader's choice: its box asks which (the gatherer's current one
 // to start with, the folders its actors work in a click away) and the harness its actor runs on: a click on one starts it.
 function dwBox(g, hs) {
@@ -471,21 +556,10 @@ function dwBox(g, hs) {
   const input = el("input", { type: "text", value: dir, spellcheck: "false", "aria-label": "Folder", placeholder: "~/writing/my-paper",
     oninput: () => { err.textContent = ""; },
     onkeydown: (ev) => { if (ev.key === "Enter") { ev.preventDefault(); dwGo(g, hs[0], box); } } });
-  // the folders the gatherer's actors work in, newest first: another a click away
-  const seen = new Set(), folders = [];
-  for (const a of [...g.agents].sort((x, y) => (y.last || 0) - (x.last || 0))) {
-    const d = cwdOf(a);
-    if (d && !seen.has(d)) { seen.add(d); folders.push(tildePath(d, state.home.home_dir)); }
-  }
-  const picks = folders.length > 1 || (folders.length === 1 && folders[0] !== dir) ? el("div", { class: "folders" },
-    el("div", { class: "lbl", text: "Where its actors work" }),
-    ...folders.slice(0, 5).map((d) => el("button", { type: "button", title: d,
-      onclick: () => { input.value = d; err.textContent = ""; input.focus(); input.setSelectionRange(d.length, d.length); } },
-      el("span", { class: "nm", text: d.replace(/\/+$/, "").split("/").pop() || d }), el("span", { class: "at", text: d })))) : null;
   const box = el("div", { class: "dw-menu", role: "dialog", "aria-label": "New DocWriter" },
     el("div", { class: "head", text: "New DocWriter" }),
     el("label", {}, "Folder", input),
-    picks,
+    folderPicks(g, dir, input, err),
     el("div", { text: "Its agent on" }),
     el("div", { class: "on" }, ...hs.map((h) => el("button", { type: "button", class: "go", onclick: () => dwGo(g, h, box) },
       harnessBadge(h), harnessName(h)))),

@@ -99,7 +99,8 @@ async function loadContext(readId) {
   if (state.context && state.context.read_id === readId && state.context.gatherer === g) return;   // unchanged
   const got = SNAPSHOT ? SNAPSHOT.contexts && SNAPSHOT.contexts[key(g, readId)]
     : await get(`/api/context?gatherer=${encodeURIComponent(g)}&read_id=${readId}`);
-  state.context = got ? { ...got, gatherer: g } : null;
+  if (state.readId !== readId || !state.selected || state.selected[0] !== g) return;   // another wanted since: a load
+  state.context = got ? { ...got, gatherer: g } : null;                                  // that came late is not it
 }
 // What was last drawn, so an update that brings nothing new draws nothing: no flash, and an open
 // table, a scrolled list or a tooltip stays as it is.

@@ -20,7 +20,9 @@ session, ...), some of them started from the page (sessions.py); which harness, 
 CLOSED when the harness's process that made its last call no longer runs; else IDLE when its turn
 is over -- its last answer ended without a tool call -- and RUNNING when it is not (waiting on a
 tool, or on the model). Where the process is not known (a call from before ag recorded it, not
-Linux), a turn left unfinished for more than STALE_SECONDS counts as over. A session the dashboard
+Linux), a turn left unfinished for more than STALE_SECONDS counts as over -- since its latest activity, or the newest
+message ag stored for it: a session taken up again after long, its message stored as its call's read began, is
+RUNNING while ag checks and builds for it, before the read is recorded. A session the dashboard
 started whose process its own end took, or it put away (saved.py's `Rest`) -- sessions.py's `kept` --
 is IDLE, not CLOSED; one whose process the dashboard saw end otherwise (closed from the list, exited:
 sessions.py's `ended`) is CLOSED where
@@ -268,6 +270,7 @@ def home(started: Optional[List[dict]] = None, kept: Optional["Kept"] = None) ->
     gatherers.sort(key=lambda g: g.get("created") or 0, reverse=True)
     return {"home": paths.HOME, "now": now, "running_seconds": RUNNING_SECONDS, "gatherers": gatherers,
             "hook_servers": _hook_servers(), "hiding": hiding.stored(), "titles": titles.stored(), "saved": saved.stored(),
+            "saved_folders": saved.folders(),
             "seen": looked.stored(), "harness_info": harness_info(), "harness_default": harness_kit.DEFAULT}
 
 
@@ -603,8 +606,8 @@ def _agents(conn, now: float, only: Optional[set] = None) -> List[dict]:
                         0 if a["reads"] else a["last_event"] or 0) or None                     # not a side call's events
         a["building"] = ch in building
         a["turn_over"] = turn_over(conn, ch, tables)[0]
-        a["status"] = status_of(a.get("alive"), a["turn_over"], a["last"], now)
         a["said_at"] = user_at.get(ch)
+        a["status"] = status_of(a.get("alive"), a["turn_over"], max(a["last"] or 0, a["said_at"] or 0) or None, now)
         a["taken_back"] = None
         _status(conn, ch, a, tables, now)
         del a["said_at"]
@@ -1199,7 +1202,8 @@ def _result(gatherer: str, channel: str, call: Optional[str]) -> Optional[str]:
 
 def status_of(alive: Optional[bool], over: bool, last: Optional[float], now: float) -> str:
     """CLOSED, IDLE or RUNNING (module doc): `alive`, whether the harness's process runs (None:
-    not known); `over`, whether the turn is; `last`, when anything last happened for it."""
+    not known); `over`, whether the turn is; `last`, when anything last happened for it -- its latest activity, or
+    the newest message ag stored for it."""
     if alive is False:
         return CLOSED
     if over:

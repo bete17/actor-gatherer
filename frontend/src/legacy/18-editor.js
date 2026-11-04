@@ -21,7 +21,7 @@ const ED_SHOWN_KEY = "ag-dashboard-editor", ED_HEIGHT_KEY = "ag-dashboard-editor
 const ed = { root: "", home: "", lists: new Map(), open: new Set(), file: null, s: null, lib: null, me: null, user: "", err: "",
   timer: null, treeSig: "", barSig: "", host: null, bar: null, tree: null, head: null, body: null, side: null, changes: null,
   pv: null, pvSide: null,
-  branches: [], brSig: "", brs: null,
+  branches: [], brSig: "", brs: null, brOpen: null,
   auto: (() => { try { return localStorage.getItem(ED_AUTO_KEY) !== "0"; } catch (e) { return true; } })(),   // on unless turned off
   wrap: (() => { try { return localStorage.getItem(ED_WRAP_KEY) !== "0"; } catch (e) { return true; } })() };  // long lines wrapped: likewise
 const edB64 = (u8) => { let t = ""; for (let i = 0; i < u8.length; i += 0x8000) t += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(t); };
@@ -184,7 +184,7 @@ async function pvOpen(path) {
   let pv = ed.pv;
   if (!pv) {
     pv = ed.pv = { path, about: null, run: null, out: "", picked: null, form: null, es: null, err: "", busy: false,
-      dom: null, sig: "", card: "", tick: null };
+      dom: null, sig: "", card: "", tick: null, held: null, peek: null };
     try { localStorage.setItem(ED_PV_KEY, "1"); } catch (e) { /* this page only */ }
   }
   pv.path = path;
@@ -194,7 +194,7 @@ async function pvOpen(path) {
     if (ed.pv !== pv || pv.path !== path) return ed.pv === pv ? pv : null;
     const moved = !pv.about || pv.about.checkout !== a.checkout;
     pv.about = a; pv.err = "";
-    if (moved) { pv.run = a.run; pv.out = ""; pv.picked = null; pv.sig = ""; }
+    if (moved) { pv.run = a.run; pv.out = ""; pv.picked = null; pv.sig = ""; pv.held = null; }
     if (moved || !pv.es || pv.es.readyState === 2) pvListen(pv);
   } catch (e) { if (ed.pv === pv) pv.err = e.message; }
   if (ed.pv !== pv) return null;
@@ -214,6 +214,7 @@ function pvListen(pv) {
   on("run", (r) => {
     if (pv.run && r.id !== pv.run.id && r.started < pv.run.started) return;   // an earlier run's end, after the next began
     if (!pv.run || r.id !== pv.run.id) { pv.out = ""; pv.picked = null; }
+    if (pv.peek === r.id && r.state !== "running") { pv.picked = null; pv.peek = null; }   // its output looked at while it ran
     pv.run = r; pvDraw(); edHead();
   });
   on("out", (o) => {
@@ -298,15 +299,35 @@ function pvState(r) {
     done: ["ok", r.command ? `Done · ${took}` : "Shown"], failed: ["bad", `Failed · exit ${r.code}`],
     stopped: ["", "Stopped"], "timed out": ["bad", "Stopped: it ran over 5 minutes"] })[r.state] || ["", r.state];
 }
-// What the body shows unless the reader picks: the result once there is one; the output while it is made, or when it
-// failed, or is all there is.
+// What the body shows unless the reader picks: the result once there is one -- a file's, the one made before kept while
+// the next is made (pvShown), "Building…" over it -- and the output when it failed, or is all there is; a server's
+// output while it starts.
 function pvAuto(r) {
   const s = (r && r.shows) || {};
   if (!r) return "result";
   if (!s.url && !s.path) return "output";
   if (r.state === "failed" || r.state === "timed out") return "output";
   if (s.url) return r.state === "ready" ? "result" : "output";
-  return r.state === "running" || !s.exists ? "output" : "result";
+  return r.state === "running" || s.exists ? "result" : "output";
+}
+// The address of a run's file to show: while it runs, the one shown before it (pv.held), not the file as it is being
+// written -- a half-written PDF -- which is shown once the run ends; none when nothing was shown before.
+function pvShown(pv, r) {
+  const a = pv.about, s = r && r.shows;
+  if (!s) return null;
+  if (s.url) return s.url;
+  const url = s.path && s.exists && a ? `/preview/${a.token}/${s.rel.split("/").map(encodeURIComponent).join("/")}?v=${s.mtime}` : null;
+  if (r.state === "running" && pv.held !== null && !(pv.held && pv.held.rel !== s.rel))
+    return pv.held && pv.held.url;
+  pv.held = url ? { rel: s.rel, url } : (r.state === "running" ? false : null);   // false: nothing to keep showing, this run
+  return url;
+}
+// "Building…" over the result kept while the next is made: how long it has run; clicked, its output.
+function pvBusyText(pv) {
+  const r = pv.run, t = r && r.state === "running" ? Date.now() / 1000 - r.started : null;
+  pv.dom.busy.replaceChildren(el("span", { text: "Building…" }),
+    t !== null ? el("span", { class: "t", text: t < 10 ? `${Math.max(t, 0.1).toFixed(1)}s` : spell(t) }) : null,
+    el("span", { class: "o", text: "Output" }));
 }
 function pvDraw() {
   const side = ed.pvSide, pv = ed.pv;
@@ -320,23 +341,34 @@ function pvDraw() {
   if (!pv.dom) {
     pv.dom = { head: el("div", { class: "ed-pv-h" }), cmd: el("div", { class: "ed-pv-cmd" }), card: el("div", { class: "ed-pv-card" }),
       result: el("div", { class: "ed-pv-result" }), output: el("pre", { class: "ed-pv-out", tabindex: "0", "aria-label": "Its output" }),
-      stat: el("span", { class: "ed-pv-st", role: "status" }) };
+      stat: el("span", { class: "ed-pv-st", role: "status" }),
+      edge: el("div", { class: "ed-pv-edge", "aria-hidden": "true" }),
+      busy: el("button", { type: "button", class: "ed-pv-busy", title: "It is being run again: the last one made stays here until the run ends. Click to see its output",
+        onclick: () => { if (ed.pv === pv && pv.run) { pv.picked = "output"; pv.peek = pv.run.id; pvDraw(); } } }) };
+    pv.dom.top = el("div", { class: "ed-pv-top" }, pv.dom.head, pv.dom.cmd);
     pv.dom.output.addEventListener("scroll", () => { const o = pv.dom.output; pv.pinned = o.scrollTop + o.clientHeight >= o.scrollHeight - 8; });
     pv.pinned = true;
   }
-  if (side.firstChild !== pv.dom.head)
-    side.replaceChildren(pv.dom.head, pv.dom.cmd, el("div", { class: "ed-pv-body" }, pv.dom.card, pv.dom.result, pv.dom.output));
+  if (side.firstChild !== pv.dom.edge)
+    side.replaceChildren(pv.dom.edge, pv.dom.top, el("div", { class: "ed-pv-body" }, pv.dom.card, pv.dom.result, pv.dom.output, pv.dom.busy));
   const a = pv.about, p = a && a.preview, r = pv.run;
   // the status, counting while it runs
   const [cls, said] = pv.busy && !(r && r.state === "running") ? ["run", "Starting…"] : pvState(r);
   pv.dom.stat.className = `ed-pv-st ${cls}`; pv.dom.stat.textContent = said;
   const live = r && (r.state === "running" || (r.server && r.state === "ready"));     // a process of its own, to stop
   if (r && r.state === "running" && !pv.tick) pv.tick = setInterval(() => { if (ed.pv !== pv || !pv.run || pv.run.state !== "running") { clearInterval(pv.tick); pv.tick = null; return; }
-    pv.dom.stat.textContent = pvState(pv.run)[1]; }, 1000);
+    pv.dom.stat.textContent = pvState(pv.run)[1];
+    if (!pv.dom.busy.hidden) pvBusyText(pv); }, 1000);
   const card = pv.form ? "form" : pv.err && !a ? "err" : !a ? "loading" : !p ? "none" : p.needs_ok ? "ask" : !r ? "idle" : "";
   const tab = card ? null : pv.picked || pvAuto(r);
   const hasResult = r && r.shows && (r.shows.url || r.shows.path);
-  const url = r && r.shows && (r.shows.url || (r.shows.path && r.shows.exists && a && `/preview/${a.token}/${r.shows.rel.split("/").map(encodeURIComponent).join("/")}?v=${r.shows.mtime}`));
+  const url = pvShown(pv, r);
+  // over its result, its head and command tucked away: slid down while the pointer is at the panel's top edge
+  side.classList.toggle("hov", tab === "result");
+  // a file's run going (or asked for): "Building…" over the one made before it
+  const building = tab === "result" && !!(r && r.shows && r.shows.path) && (r.state === "running" || pv.busy);
+  pv.dom.busy.hidden = !building;
+  if (building) pvBusyText(pv);
   // the header: what it is, how its run went, and what can be done
   const btn = (text, title, onclick, attrs = {}) => el("button", { type: "button", title, onclick, ...attrs }, text);
   pv.dom.head.replaceChildren(...[
@@ -354,11 +386,11 @@ function pvDraw() {
       { class: "x", "aria-label": "Close the preview" })].filter(Boolean));
   // what runs, and who set it
   pv.dom.cmd.hidden = !p || !!pv.form;
-  if (p && !pv.form) pv.dom.cmd.replaceChildren(
+  if (p && !pv.form) pv.dom.cmd.replaceChildren(...[      // (replaceChildren writes a null as "null")
     el("code", { title: `In ${a.checkout}: ${p.command || "nothing to run"}${p.show ? `, showing ${p.show}` : ""}` },
       p.command ? `$ ${p.command}` : "(nothing to run)", p.show ? el("span", { class: "to", text: `  →  ${p.show}` }) : null),
     url && tab === "result" ? el("a", { class: "ed-pv-open", href: url, target: "_blank", rel: "noopener", title: "Open it in a tab of its own" }, "↗") : null,
-    pvBy(p));
+    pvBy(p)].filter(Boolean));
   // the body: a card (the form, the question, a note), else the result or the output
   const err = pv.err ? el("div", { class: "err", text: pv.err }) : null;
   pv.dom.card.hidden = !card && !pv.err;
@@ -435,13 +467,14 @@ function pvNone(pv) {
 // The result: drawn again only when another run's, or its file changed.
 function pvResult(pv, url) {
   const r = pv.run, s = (r && r.shows) || {}, box = pv.dom.result;
-  const sig = JSON.stringify([r && r.id, url, s.kind, s.exists, r && r.state === "ready"]);
+  // the same address, the same result: not drawn again for a run that kept it (a PDF's viewer keeps its place anyway)
+  const sig = JSON.stringify([url ? null : r && r.id, url, s.kind, url ? null : s.exists, r && r.state === "ready", !url && r && r.state === "running"]);
   if (sig === pv.sig) return;
   pv.sig = sig;
   if (!r) return box.replaceChildren();
   if (s.error) return box.replaceChildren(el("div", { class: "ed-pv-note", text: s.error }));
-  if (s.path && !s.exists) return box.replaceChildren(el("div", { class: "ed-pv-note" },
-    el("code", { text: s.rel }), r.state === "running" ? " is not there yet." : " is not there: the command did not make it."));
+  if (s.path && !url) return box.replaceChildren(el("div", { class: "ed-pv-note" },
+    el("code", { text: s.rel }), r.state === "running" ? " shows here once the run ends." : " is not there: the command did not make it."));
   if (s.url && r.state !== "ready") return box.replaceChildren(el("div", { class: "ed-pv-note", text: `Waiting for ${s.url} to answer…` }));
   if (s.kind === "image" || s.kind === "svg")
     return box.replaceChildren(el("div", { class: "img" }, el("img", { src: url, alt: s.rel || "", draggable: "false" })));
@@ -692,9 +725,7 @@ function edTree() {
   ed.tree.replaceChildren(...rows);
 }
 const edWaiting = (n, what) => n ? el("span", { class: "mk br", title: `${plural(n, "change")} from an actor's branch ${what}, waiting for you`, text: String(n) }) : null;
-// Above the tree, under the folder: the actors on branches of the project shown (branches.py), each with its changes
-// waiting for the reader -- a file's changed lines, asked about in the file (opened by its name); a file it made, or deleted,
-// or the project no longer has, asked about here -- and its "auto-merge with approval".
+// Above the tree, under the folder: the actors on branches of the project shown (branches.py), and what waits from them.
 async function edFetchBranches() {
   if (!ed.root) return;
   let got = [];
@@ -703,37 +734,61 @@ async function edFetchBranches() {
   edBranches();
 }
 const ED_KIND = { created: "new file", deleted: "deleted on its branch", missing: "not in the project" };
+// One line of avatars, one per actor on a branch of the project shown, each with how many of its changes wait for the
+// reader; its name and branch in its title. An avatar clicked: what waits from it, under the line (one at a time, the one
+// picked kept in this browser), clicked again: put away.
+const ED_BR_OPEN_KEY = "ag-dashboard-editor-branch-open";
+function edBrPicked() {
+  if (ed.brOpen === null) try { ed.brOpen = localStorage.getItem(ED_BR_OPEN_KEY) || ""; } catch (e) { ed.brOpen = ""; }
+  return ed.brOpen;
+}
+function edBrToggle(b) {
+  ed.brOpen = edBrPicked() === b.session_id ? "" : b.session_id;
+  try { localStorage.setItem(ED_BR_OPEN_KEY, ed.brOpen); } catch (e) { /* this page only */ }
+  ed.brSig = ""; edBranches();
+}
 function edBranches() {
   if (!ed.brs) return;
-  const list = ed.branches || [];
-  const sig = JSON.stringify([list, list.map((b) => { const a = edActor(b.gatherer, b.channel); return a ? [edWhoName(a), a.avatar] : null; })]);
+  const list = ed.branches || [], picked = edBrPicked();
+  const sig = JSON.stringify([list, list.map((b) => { const a = edActor(b.gatherer, b.channel); return a ? [edWhoName(a), a.avatar, a.avatar_hue] : null; }), picked]);
   if (sig === ed.brSig) return;
   ed.brSig = sig;
-  ed.brs.replaceChildren(...list.map((b) => {
-    const a = edActor(b.gatherer, b.channel), color = edWhoColor(a), name = a ? edWhoName(a) : b.branch;
-    const files = Object.entries(b.held || {}).sort(([x], [y]) => x.localeCompare(y));
-    const decide = (path, take) => edDecide(b, path, take);
-    return el("div", { class: "ed-br", style: color ? `--who: ${color}` : null },
-      el("div", { class: "hd", title: `${name}\n${branchRoute(b)}` },
-        a && a.avatar ? el("img", { src: `/avatars/${a.avatar}.svg`, alt: "", draggable: "false" }) : el("span", { class: "ed-noav" }),
-        el("span", { class: "nm", text: name })),
-      el("div", { class: "rt", title: branchRoute(b) }, el("code", { text: b.branch }), " → ",
-        el("code", { text: edBase(b.project) }), " on ", el("code", { text: checkedOut(b.onto) })),
-      el("label", { class: "ap", title: "On: each of its changes waits for you to accept or reject it. Off: its changes are merged in as they come, but for lines you are editing here (the conflict zone), and lines you changed too." },
-        el("input", { type: "checkbox", checked: b.approve ? "" : null, onchange: (ev) => edApprove(b, ev.target.checked) }), "Auto-merge with approval"),
-      ...(files.length ? files.map(([path, v]) => {
-        const whole = v.kind !== "lines", there = v.kind === "created" || v.kind === "missing";
-        const open = there ? b.worktree + path.slice(b.project.length) : path;
-        return el("div", { class: "f" },
-          el("button", { type: "button", class: "go", title: there ? `Open its file on its branch: ${edTilde(open)}` : `Open ${edTilde(path)}`,
-            onclick: () => edOpen(open) }, edRel(path)),
-          el("span", { class: "k", text: whole ? ED_KIND[v.kind] || v.kind : plural(v.n, "change") }),
-          whole || v.n > 1 ? el("button", { type: "button", class: "pick", title: { created: "Add the file to the project", deleted: "Delete the file from the project",
-            missing: "Add the file to the project again" }[v.kind] || "Take every change of its into the file", onclick: () => decide(path, "theirs") }, whole ? "Accept" : "Accept all") : null,
-          whole || v.n > 1 ? el("button", { type: "button", class: "pick", title: whole ? "Leave the project's as it is: not asked about again, until it changes the file again"
-            : "Leave every change of its out of the file", onclick: () => decide(path, "mine") }, whole ? "Reject" : "Reject all") : null);
-      }) : [el("div", { class: "none", text: b.approve ? "Nothing waiting for you" : "Merged as it goes: nothing waiting" })]));
-  }));
+  if (!list.length) { ed.brs.replaceChildren(); return; }
+  const shown = list.find((b) => b.session_id === picked);
+  const avs = list.map((b) => {
+    const a = edActor(b.gatherer, b.channel), color = edWhoColor(a), name = a ? edWhoName(a) : "An actor";
+    const waiting = Object.values(b.held || {}).reduce((n, v) => n + (v.kind === "lines" ? v.n || 1 : 1), 0), on = b === shown;
+    return el("button", { type: "button", class: "ed-br-av" + (on ? " on" : ""), style: color ? `--who: ${color}` : null,
+      "aria-pressed": on ? "true" : "false", "aria-label": `${name}${waiting ? `, ${plural(waiting, "change")} waiting` : ""}`,
+      title: `${name}\n${branchRoute(b)}\n${waiting ? `${plural(waiting, "change")} waiting for you. ` : ""}${on ? "Click to put away" : "Click to see what it merges"}`,
+      onclick: () => edBrToggle(b) },
+      a && a.avatar ? el("img", { src: `/avatars/${a.avatar}.svg`, alt: "", draggable: "false" }) : el("span", { class: "ed-noav" }),
+      waiting ? el("span", { class: "n", text: String(waiting) }) : null);
+  });
+  ed.brs.replaceChildren(...[el("div", { class: "ed-br-avs", role: "group", "aria-label": "Actors merging in" }, ...avs),
+    shown ? edBranch(shown) : null].filter(Boolean));
+}
+// What waits from an actor on a branch: a file's changed lines, asked about in the file (opened by its name); a file it
+// made, or deleted, or the project no longer has, asked about here -- and its "auto-merge with approval".
+function edBranch(b) {
+  const color = edWhoColor(edActor(b.gatherer, b.channel));
+  const files = Object.entries(b.held || {}).sort(([x], [y]) => x.localeCompare(y));
+  const decide = (path, take) => edDecide(b, path, take);
+  return el("div", { class: "ed-br", style: color ? `--who: ${color}` : null },
+    el("label", { class: "ap", title: "On: each of its changes waits for you to accept or reject it. Off: its changes are merged in as they come, but for lines you are editing here (the conflict zone), and lines you changed too." },
+      el("input", { type: "checkbox", checked: b.approve ? "" : null, onchange: (ev) => edApprove(b, ev.target.checked) }), "Auto-merge with approval"),
+    ...(files.length ? files.map(([path, v]) => {
+      const whole = v.kind !== "lines", there = v.kind === "created" || v.kind === "missing";
+      const open = there ? b.worktree + path.slice(b.project.length) : path;
+      return el("div", { class: "f" },
+        el("button", { type: "button", class: "go", title: there ? `Open its file on its branch: ${edTilde(open)}` : `Open ${edTilde(path)}`,
+          onclick: () => edOpen(open) }, edRel(path)),
+        el("span", { class: "k", text: whole ? ED_KIND[v.kind] || v.kind : plural(v.n, "change") }),
+        whole || v.n > 1 ? el("button", { type: "button", class: "pick", title: { created: "Add the file to the project", deleted: "Delete the file from the project",
+          missing: "Add the file to the project again" }[v.kind] || "Take every change of its into the file", onclick: () => decide(path, "theirs") }, whole ? "Accept" : "Accept all") : null,
+        whole || v.n > 1 ? el("button", { type: "button", class: "pick", title: whole ? "Leave the project's as it is: not asked about again, until it changes the file again"
+          : "Leave every change of its out of the file", onclick: () => decide(path, "mine") }, whole ? "Reject" : "Reject all") : null);
+    }) : [el("div", { class: "none", text: b.approve ? "Nothing waiting for you" : "Merged as it goes: nothing waiting" })]));
 }
 async function edApprove(b, on) {
   try { await post("/api/branches/approve", { session_id: b.session_id, approve: on }); } catch (e) { ed.err = e.message; edHead(); }
