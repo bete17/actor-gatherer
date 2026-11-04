@@ -375,8 +375,8 @@ no call to the dashboard's API); a server's page is its own origin. A PDF is sho
 served at /vendor/pdfjs/), kept from run to run: each new build opens at the page, zoom and place the reader had; the
 PDF's own scripts are off; its sidebar is closed when it opens (a rebuild keeps it as the reader left it). SyncTeX both
 ways, for a build that wrote it (-synctex=1, in the LaTeX guess): a double-click in the PDF opens its source in the
-Editor at the line; "→ PDF" in the Editor's header, or ⌘+double-click (Ctrl+ elsewhere) on a line of the source, shows
-it in the PDF, marked.
+Editor at the line; "→ PDF" in the Editor's header, or a double-click in the source (its word selected too), shows
+it in the PDF, marked. ⌘↵ (Ctrl+Enter elsewhere) anywhere in the Editor, the PDF's viewer included, is Execute.
 
 Not done yet:
 
@@ -392,7 +392,7 @@ Not done yet:
   could open in its browser, where the agent can look at it and click.
 - **SyncTeX after a change of options only.** latexmk does not rebuild when only its options changed: -synctex=1 added
   to a preview whose PDF is up to date writes no SyncTeX until the source changes (the panel says so). Nor does the PDF
-  follow the cursor as it moves: "→ PDF" or ⌘+double-click asks.
+  follow the cursor as it moves: "→ PDF" or a double-click asks.
 - **A page from the checkout that uses modules** (`<script type="module">`) does not load sandboxed (an opaque origin
   fetches modules with CORS); such an app is previewed through its dev server.
 
