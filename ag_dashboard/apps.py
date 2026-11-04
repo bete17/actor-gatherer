@@ -17,6 +17,8 @@ its page's path (`under`) or its actor's session (`of`), and asks it through `Ap
     key_of             the key of the one whose actor a session is (its `role`), else None
     launch_args        what that actor's harness is started with besides its own options: its tools and
                        instructions (sessions.py's `extra_args`)
+    tools_at           the endpoint its actor reaches its tools by (mcp.py's `endpoint`, at /<name>/w/<key>/mcp),
+                       which a session's first message waits to have listed them (`tools_of`)
     compose            a message to its actor as the actor is to get it (/api/send), and what to tell it once sent
     error              what it raises: a ValueError, with the HTTP `status` it is answered with
     path, max_body, page_writes   where its page is served, the largest body its writes there take, and their
@@ -29,7 +31,7 @@ What its actor was asked, without the app's own state block (<workspace_state>, 
 import importlib
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from . import browser, docwriter
+from . import browser, docwriter, mcp
 
 
 class App:
@@ -60,6 +62,10 @@ class App:
 
     def launch_args(self, session: dict) -> List[str]:
         raise NotImplementedError
+
+    def tools_at(self, key: str) -> str:
+        """The endpoint the actor of the one of that key reaches its tools by: its MCP server (/<name>/w/<key>/mcp)."""
+        return mcp.endpoint(self.name, key)
 
     def compose(self, running, session: dict, text: str) -> Tuple[str, Optional[Callable[[], None]]]:
         return text, None
@@ -142,6 +148,15 @@ def under(path: str) -> Optional[App]:
 def of(session: dict) -> Optional[App]:
     """The app whose actor the session is (its `role`), else None."""
     return next((a for a in APPS if a.key_of(session) is not None), None)
+
+
+def tools_of(session: dict) -> List[str]:
+    """The dashboard's MCP endpoints a session reaches its tools by (mcp.py's `endpoint`): its app's, where its
+    harness is given them (`launch_args`); [] for any other session. A message the session's terminal starts with
+    waits for each to have listed its tools (sessions.py's `_first_message`): neither Claude Code nor codex waits for
+    an MCP server before the turn its first message starts, and that turn then runs without the server's tools."""
+    a = of(session)
+    return [a.tools_at(a.key_of(session))] if a is not None and a.launch_args(session) else []
 
 
 def home_fields() -> Dict[str, type]:

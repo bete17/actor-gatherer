@@ -124,7 +124,7 @@ def mcp_server(srv: Parts, key: Key, raw: Raw) -> Response:
     """The MCP server its actor calls (mcp.py): its tools, run by the DocWriter's page."""
     dws = _writers(srv)
     status, value = mcp.handle(raw, dws.tools.tools(), lambda name, args: dws.tools.call(key, name, args),
-                               docwriter.MCP_NAME)
+                               docwriter.MCP_NAME, at=mcp.endpoint("docwriter", key))
     return answer(value, status) if value is not None else send(202, b"", "text/plain")
 
 

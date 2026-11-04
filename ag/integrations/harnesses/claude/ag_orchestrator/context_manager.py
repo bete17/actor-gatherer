@@ -195,7 +195,7 @@ class ClaudeContextManager(ProxyHook):
         continuity = None
         if isinstance(adaptor, ClaudeAdaptor):                    # its ids carry on from the channel's stored history
             continuity = await self.continuity(client, gatherer, channel)
-            adaptor = adaptor.for_channel(continuity)
+            adaptor = adaptor.for_channel(continuity, body.get("tools"))
         if call.kind == CallKind.RECAP and isinstance(getattr(request, "state", None), dict):
             request.state[RECAPPED] = (gatherer, channel)
         if call.kind in (CallKind.RECAP, CallKind.SUGGESTION, CallKind.COMPACTION):

@@ -217,6 +217,10 @@ CLEARED = b"\x1b[2J"               # a full screen clearing it, to draw it all a
 REDRAW_WAIT = 1.0                  # a full screen made a row shorter (`redraw`): how long it is given to draw, before it is put back
 BOX_SETTLE = 0.5                   # a terminal's message box not shown empty: how long its screen is watched for it to be (a
                                    # program hides its cursor while it draws), before a message for it is refused (`_at_box`)
+TOOLS_WAIT = 10.0                  # a terminal's first message waits for its MCP servers to list their tools at most this
+                                   # long after its message box first shows (`_first_message`), then goes without them
+TOOLS_TAKEN = 0.2                  # once they have: how long the harness is given to take the list in
+BOX_POLL = 0.25                    # how often a first message looks again for its terminal's message box, while a dialog has it
 #: What a page's terminal sends that no one typed: focus in and out, the terminal's answers to the program's
 #: questions (device attributes, cursor position, OSC replies), mouse reports. Not typing: a dialog is as it was.
 REPORTS = re.compile(r"\x1b\[[IO]|\x1b\[[?>]?[\d;]*[cRn]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1bP[^\x1b]*\x1b\\|\x1b\[<[\d;]*[Mm]")
@@ -565,6 +569,15 @@ def _unsaid(argv: List[str], told: Optional[str]) -> List[str]:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _note(t: "_Term", line: str) -> None:
+    """A line of the dashboard's own in a terminal's log (log_path), as its start and end are written; none once its
+    reader has closed the log, at the terminal's end."""
+    try:
+        t.log.write(f"--- {_now()} {line}\n")
+    except (OSError, ValueError):
+        pass
 
 
 class _Agent:
@@ -1218,14 +1231,57 @@ class Sessions:
                 held = holder(s["gatherer"], session_id)
                 if held is not None:
                     raise SessionError(f"the session is open in another process ({held['pid']}): close it there first")
-                t = self._start_terminal(self._row(session_id), cols, rows, fullscreen, prompt)
+                row = self._row(session_id)
+                from . import apps                   # here: the apps use this module
+                tools = apps.tools_of(row) if prompt else []
+                t = self._start_terminal(row, cols, rows, fullscreen, None if tools else prompt)
                 if prompt:
                     t.typed = time.time()
+                if tools:                            # typed in once its tools are there, not on its command line
+                    threading.Thread(target=self._first_message, args=(session_id, t, prompt, tools), daemon=True).start()
             else:                                    # open already (opened meanwhile): the prompt typed into it
                 self.resize(session_id, cols, rows)
                 if prompt:
                     self._paste(self.terms[session_id], prompt)
             return next(x for x in self.list() if x["session_id"] == session_id)
+
+    def _first_message(self, session_id: str, t: _Term, text: str, tools: List[str]) -> None:
+        """`text`, the first message of the terminal `t` just started for the session, typed into it once the harness has
+        its tools: into its message box (`_at_box`) -- waited for while a dialog has the keys (a new folder's trust
+        prompt), as a harness keeps a message from its command line behind one -- once each of the dashboard's MCP
+        servers it was given (`tools`, apps.py's `tools_of`) has listed them (mcp.py's `listed`) since the terminal
+        started, TOOLS_TAKEN before; or TOOLS_WAIT after its box first showed (Claude Code connects its servers only once
+        its folder is trusted). Claude Code and codex start a turn without waiting for their MCP servers, and keep the
+        tools a turn starts with to its end: a message on the command line goes before the dashboard's servers have
+        listed theirs, and its turn runs without them (job_apps 2026-11-03: a Browser's actor restarted for a message
+        from Chat had none of its browser tools)."""
+        from . import mcp
+
+        def late() -> List[str]:                     # its servers not listed since its start, or only just
+            now = time.time()
+            return [e for e in tools if not t.since <= (mcp.listed(e) or 0) <= now - TOOLS_TAKEN]
+        shown = None                                 # when its box first showed
+        while True:
+            s = self._row(session_id)
+            if s is None or t.exited is not None or self.terms.get(session_id) is not t:
+                return                               # closed meanwhile, or another terminal has it
+            try:
+                clear = self._at_box(s, t)
+            except NotAtBox:
+                time.sleep(BOX_POLL)
+                continue
+            shown = shown or time.time()
+            missing = late()
+            if not missing or time.time() >= shown + TOOLS_WAIT:
+                break
+            time.sleep(0.05)
+        with self.lock:
+            if self.terms.get(session_id) is not t or t.exited is not None:
+                return
+            self._paste(t, text, clear=bool(clear))
+        _note(t, f"its tools not listed {TOOLS_WAIT:g}s after its message box showed ({', '.join(missing)}): the "
+                 f"message sent without them" if missing else
+                 f"its tools listed {time.time() - t.since:.2f}s after its start: the message sent")
 
     def _start_terminal(self, s: dict, cols: int, rows: int, fullscreen: bool = False,
                         prompt: Optional[str] = None) -> _Term:

@@ -179,6 +179,21 @@ def extension(cdp, home_dir: str) -> str:
         return ext
 
 
+def in_popup(cdp, tab) -> bool:
+    """Whether `tab` is a popup window's (a page's window.open with a size: no toolbar). The extension's button pressed
+    on one ends the whole Chrome (headless, Chrome 156) -- a "Sign in with Google" popup, say -- so it is shown by its
+    frames instead. The Browser marks the tab of a popup a page asked for (`windowed`: one opened noopener reads its
+    bars visible); else its page says (`window.toolbar.visible` false)."""
+    if getattr(tab, "windowed", False):
+        return True
+    try:
+        got = cdp.call("Runtime.evaluate", {"expression": "window.toolbar.visible", "returnByValue": True}, tab.session,
+                       timeout=5)
+    except ValueError:
+        return False
+    return (got.get("result") or {}).get("value") is False
+
+
 class Capture:
     """One Browser's video (module doc): its capturer page, the tab it captures, whether its chunks come. Its calls to
     Chrome go through the Browser's connection; `got` is handed each binding call of the capturer page -- on the
@@ -233,15 +248,15 @@ class Capture:
         self.own(session)
         cdp.call("Runtime.enable", {}, session)          # its binding's calls are told only with it
         cdp.call("Runtime.addBinding", {"name": BINDING}, session)
-        cdp.call("Page.navigate", {"url": f"chrome-extension://{self.ext}/capture.html"}, session)
+        went = cdp.call("Page.navigate", {"url": f"chrome-extension://{self.ext}/capture.html"}, session)
         end = time.time() + 10
         while time.time() < end:
             got = cdp.call("Runtime.evaluate", {"expression": "typeof agArm", "returnByValue": True}, session)
             if (got.get("result") or {}).get("value") == "function":
                 break
             time.sleep(0.05)
-        else:
-            raise ValueError("the capture page did not load")
+        else:                                            # why, as Chrome tells it: the extension not there, ...
+            raise ValueError("the capture page did not load" + (f" ({went['errorText']})" if went.get("errorText") else ""))
         window = cdp.call("Browser.getWindowForTarget", {"targetId": target})["windowId"]   # its bars, measured:
         bars = None
         for height in (600, 640):                        # the same at two heights, so not read before the page resized
@@ -353,6 +368,8 @@ class Capture:
             self._failed(f"the video did not start: {error}", tab)
 
     def _start(self, cdp, tab, view, px) -> None:
+        if in_popup(cdp, tab):
+            raise ValueError("a popup window: video can't capture one, its frames instead")
         session = self._page(cdp)
         if self._fit(cdp, tab, view):
             time.sleep(0.25)                             # resized: the first frame (the only one, if the page is still)
