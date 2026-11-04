@@ -100,18 +100,18 @@ class PnpmTest(Base):
         self.tool("node", "echo v22.12.0")
         for name in ("corepack", "pnpm", "npx"):
             self.tool(name, "exit 0")
-        self.assertEqual(page_build.pnpm(), ["corepack", "pnpm"])
+        self.assertEqual(page_build.pnpm(), [os.path.join(self.bin, "corepack"), "pnpm"])
 
     def test_a_pnpm_of_ones_own(self):
         self.tool("node", "echo v20.19.1")
         for name in ("pnpm", "npx"):
             self.tool(name, "exit 0")
-        self.assertEqual(page_build.pnpm(), ["pnpm"])
+        self.assertEqual(page_build.pnpm(), [os.path.join(self.bin, "pnpm")])
 
     def test_npx_fetches_the_version_named(self):
         self.tool("node", "echo v25.1.0")                  # Node 25 comes without corepack
         self.tool("npx", "exit 0")
-        self.assertEqual(page_build.pnpm(), ["npx", "--yes", "pnpm@12.16.1"])
+        self.assertEqual(page_build.pnpm(), [os.path.join(self.bin, "npx"), "--yes", "pnpm@12.16.1"])
 
     def test_node_alone(self):
         self.tool("node", "echo v22.12.0")
