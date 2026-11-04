@@ -206,7 +206,7 @@ async function pvOpen(path) {
 // Its checkout's runs and its project's preview, as they change: the latest run and its output first.
 function pvListen(pv) {
   if (pv.es) pv.es.close();
-  const es = pv.es = new EventSource(`/api/preview/stream?${new URLSearchParams({ path: pv.about.checkout })}`);
+  const es = pv.es = window.agNext.stream(`/api/preview/stream?${new URLSearchParams({ path: pv.about.checkout })}`);
   const on = (name, f) => es.addEventListener(name, (e) => {
     if (ed.pv !== pv || pv.es !== es) return;
     let v;
@@ -807,7 +807,7 @@ async function edOpen(path) {
   awareness.on("update", (_, origin) => { if (origin === "local") edAware(s); });
   awareness.on("change", () => { if (ed.s === s) edHead(); });
   ytext.observe((ev, tr) => { if (tr.origin === "disk") edDiskMarks(s, ev.delta); });
-  const es = s.es = new EventSource(`/api/edit/stream?${new URLSearchParams({ path, root: s.root, conn, client: doc.clientID })}`);
+  const es = s.es = window.agNext.stream(`/api/edit/stream?${new URLSearchParams({ path, root: s.root, conn, client: doc.clientID })}`);
   const on = (name, f) => es.addEventListener(name, (e) => {
     if (ed.s !== s) return;
     try { f(JSON.parse(e.data)); } catch (err) { console.error(err); }

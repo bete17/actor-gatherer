@@ -32,6 +32,7 @@ dashboard = [                     # the dashboard (`ag`, `ag dashboard`): what a
     "fastapi>=0.162",        # its server: a router per feature (ag_dashboard/app.py, api/)
     "uvicorn>=0.54",         # what runs it (ag_dashboard/server.py)
     "sse-starlette>=3.6",    # its streams, the page's server-sent events (ag_dashboard/api/common.py's `Events`)
+    "wsproto>=1.2",          # those streams over one WebSocket per page, not a connection each (ag_dashboard/api/ws.py)
 ]
 codex = ["openai-codex>=0.163"]   # codex/<model> as the Gatherer's LLM, on your Codex login (CLIClient)
 

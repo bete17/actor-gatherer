@@ -224,6 +224,22 @@ Not covered yet (found 2026-10-26, on a90fe776 and 85d66f98 in making_ag):
 - [ ] **Before its compaction, 85d66f98's ag count was ~12% over the provider's** (641k against 572k, build 75):
   not explained yet. A guess to check: thinking blocks counted but no longer sent.
 
+## Several tabs on one dashboard
+
+The page's streams share one WebSocket per page (api/ws.py), so a second tab no longer takes the browser's six
+connections to the dashboard. What a second tab still costs:
+
+- [ ] **The whole home sent on every change, to every page.** A `home` event is the list of every actor (424 KB on
+  the user's home, 2026-11-04), sent again to each open page whenever one actor changes -- about 0.5 MB every 2 s
+  while actors work -- and each page then loads its actor's Chat again. A second tab doubles both. Sending only the
+  actors that changed (the hub already knows which: data.py's `Kept`) would cut most of it.
+- [ ] **Two tabs on one actor's Terminal set its size in turn.** Each fits the terminal to its own window and sends
+  that size (14-terminal.js: on a resize, and when it starts listening); the harness then draws for the last one, and
+  the other tab shows its screen at the wrong width. One size for all of them (the smallest, as tmux does), or the
+  focused tab's, would keep both readable.
+- [ ] **DocWriter's page** (vendor/docwriter, built apart) still opens an EventSource of its own: one of the six while
+  it is open.
+
 ## One process per session, on macOS
 
 ag lets one process at a time run a session (`_open`, store/operations.py's `claim`): a second one -- another
@@ -496,9 +512,9 @@ Not done yet:
   dashboard would attach to: `Target.setAutoAttach`). A drop-down's list, opened with `showPicker` in the user's
   Chrome, was seen opened there only headless (which closes it at once); a page calling `showPicker` itself opens
   nothing. A file is sent to the dashboard as base64 JSON, 22 MB at most.
-- **Frames as base64 over server-sent events.** Fine on this machine. A video chunk is a few KB, a key frame (a page
-  joining, the view resized, a tab switched) up to ~0.5 MB; a JPEG frame 30-150 KB at 1x, ~1 MB at 2x. Binary frames
-  (a WebSocket) would cut a third.
+- **Frames as base64 in JSON.** Fine on this machine. A video chunk is a few KB, a key frame (a page joining, the view
+  resized, a tab switched) up to ~0.5 MB; a JPEG frame 30-150 KB at 1x, ~1 MB at 2x. The streams now share a WebSocket
+  (api/ws.py), which could carry them as binary messages and cut a third; they still go as server-sent events' text.
 - **Video only in the dashboard's own Chrome.** The user's Chrome won't capture a tab hidden from its tab strip, and a
   capture there would ask the user to share each tab, or to click an extension's button in it: "mine" keeps the JPEG
   frames. In its own Chrome the extension (tabCapture, activeTab) is loaded over the pipe (Extensions.loadUnpacked,

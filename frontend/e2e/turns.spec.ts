@@ -2,7 +2,7 @@
 // earlier messages behind a +, the latest reply folded, the earlier turns pulled in as the reader scrolls up past the
 // top, a turn's notes and its latest call, and the folds kept across views and started over for another actor.
 import type { Page } from "@playwright/test";
-import { expect, test } from "./test";
+import { expect, streamsAsRequests, test } from "./test";
 import { CLAUDE, CODEX, masks, openActor } from "./home";
 
 const talk = (page: Page) => page.locator("#main .fl-talk");
@@ -207,6 +207,7 @@ test("shows the actor at work once the stream says so, while its conversation's 
   let held = false,
     said = false;
   await page.route("**/api/files?*", (route) => (held ? undefined : route.continue()));
+  await streamsAsRequests(page);
   await page.route("**/api/stream*", async (route) => {
     if (!held || said) return route.abort(); // until then: the page as it loaded
     said = true;

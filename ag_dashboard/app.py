@@ -4,6 +4,7 @@ as the page reads them (api/common.py). `uvicorn` is the server that runs it (se
 
 `python -m ag_dashboard --routes` prints `routes()`: every route, with what its handler's docstring says first."""
 
+import importlib.util
 from typing import List, Optional, Tuple
 from urllib.parse import parse_qsl, urlencode, urlsplit
 
@@ -15,11 +16,13 @@ from starlette.exceptions import HTTPException
 
 from . import apps, server
 from .api import (agent, branches, common, editor, files, history, home, monitor, page, preview, sessions, settings,
-                  stream, terminal)
+                  stream, terminal, ws)
 
 ROUTERS = (page.router, home.router, stream.router, agent.router, files.router, history.router, sessions.router,
-           terminal.router, editor.router, preview.router, branches.router, monitor.router, settings.router,
+           terminal.router, editor.router, preview.router, branches.router, monitor.router, settings.router, ws.router,
            *(a.router() for a in apps.APPS))          # each app's own (apps.py)
+WEBSOCKETS = "wsproto" if importlib.util.find_spec("wsproto") else "none"   # without it, the page's streams are its own
+                                                                           # connections (api/ws.py)
 WRITES = ("POST", "PUT", "PATCH", "DELETE")
 
 
@@ -45,13 +48,15 @@ def routes() -> List[Tuple[str, str, str]]:
     for router in ROUTERS:
         for route in router.routes:
             doc = " ".join((route.endpoint.__doc__ or "").strip().split("\n\n")[0].split())
-            out.append((", ".join(sorted(route.methods)), route.path, doc))
+            out.append((", ".join(sorted(getattr(route, "methods", None) or ["WEBSOCKET"])), route.path, doc))
     return out
 
 
 def uvicorn_server(app: FastAPI) -> "Uvicorn":
-    """uvicorn's server for the app (h11, quiet), its open streams ended as it stops."""
-    config = uvicorn.Config(app, http="h11", ws="none", lifespan="off", log_config=None, log_level="warning",
+    """uvicorn's server for the app (h11, quiet; WebSockets by wsproto, uncompressed: this machine's), its open streams
+    ended as it stops."""
+    config = uvicorn.Config(app, http="h11", ws=WEBSOCKETS, ws_per_message_deflate=False, lifespan="off",
+                            log_config=None, log_level="warning",
                             access_log=False, proxy_headers=False, server_header=False,
                             timeout_keep_alive=server.IDLE_SECONDS, timeout_graceful_shutdown=server.STOP_SECONDS,
                             h11_max_incomplete_event_size=server.MAX_HEAD)
