@@ -10,8 +10,9 @@ piece is:
                             DevTools Protocol), so it opens no port: nothing else on the machine can drive it. Its profile
                             is the home's (<home>/dashboard/browser): logins made in it last, apart from the user's own
                             Chrome. Its user agent is ordinary Chrome's, not headless Chrome's (`ordinary_ua`,
-                            `ua_metadata`): some sites refuse a headless one. navigator.webdriver stays true: a site can
-                            still tell it is driven. Which Chrome: `[dashboard] browser`, else one installed
+                            `ua_metadata`): some sites refuse a headless one. Nor does it say it is driven
+                            (navigator.webdriver false: AUTOMATION_HIDDEN): Google refuses a sign-in in a Chrome that
+                            does ("This browser or app may not be secure"). Which Chrome: `[dashboard] browser`, else one installed
                             (`executable`); none: no Browser is offered (`available`)
                           - "mine": the user's own Chrome, running, its logins and history -- its remote debugging turned
                             on by them (chrome://inspect/#remote-debugging, Chrome 144+), reached by a WebSocket to the
@@ -117,9 +118,15 @@ UI_BINDING = "__agUISay"    # how it tells the dashboard (Runtime.addBinding, in
 UPLOAD_KEEP = 86400.0       # seconds a file the user gave a page is kept (the page reads it when it sends it, later)
 MAX_UPLOAD = 22_000_000     # the largest file the user gives a page through the view (sent as base64, in JSON)
 DOWNLOADS_SHOWN = 5         # the downloads done the view is told of, the latest
+#: navigator.webdriver false in ag's own Chrome. Started for automation (headless, a DevTools pipe), Chrome says so to
+#: every page, and Google's sign-in refuses it -- "Couldn't sign you in: This browser or app may not be secure", a
+#: personal account's sign-in, Figma's "Continue with Google" -- while the same Chrome without it signs in. The user's
+#: choice (2026-11-04): signing in inside the Browser over sites being able to tell an agent drives it.
+AUTOMATION_HIDDEN = "--disable-blink-features=AutomationControlled"
 ARGS = ["--headless=new", "--remote-debugging-pipe", "--no-first-run", "--no-default-browser-check",
         "--use-mock-keychain", "--password-store=basic", "--mute-audio", "--hide-crash-restore-bubble",
-        "--disable-features=Translate,OptimizationHints,MediaRouter", "--disable-search-engine-choice-screen"]
+        "--disable-features=Translate,OptimizationHints,MediaRouter", "--disable-search-engine-choice-screen",
+        AUTOMATION_HIDDEN]
 #: The platform a Chrome names in its user agent, by sys.platform: fixed since Chrome reduced its user agent (101-110) --
 #: an Apple silicon Mac's is "Intel", any Linux's "x86_64".
 UA_PLATFORMS = {"darwin": "Macintosh; Intel Mac OS X 10_15_7", "linux": "X11; Linux x86_64",
@@ -206,13 +213,20 @@ def executable() -> Optional[str]:
 _ua_known: Dict[Tuple[str, float], Optional[str]] = {}
 
 
+def popup_window(features) -> bool:
+    """Whether a page's window.open asked for a popup window -- features beyond noopener/noreferrer (a size, a place):
+    Chrome opens it in a window without a toolbar, whatever the page then reads of its bars (one opened noopener reads
+    them visible)."""
+    return any(str(f).split("=")[0].strip().lower() not in ("noopener", "noreferrer", "") for f in features or [])
+
+
 def ordinary_ua(exe: str) -> Optional[str]:
     """The user agent the Chrome `exe` sends with a window, for the dashboard's own to send headless. Headless, Chrome
     names itself "HeadlessChrome/156.0.0.0" in it -- in every request's User-Agent and navigator.userAgent, a worker's
     too -- and some sites refuse it outright: Figma's CloudFront answers a file's page with a 403 "Request blocked",
     whatever the login. Given at launch (--user-agent) it is every request's, workers' and frames' alike; its client
     hints' brands (Sec-CH-UA: "Google Chrome") are already the ordinary ones, their detail Chrome then leaves empty
-    (`ua_metadata`). Only the name changes: navigator.webdriver stays true. Its major version from `exe --version`
+    (`ua_metadata`). Only the name changes (navigator.webdriver: AUTOMATION_HIDDEN). Its major version from `exe --version`
     ("Google Chrome 156.0.8078.80", ~20 ms), once per Chrome installed; None -- its own then -- if that names none (or
     one under 100: not Chrome's), or this platform's is unknown."""
     try:
@@ -872,6 +886,7 @@ class Tab:
         self.popup: Optional[dict] = None               # the list, picker, menu or find bar asked for last: {n, k}
         self.chooser: Optional[dict] = None             # its file chooser, open: {n, mode, accept, node}
         self.ui_ctx: Optional[int] = None               # UI_JS's world in its main frame (Runtime's context id)
+        self.windowed = False                           # a popup window a page opened (`popup_window`): no video for it
 
 
 class Viewer:
@@ -993,6 +1008,7 @@ class Browser:
         self.clicked = 0.0                               # when the user or the agent last clicked in it
         self.behind = False                              # whether that click opens a link behind: Cmd/Ctrl, middle
         self.pending: List[dict] = []                    # tabs its pages asked for, Chrome not yet seen to open
+        self.popup_asked = 0.0                           # when a page last asked for a popup window (`popup_window`)
         self.asked = 0                                   # of those, not yet opened (by Chrome or the dashboard)
         self.quick_until = 0.0                           # the screen sent at QUICK_SCALE until then
         self.pressed_at: Optional[Tuple[float, float]] = None   # where the button went down, for a drag
@@ -1188,6 +1204,9 @@ class Browser:
             self._save()
         elif (method == "Page.windowOpen" and params.get("userGesture")) or (
                 method == "Page.frameRequestedNavigation" and params.get("disposition") in ("newTab", "newWindow")):
+            if method == "Page.windowOpen" and popup_window(params.get("windowFeatures")):
+                with self.lock:                          # a popup window, asked for: its tab, once adopted, `windowed`
+                    self.popup_asked = time.time()
             self._asked_for(params.get("url") or "")     # window.open, target=_blank; a link Cmd/Ctrl/middle-clicked
         elif method == "Page.navigatedWithinDocument" and params.get("frameId") == tab.target:
             tab.url = params.get("url", tab.url)
@@ -1252,6 +1271,9 @@ class Browser:
             try:
                 cdp = self.chrome.cdp()
                 tab = self._open(cdp, info.get("url") or "", select=select, target=info["targetId"])
+                with self.lock:                          # in a popup window: no video for it (browser_video.in_popup)
+                    if time.time() - self.popup_asked < OPENED_BY_CLICK:
+                        tab.windowed, self.popup_asked = True, 0.0
                 self._retitle(tab)                       # its page as it is now: it may have moved on unseen
                 if not self._acting_now():               # the user's doing, not the agent's
                     self.note(f"a new tab opened{'' if select else ' behind'}: {tab.url or 'blank'}")
