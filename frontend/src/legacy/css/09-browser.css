@@ -35,11 +35,51 @@
 .bw-stage:focus-visible { box-shadow: inset 0 0 0 2px color-mix(in srgb, #2563EB 50%, transparent); }
 .bw-stage.picking { cursor: crosshair; }
 .bw-stage img, .bw-stage canvas.screen { position: absolute; left: 0; top: 0; display: block; user-select: none; -webkit-user-drag: none; pointer-events: none; }
-.bw-stage .acting { position: absolute; border: 2px solid #E8590C; border-radius: 4px; pointer-events: none;
-  box-shadow: 0 0 0 3px color-mix(in srgb, #E8590C 22%, transparent); transition: all .15s ease-out; }
-.bw-stage .acting-label { position: absolute; left: 8px; bottom: 8px; max-width: calc(100% - 16px); padding: 4px 10px; border-radius: 999px;
-  background: #E8590C; color: #fff; font-size: 12px; font-weight: 600; pointer-events: none; white-space: nowrap; overflow: hidden;
-  text-overflow: ellipsis; box-shadow: 0 2px 8px rgba(0, 0, 0, .18); }
+/* what the agent acts on (20-browser.js's bwOutline): orange as it acts; done, a flash then a 3 s fade; not done because a
+   check of it failed, the same in amber; its line hovered in the strip, where it is now */
+.bw-stage .acting { --bw-a: #E8590C; position: absolute; border: 2px solid var(--bw-a); border-radius: 4px; pointer-events: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--bw-a) 22%, transparent); transition: all .15s ease-out; }
+.bw-stage .acting.no, .bw-stage .acting.hover.no { --bw-a: #D97706; border-style: dashed; }
+.bw-stage .acting:is(.done, .no) { animation: bw-flash .5s ease-out, bw-fade 3s ease-in forwards; }
+@keyframes bw-flash {
+  from { background: color-mix(in srgb, var(--bw-a) 24%, transparent); box-shadow: 0 0 0 9px color-mix(in srgb, var(--bw-a) 30%, transparent); }
+  to { background: transparent; box-shadow: 0 0 0 3px color-mix(in srgb, var(--bw-a) 22%, transparent); }
+}
+@keyframes bw-fade { 0%, 50% { opacity: 1; } 100% { opacity: 0; } }
+/* what the agent did (bwFeed): its latest action in a line under the page, opening upwards, over it, to its last ten */
+.bw-feed { --bw-a: #E8590C; --bw-no: #D97706; flex: none; position: relative; border-top: 1px solid var(--ring); }
+.bw-feed .line { display: flex; align-items: center; gap: 8px; width: 100%; height: 26px; padding: 0 10px; border: 0; margin: 0;
+  background: none; color: var(--ink); font: 12px/1 system-ui, -apple-system, sans-serif; text-align: left; cursor: pointer; }
+.bw-feed .line:hover:not([disabled]) { background: var(--wash); }
+.bw-feed .line[disabled] { cursor: default; }
+.bw-feed .dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--bw-a); }
+.bw-feed .tx { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.bw-feed .tm { flex: none; color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.bw-feed .more { flex: none; display: grid; color: var(--muted); transform: rotate(-90deg); transition: transform .15s ease-out; }
+.bw-feed.open .more { transform: rotate(90deg); }
+.bw-feed .line[disabled] .more { visibility: hidden; }
+.bw-feed.idle .tx { color: var(--muted); }
+.bw-feed.idle .dot { background: var(--grid); }
+.bw-feed.doing .dot { animation: bw-busy 1s ease-in-out infinite alternate; }
+.bw-feed.doing .tx { color: var(--ink-2); }
+.bw-feed.no .dot, .bw-feed .list li.no .dot { background: var(--bw-no); border-radius: 2px; transform: rotate(45deg); }
+.bw-feed.no .line { background: color-mix(in srgb, var(--bw-no) 10%, transparent); }
+.bw-feed.fresh .line { animation: bw-fresh 1.2s ease-out; }
+@keyframes bw-busy { from { opacity: 1; } to { opacity: .3; } }
+@keyframes bw-fresh { from { background: color-mix(in srgb, var(--bw-a) 22%, transparent); } }
+.bw-feed.no.fresh .line { animation-name: bw-fresh-no; }
+@keyframes bw-fresh-no { from { background: color-mix(in srgb, var(--bw-no) 30%, transparent); } }
+.bw-feed .list { position: absolute; left: 0; right: 0; bottom: 100%; z-index: 6; max-height: min(300px, 70vh); overflow-y: auto;
+  margin: 0; padding: 4px 0; list-style: none; background: var(--surface); border-top: 1px solid var(--grid);
+  box-shadow: 0 -6px 18px rgba(0, 0, 0, .12); font-size: 12px; }
+.bw-feed .list li { display: flex; align-items: center; gap: 8px; padding: 4px 10px; cursor: default; }
+.bw-feed .list li:hover { background: var(--wash); }
+.bw-feed .list li .tx { white-space: normal; overflow-wrap: anywhere; }
+.bw-feed .list li.no .tx { color: color-mix(in srgb, var(--bw-no) 70%, var(--ink)); }
+@media (prefers-reduced-motion: reduce) {
+  .bw-stage .acting:is(.done, .no) { animation: bw-fade 3s ease-in forwards; }
+  .bw-feed.doing .dot, .bw-feed.fresh .line { animation: none; }
+}
 .bw-stage .drag { position: absolute; border: 1.5px dashed #2563EB; background: color-mix(in srgb, #2563EB 10%, transparent); pointer-events: none; }
 .bw-stage .hint { position: absolute; left: 50%; top: 8px; transform: translateX(-50%); padding: 4px 12px; border-radius: 999px;
   background: #2563EB; color: #fff; font-size: 12px; pointer-events: none; white-space: nowrap; }

@@ -227,6 +227,14 @@ def tab(srv: Parts, key: Key, body: Object) -> Response:
     return answer({})
 
 
+@router.post("/browser/w/{key}/where")
+def where(srv: Parts, key: Key, body: Object) -> Response:
+    """{i}: where the element of the agent's action i (the view's list of them) is on the screen now -> {box}, null if
+    it is gone, in another tab, or out of view."""
+    b = _browser(srv, key)
+    return answer({"box": b.where(int(body.get("i") or 0))})
+
+
 @router.post("/browser/w/{key}/{what}")
 def other(srv: Parts, key: Key, what: Annotated[str, Path(pattern=r"^[a-z]+$")], body: Object) -> Response:
     """Nothing else: not found (once its body and the Browser are found good, as the routes above take them)."""

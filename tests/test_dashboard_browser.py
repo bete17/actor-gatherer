@@ -1346,6 +1346,118 @@ class ExpectTest(ChromeBase):
 
 
 @unittest.skipUnless(browser.available(), "no Chrome here")
+@unittest.skipUnless(browser.available(), "no Chrome here")
+class ToldTest(ChromeBase):
+    """What the agent did, as the user is shown it (`Browser.show`, the state's `actions`): in the past tense, naming
+    what it acted on and the row it is in; what it didn't do and why, the element whose check failed outlined."""
+    row, delete_in_row_1 = ExpectTest.row, ExpectTest.delete_in_row_1
+
+    def setUp(self):
+        super().setUp()
+        self.text("navigate", url=self.write("invoices.html", INVOICES))
+        self.outline = self.text("snapshot")
+
+    def told(self) -> dict:
+        return self.b.state()["actions"][-1]
+
+    def test_a_click_is_told_done_naming_the_row_its_check_was_of_else_the_nearest(self):
+        delete = self.delete_in_row_1()
+        self.call("click", ref=delete, expect=[{"ref": self.row(1), "js": "el.innerText.includes('#4411')"}])
+        a = self.told()
+        self.assertEqual(a["text"], 'Clicked "Delete" in "Invoice #4411"')
+        self.assertTrue(a["ok"])
+        x, y = self.middle(delete)
+        self.assertTrue(a["box"][0] <= x <= a["box"][0] + a["box"][2] and a["box"][1] <= y <= a["box"][1] + a["box"][3])
+        self.assertIsNone(self.b.state()["acting"])                        # done: no more "Clicking ..."
+        self.call("click", ref=delete)                                      # no check of its row: the row it is in
+        self.assertEqual(self.told()["text"], 'Clicked "Delete" in "Invoice #4411"')
+        self.call("click", ref=self.ref(self.outline, 'button "Show more'))
+        self.assertEqual(self.told()["text"], 'Clicked "Show more"')         # in no row
+        self.js("document.getElementById('a').onclick = function () { this.remove(); }")
+        self.call("click", ref=self.ref(self.outline, "button \"Agent's"))
+        self.assertEqual(self.told()["text"], 'Clicked "Agent\'s"')
+        self.assertIsNone(self.told()["box"])                               # gone with its click: nothing to outline
+
+    def test_while_it_acts_what_it_does_is_said(self):
+        seen = []
+        slow = threading.Thread(target=lambda: self.call("evaluate", expression="new Promise((r) => setTimeout(r, 600))"))
+        slow.start()
+        self.until(lambda: (seen.append(self.b.state()["acting"]) or seen[-1]) is not None)
+        slow.join()
+        self.assertEqual(seen[-1]["label"], "Running a script")
+        self.assertEqual(self.told()["text"], "Ran a script")
+        self.assertIsNone(self.b.state()["acting"])
+
+    def test_a_check_that_failed_says_what_its_row_reads_now_and_what_the_user_did(self):
+        delete, row = self.delete_in_row_1(), self.row(1)
+        self.click_as_user(self.ref(self.outline, 'button "Sort in place'))
+        self.assertTrue(self.until(lambda: "4412" in self.js("rows.firstElementChild.innerText")))
+        self.until(lambda: any("Sort in place" in w for _, w in self.b.lately))
+        got = self.call("click", ref=delete, expect=[{"ref": row, "js": "el.innerText.includes('#4411')"}])
+        self.assertTrue(got.get("isError"))
+        a = self.told()
+        self.assertFalse(a["ok"])
+        self.assertEqual(a["text"], """Didn't click "Delete": its row now reads "Invoice #4412" (you clicked button "Sort in place")""")
+        self.assertIn("Not done: expect 1 is false", a["detail"])            # what the agent was told
+        x, y = self.middle(row)                                             # the row outlined, not the button: what
+        width = self.js("rows.firstElementChild.getBoundingClientRect().width")     # it holds, not its whole width
+        self.assertTrue(a["box"][1] <= y <= a["box"][1] + a["box"][3])
+        self.assertTrue(self.middle(delete)[0] < a["box"][0] + a["box"][2] < width / 2, (a["box"], width))
+        self.assertEqual(self.b.where(a["i"]), a["box"])                    # where it is now: the same
+        self.call("click", ref=delete, expect=[{"js": "document.title === 'Elsewhere'"}])
+        self.assertEqual(self.told()["text"], """Didn't click "Delete": the page is not as it expected (you clicked button "Sort in place")""")
+        self.assertIsNone(self.told()["box"])
+
+    def test_an_element_the_page_renamed_is_said_and_outlined(self):
+        remove = self.ref(self.outline, 'button "Remove #4411')
+        self.js("swap()")
+        self.call("click", ref=remove)
+        a = self.told()
+        self.assertEqual(a["text"], """Didn't click "Remove #4411": it reads "Remove #4412" now (the page changed by itself)""")
+        self.assertIsNotNone(a["box"])
+
+    def test_what_was_typed_is_said_but_never_into_a_password(self):
+        note, pw = self.ref(self.outline, 'textbox "Note'), self.ref(self.outline, 'textbox "Password')
+        self.call("type", ref=note, text="hello", submit=True)
+        self.assertEqual(self.told()["text"], 'Typed "hello" into "Note", then pressed Enter')
+        self.call("type", ref=pw, text="s3cret")
+        self.assertEqual(self.told()["text"], 'Typed into "Password"')
+        self.assertNotIn("s3cret", json.dumps(self.b.state()))
+        self.call("type", ref=note, text="")
+        self.assertEqual(self.told()["text"], 'Cleared "Note"')
+
+    def test_pages_and_tabs_are_told_as_the_user_would_say_them(self):
+        page = self.serve("other.html", "<title>Other</title><p>hi")
+        self.call("navigate", url=page)
+        self.assertEqual(self.told()["text"], f"Opened {page[len('http://'):]}")
+        self.call("back")
+        self.assertEqual(self.told()["text"], "Went back")
+        self.call("tabs", action="new")
+        self.call("tabs", action="switch", index=1)
+        self.assertEqual(self.told()["text"], 'Switched to tab 1 "Invoices"')
+        self.call("tabs", action="close", index=2)
+        self.assertEqual(self.told()["text"], 'Closed tab 2 "about:blank"')
+        n = len(self.b.state()["actions"])
+        self.text("tabs")                                                   # listing them does nothing to the page
+        self.text("snapshot")
+        self.assertEqual(len(self.b.state()["actions"]), n)
+
+    def test_a_call_missing_its_checks_is_not_listed_the_latest_ten_are_and_where_they_are_now(self):
+        more = self.ref(self.outline, 'button "Show more')
+        self.assertEqual([a["text"] for a in self.b.state()["actions"]], ['Opened "invoices.html"'])
+        self.bs.call(self.key, "click", {"ref": more})                       # the agent's slip, told it alone
+        self.assertEqual(len(self.b.state()["actions"]), 1)
+        for _ in range(12):
+            self.call("click", ref=more)
+        listed = self.b.state()["actions"]
+        self.assertEqual(len(listed), browser.SHOWN_KEEP)
+        self.assertEqual([a["i"] for a in listed], list(range(4, 14)))
+        self.assertTrue(self.b.where(13))                                    # still there
+        self.js("document.querySelectorAll('button')[2].remove()")
+        self.assertIsNone(self.b.where(13))                                  # gone
+        self.assertIsNone(self.b.where(99))
+
+
 class UsersChromeTest(Home):
     """"mine" against a stand-in for the user's Chrome -- one with its debugging on (headless here, a profile of its
     own): reached over a WebSocket, the Browser's tab hidden in it, closed when the dashboard stops, the Chrome left

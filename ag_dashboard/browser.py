@@ -27,8 +27,8 @@ piece is:
                           page's stream (api/browser.py's `stream`) -- in the dashboard's own Chrome as video (H.264,
                           `Capture`: browser_video.py) to a page that can decode it, else as the JPEG frames of Chrome's
                           screencast (also until the video comes, and if it fails: `_recast`) -- and its state -- tabs,
-                          what the user picked, what the agent does now, a dialog open; at the view's size (`resize`),
-                          which the agent's screenshots then have too
+                          what the user picked, what the agent does now and did lately, done or not and why (`show`), a
+                          dialog open; at the view's size (`resize`), which the agent's screenshots then have too
     what the user does    `input`: the page's mouse, wheel and keys, given to the tab as Chrome's own input (a page
                           asking for a passkey keeps taking it: PASSKEYS); copy, cut and paste, the page's own,
                           through Chrome's clipboard to and from the user's (`copy`); `navigate`;
@@ -91,7 +91,8 @@ CALL_WAIT = 20.0            # the most a call to Chrome is waited for
 NAV_WAIT = 20.0             # the most the agent's navigation waits for its site to answer, before it is stopped
 LOAD_WAIT = 15.0            # the most an action waits for the page it started loading
 SETTLE = 0.25               # seconds after an action before what it did is looked at
-ACTING_KEEP = 1.2           # seconds what the agent did stays marked on the screen after
+ACTING_KEEP = 1.2           # seconds after the agent's action a change of the page is still taken as its doing
+SHOWN_KEEP = 10             # the agent's latest actions the view lists, as the user is told them (`Browser.shown`)
 EXPECT_WORLD = "ag-expect"  # the world an action's checks (`expect`) run in, in each of a tab's pages: of their own
 EXPECT_TIME = 200           # the most milliseconds one check may run
 EXPECT_WAIT = 2.0           # the most seconds a check's calls to Chrome are waited for, as the user's input waits on
@@ -989,6 +990,11 @@ class Browser:
         self.ref_n = 0
         self.acting: Optional[dict] = None               # what the agent does now: {label, box}
         self.acting_since = 0.0                          # when it began that
+        self.doing = ""                                  # what the agent does now, as the user is told it
+        self.on: Optional[dict] = None                   # what its action is on (`Browsers._seen`)
+        self.checked: List[dict] = []                    # its action's checks (`expect`)
+        self.shown: collections.deque = collections.deque(maxlen=SHOWN_KEEP)   # its latest actions, as the user
+        self.shown_n = 0                                 # is told them: {i, at, ok, text, box, detail, el}
         self.user_at = 0.0                               # when the user last pressed, typed or chose in it
         self.clicked = 0.0                               # when the user or the agent last clicked in it
         self.behind = False                              # whether that click opens a link behind: Cmd/Ctrl, middle
@@ -1410,11 +1416,13 @@ class Browser:
 
     def state(self) -> dict:
         with self.lock:
-            acting = self.acting if self.acting and (self.acting_until == 0 or time.time() < self.acting_until) else None
+            acting = {"label": self.doing, "box": self.acting.get("box")} \
+                if self.acting and not self.acting_until and self.doing else None   # while it acts (`shown`: after)
             tab = self.tabs[self.active] if self.tabs else None
             return {"tabs": [{"title": t.title, "url": t.url, "loading": t.loading} for t in self.tabs],
                     "active": self.active, "picks": [{"id": p["id"], "label": p["label"]} for p in self.picks],
                     "acting": acting, "dialog": tab.dialog if tab else None, "error": self.error,
+                    "actions": [{k: a[k] for k in ("i", "at", "ok", "text", "box", "detail")} for a in self.shown],
                     "running": self.chrome.running(), "viewport": list(self.viewport[:2]),
                     "chrome": self.chrome.which(), "allow": self.chrome.status == "allow", "video": self.video.ok,
                     "video_off": "" if self.video.ok else self.video.why,
@@ -2183,7 +2191,8 @@ class Browser:
             if self.acting is None or self.acting_until:
                 self.acting_since = time.time()
             self.acting, self.acting_until = {"label": label, "box": box}, 0
-        self._publish()
+        if not label.startswith("not "):                 # refused: shown as such, and why, once said (`_refused`)
+            self._publish()
 
     def acted(self) -> None:
         with self.lock:
@@ -2191,13 +2200,68 @@ class Browser:
                 self.acting_until = time.time() + ACTING_KEEP
         self._publish()
 
-        def clear():
+        def clear():                                     # (the view shows it no more already: `state`)
             time.sleep(ACTING_KEEP + 0.05)
             with self.lock:
                 if self.acting is not None and self.acting_until and time.time() >= self.acting_until:
                     self.acting = None
-            self._publish()
         threading.Thread(target=clear, name="ag-browser-acted", daemon=True).start()
+
+    # -- what the agent did, as the user is shown it
+
+    def show(self, ok: bool, text: str, box: Optional[list] = None, el: Optional[Tuple[str, int]] = None,
+             detail: str = "") -> None:
+        """One of the agent's actions, done (`ok`) or not, as the user is told it ("Clicked "Delete" in "Invoice #4411"",
+        "Didn't click "Delete": its row reads "Invoice #4413" now") -- for the view to say, outline (`box`: the
+        element it was on, or whose check failed, where it was) and list, the latest SHOWN_KEEP; `el` (its target and
+        node): where it is now, asked for (`where`). `detail`: what the agent was told, when not done."""
+        with self.lock:
+            self.shown_n += 1
+            self.shown.append({"i": self.shown_n, "at": int(time.time() * 1000), "ok": ok, "text": text, "box": box,
+                               "detail": detail, "el": el})
+
+    def where(self, i: int) -> Optional[list]:
+        """Where the element of the agent's action `i` (`show`) is on the screen now: None if it is gone, in a tab not
+        shown, or out of view."""
+        with self.lock:
+            a = next((a for a in self.shown if a["i"] == i), None)
+            el = a and a.get("el")
+            tab = self.tabs[self.active] if self.tabs else None
+        if not el or tab is None or tab.target != el[0] or tab.dialog or not self.chrome.running():
+            return None
+        return self.box_of(self.chrome.cdp(), tab, el[1])
+
+    def box_of(self, cdp: Cdp, tab: Tab, node: int) -> Optional[list]:
+        """Where the element is on the screen, as it is scrolled now: [x, y, width, height], None if gone or out of
+        view -- a block (a row, a list item) by what it holds, not its whole width (TIGHT_JS)."""
+        try:
+            quads = cdp.call("DOM.getContentQuads", {"backendNodeId": node}, tab.session, timeout=EXPECT_WAIT).get("quads")
+        except BrowserError:
+            return None
+        if not quads:
+            return None
+        xs, ys = quads[0][0::2], quads[0][1::2]
+        box = [min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)]
+        try:
+            obj = cdp.call("DOM.resolveNode", {"backendNodeId": node}, tab.session, timeout=EXPECT_WAIT)["object"]["objectId"]
+            got = cdp.call("Runtime.callFunctionOn", {"objectId": obj, "functionDeclaration": TIGHT_JS, "returnByValue": True},
+                           tab.session, timeout=EXPECT_WAIT)
+            tight = (got.get("result") or {}).get("value")
+        except (BrowserError, KeyError):
+            tight = None
+        if isinstance(tight, list) and len(tight) == 4:  # (from its own corner: so in a frame too)
+            box = [box[0] + tight[0], box[1] + tight[1], tight[2], tight[3]]
+        w, h = self.viewport[:2]
+        return box if box[0] < w and box[1] < h and box[0] + box[2] > 0 and box[1] + box[3] > 0 else None
+
+    def located(self, ref: str) -> Optional[Tuple[str, int]]:
+        """A ref's (target, backend node), as last known -- no call to Chrome: None if it names none."""
+        ref = _canon(ref)
+        with self.lock:
+            if ref in self.refs:
+                return self.refs[ref]
+            p = self.kept_picks.get(ref)
+            return (p["target"], p["node"]) if p and p.get("kind") == "element" else None
 
 
 def _pick_lines(p: dict) -> List[str]:
@@ -2236,6 +2300,122 @@ def _same(a: Tuple[str, str], b: Tuple[str, str]) -> bool:
 def _named(role: str, name: str) -> str:
     name = " ".join(str(name or "").split())
     return f"{role} {json.dumps(name[:80], ensure_ascii=False)}" if name else role
+
+
+def _q(text: str, most: int = 60) -> str:
+    """Text as the user is shown it, quoted: its spaces run together, cut to `most` characters."""
+    text = " ".join(str(text or "").split())
+    return '"' + (text if len(text) <= most else text[:most - 1].rstrip() + "…") + '"'
+
+
+def _site(url: str) -> str:
+    """A URL as the user is told it: no scheme, no www., no / at its end; a file by its name."""
+    if url.startswith("file:"):
+        return _q(os.path.basename(urllib.parse.unquote(urllib.parse.urlsplit(url).path.rstrip("/"))) or url, 60)
+    if url == "about:blank":
+        return "a blank page"
+    short = re.sub(r"^https?://(www\.)?", "", url).rstrip("/")
+    return short if len(short) <= 60 else short[:59] + "…"
+
+
+def _context(b: "Browser", name: str, args: dict) -> dict:
+    """What an action's words to the user need from before it: the tab it switches to or closes (its title), the
+    dialog it answers."""
+    ctx: dict = {}
+    try:
+        if name == "tabs" and args.get("action") in ("switch", "close"):
+            t = b.tab(int(args.get("index") or 0) - 1)
+            ctx["title"] = t.title or t.url
+        elif name == "dialog":
+            ctx["dialog"] = b.tab().dialog
+    except (BrowserError, TypeError, ValueError):
+        pass
+    return ctx
+
+
+def _phrases(b: "Browser", name: str, args: dict, on: Optional[dict], ctx: dict) -> Tuple[str, str, str]:
+    """An action of the agent's as the user is told it: (while it acts, once done, not done) -- "Clicking "Delete"",
+    "Clicked "Delete" in "Invoice #4411"", "Didn't click "Delete"". Its element named as the page names it, else by
+    its role; the row or item it is in (`on`: `Browsers._seen`), where its name alone says too little or it is
+    clicked; what was typed into a password field never said. Empty ones for a tool that does nothing to the page."""
+    it = within = ""
+    ref = _canon(args["ref"]) if args.get("ref") else ""
+    if ref:
+        role, nm = (on["role"], on["name"]) if on and (on["role"] or on["name"]) else b.named.get(ref) or ("", "")
+        pick = b.kept_picks.get(ref) or {}
+        role, nm = role or pick.get("role") or "", nm or pick.get("name") or ""
+        it = _q(nm) if nm.strip() else ("an " if role[:1] in "aeiou" else "a ") + (role if role and role != "generic" else "element")
+        if on and on.get("within") and _q(on["within"]) != it and (name in ("click", "hover", "press", "scroll", "evaluate")
+                                                                   or not nm.strip()):
+            within = f" in {_q(on['within'])}"
+    if name == "click":
+        button = args.get("button")
+        v = "double-click" if args.get("double") else "right-click" if button == "right" else \
+            "middle-click" if button == "middle" else "click"
+        ing, ed = {"click": ("Clicking", "Clicked"), "double-click": ("Double-clicking", "Double-clicked"),
+                   "right-click": ("Right-clicking", "Right-clicked"), "middle-click": ("Middle-clicking", "Middle-clicked")}[v]
+        return f"{ing} {it}{within}", f"{ed} {it}{within}", f"Didn't {v} {it}"
+    if name == "type":
+        text = str(args.get("text") or "")
+        did = (f"Typed into {it}" if on and on.get("pw") else f"Typed {_q(text, 40)} into {it}") if text else f"Cleared {it}"
+        return f"Typing into {it}{within}", did + within + (", then pressed Enter" if args.get("submit") else ""), \
+            f"Didn't type into {it}"
+    if name == "press":
+        key, at = str(args.get("key") or ""), f" in {it}{within}" if it else ""
+        return f"Pressing {key}{at}", f"Pressed {key}{at}", f"Didn't press {key}" + (f" in {it}" if it else "")
+    if name == "select":
+        values = [str(v) for v in args.get("values") or []]
+        chose = ", ".join(_q(v, 30) for v in values[:3]) + (f" and {len(values) - 3} more" if len(values) > 3 else "")
+        return f"Choosing {chose} in {it}{within}", f"Chose {chose} in {it}{within}", f"Didn't choose {chose} in {it}"
+    if name == "hover":
+        return f"Pointing at {it}{within}", f"Pointed at {it}{within}", f"Didn't point at {it}"
+    if name == "scroll":
+        d = args.get("direction")
+        if it and not d:
+            return f"Bringing {it} into view", f"Brought {it} into view", f"Didn't bring {it} into view"
+        at = f" in {it}{within}" if it else ""
+        return f"Scrolling {d or 'down'}{at}", f"Scrolled {d or 'down'}{at}", f"Didn't scroll {d or 'down'}" + (f" in {it}" if it else "")
+    if name == "navigate":
+        try:
+            site = _site(_url(str(args.get("url") or "")))
+        except BrowserError:
+            site = _q(str(args.get("url") or ""))
+        return f"Opening {site}", f"Opened {site}", f"Didn't open {site}"
+    if name in ("back", "forward", "reload"):
+        return {"back": ("Going back", "Went back", "Didn't go back"),
+                "forward": ("Going forward", "Went forward", "Didn't go forward"),
+                "reload": ("Reloading the page", "Reloaded the page", "Didn't reload the page")}[name]
+    if name == "tabs":
+        action = args.get("action")
+        if action == "new":
+            try:
+                at = f"{_site(_url(str(args['url'])))} in " if args.get("url") else ""
+            except BrowserError:
+                at = ""
+            return f"Opening {at}a new tab", f"Opened {at}a new tab", f"Didn't open {at}a new tab"
+        n = f"tab {args.get('index')}" + (f" {_q(ctx['title'], 40)}" if ctx.get("title") else "")
+        if action == "switch":
+            return f"Switching to {n}", f"Switched to {n}", f"Didn't switch to {n}"
+        if action == "close":
+            return f"Closing {n}", f"Closed {n}", f"Didn't close {n}"
+        return "", "", ""
+    if name == "evaluate":
+        on_it = f" on {it}{within}" if it else ""
+        return f"Running a script{on_it}", f"Ran a script{on_it}", "Didn't run a script" + (f" on {it}" if it else "")
+    if name == "upload":
+        files = [os.path.basename(str(p)) for p in args.get("paths") or []]
+        given = (_q(files[0], 40) if files else "files") + (f" and {len(files) - 1} more" if len(files) > 1 else "")
+        return f"Giving {given} to {it}", f"Gave {given} to {it}", f"Didn't give {given} to {it}"
+    if name == "dialog":
+        d = ctx.get("dialog") or {}
+        what = f"the {d.get('type') or 'dialog'}" + (f" {_q(d['message'], 50)}" if d.get("message") else "")
+        did = "Closed" if d.get("type") == "alert" else "Accepted" if args.get("accept") else "Dismissed"
+        return f"Answering {what}", f"{did} {what}", f"Didn't answer {what}"
+    if name == "wait" and args.get("text"):
+        return f"Waiting for {_q(str(args['text']), 40)}", "", ""
+    if name == "screenshot" and it:
+        return f"Looking at {it}", "", ""
+    return "", "", ""
 
 
 def _openable(url: str) -> bool:
@@ -3161,9 +3341,15 @@ class Browsers:
         A tool that acts (ACTS) is run only with its checks (`expect`) all true, run twice: first as they are -- one
         false refused then, the user's input never held up for it -- then again right before the action, holding the
         Browser's `acts` from them until it has acted: the user's input waits those few milliseconds, as theirs is not
-        to land between a check and the action (`_users`). What the user did since the agent last looked is told."""
+        to land between a check and the action (`_users`). What the user did since the agent last looked is told.
+        The user is shown what it does, and once done or not, what it did, or didn't and why (`_done`, `_refused`)."""
         b = self.get(key)
         begun = time.time()
+        acts = name in ACTS and not (name == "tabs" and (args.get("action") or "list") == "list")
+        listed, formed = acts or name == "dialog", name not in ACTS     # shown done or not; its call as it should be
+        ctx = _context(b, name, args)
+        with b.lock:
+            b.doing, b.on, b.checked = _phrases(b, name, args, None, ctx)[0], None, []
         try:
             b.live(loaded=True)
             self.chrome.touch()
@@ -3173,22 +3359,133 @@ class Browsers:
                 return mcp.result(f"The page shows {_a(d.get('type')).lower()} dialog: {json.dumps(d.get('message', ''))}"
                                   f"{' (default answer ' + json.dumps(d['default']) + ')' if d.get('default') else ''}. "
                                   "Answer it with the dialog tool first.", error=True)
-            acts = name in ACTS and not (name == "tabs" and (args.get("action") or "list") == "list")
             if acts:
                 checks = _checks(name, args.get("expect"))
+                b.checked, formed = checks, True
                 self._expect(b, checks, begun)               # as the page is: a false one refused, holding nothing
                 b.acts.acquire()
                 b.acts_by = threading.get_ident()
                 self._expect(b, checks, begun)               # as the action will find it: the user's input held
             got = getattr(self, f"_t_{name}")(b, args)
             self._reread(b)
+            if listed:
+                self._done(b, name, args, ctx, got, begun)
             return self._meanwhile(b, got, begun) if acts else got
         except BrowserError as exc:
+            if listed and formed:                        # (a call missing its checks: the agent's slip, not shown)
+                self._refused(b, name, args, ctx, str(exc))
             return mcp.result(str(exc), error=True)
         finally:
             b.acted_on = None
             self._let_go(b)
+            b.doing = ""
             b.acted()
+
+    def _done(self, b: Browser, name: str, args: dict, ctx: dict, got: dict, begun: float) -> None:
+        """An action done, shown the user (`Browser.show`): what it did, and the element it was on (marked by this
+        action, begun at `begun`, not one before), outlined where it is now -- not at all if it is gone (a row its click
+        deleted) or out of view (scrolled away)."""
+        if got.get("isError"):
+            return self._refused(b, name, args, ctx, "\n".join(c.get("text", "") for c in got.get("content") or []))
+        with b.lock:
+            marked = b.acting_since >= begun and bool((b.acting or {}).get("box"))
+            on = b.on
+            tab = b.tabs[b.active] if b.tabs else None
+        box = None                                       # where it is now, if still there: what it did may have moved
+        if marked and on and tab is not None and tab.target == on["el"][0] and not tab.dialog:   # it, or taken it away
+            box = b.box_of(self.chrome.cdp(), tab, on["el"][1])
+        b.show(True, _phrases(b, name, args, on, ctx)[1], box, on and on["el"])
+
+    def _refused(self, b: Browser, name: str, args: dict, ctx: dict, said: str) -> None:
+        """An action not done, shown the user (`Browser.show`): what it was to do, and why not, from what the agent was
+        told (`said`) -- for a check that failed, what its element reads now (its row, if it holds the action's) and
+        what the user did since the agent last looked, that may have changed it; that element outlined where it is."""
+        first = said.strip().split("\n", 1)[0]
+        target = b.located(str(args["ref"])) if args.get("ref") else None
+        el, why = None, first[:160]
+        checked = re.match(r"Not done: expect (\d+) (is false|failed|could not be checked)", first)
+        renamed = re.match(r"Not done: \S+ was .+ in your snapshot; it is \S+ (\".*\") now", first)
+        if checked:
+            n = int(checked.group(1))
+            c = b.checked[n - 1] if 0 < n <= len(b.checked) else {}
+            ref = _canon(c["ref"]) if c.get("ref") else ""
+            seen = self._look(b, ref, target) if ref else {}
+            el, moved = seen.get("el"), re.search(r" is in (tab \d+) now", first)
+            if checked.group(2) == "could not be checked":
+                why = "the page did not answer" if "answered nothing" in first else \
+                    "what it checked is gone" if " is gone" in first or " is closed" in first else "its check could not run"
+            elif moved:
+                why = f"it is in {moved.group(1)} now"
+            elif checked.group(2) == "failed" or not ref:
+                why = "the page is not as it expected"
+            else:
+                named = b.named.get(ref) or ("", "")
+                what = "it" if seen.get("same") else f"its {seen.get('kind') or 'row'}" if seen.get("holds") else \
+                    _q(named[1]) if named[1].strip() else "what it checked"
+                why = f"{what} now reads {_q(seen['now'])}" if seen.get("now") else f"{what} changed"
+        elif renamed:
+            el, why = target, f"it reads {renamed.group(1)} now"
+        elif first.startswith("Not opened: "):
+            why = first[len("Not opened: "):].rstrip(".")
+        elif " is gone" in first or first.startswith("no element "):
+            why = "it is gone from the page"
+        elif "is not shown on the page" in first:
+            why = "it is not shown on the page"
+        elif "closed now" in first:
+            why = "its tab is closed"
+        if checked or renamed:                           # what the user did that may have changed it
+            with b.lock:
+                did = [w for t, w in b.lately if t > b.snapped]
+            why += f" (you {did[-1]})" if did else " (the page changed by itself)"
+        tab, box = (b._tab_of(target=el[0]) if el else None), None
+        with b.lock:
+            shown = bool(b.tabs) and tab is b.tabs[b.active]
+        if tab is not None and shown and not tab.dialog:
+            box = b.box_of(self.chrome.cdp(), tab, el[1])
+        b.show(False, f"{_phrases(b, name, args, b.on, ctx)[2]}: {why}", box, el, said.strip())
+
+    def _seen(self, b: Browser, cdp: Cdp, tab: Tab, node: int, obj: str, role: str, name: str) -> dict:
+        """What the agent's action is on, to tell the user (`_phrases`): its role and name; whether it is a password
+        field; the row, item or card it is in -- the smallest its checks were of that holds it, else the nearest."""
+        args = []
+        for at in [b.located(c["ref"]) for c in list(b.checked) if c.get("ref")]:
+            if at and at[0] == tab.target and at[1] != node:
+                try:
+                    args.append({"objectId": cdp.call("DOM.resolveNode", {"backendNodeId": at[1]}, tab.session,
+                                                      timeout=EXPECT_WAIT)["object"]["objectId"]})
+                except (BrowserError, KeyError):
+                    pass
+        try:
+            got = cdp.call("Runtime.callFunctionOn", {"objectId": obj, "functionDeclaration": SEEN_JS, "arguments": args,
+                                                      "returnByValue": True}, tab.session, timeout=EXPECT_WAIT)
+            v = (got.get("result") or {}).get("value") or {}
+        except BrowserError:
+            v = {}
+        return {"role": role, "name": name, "pw": bool(v.get("pw")), "within": str(v.get("within") or ""),
+                "el": (tab.target, node)}
+
+    def _look(self, b: Browser, ref: str, target: Optional[Tuple[str, int]]) -> dict:
+        """The element a check that failed was of, as it is now (LOOK_JS), `target` the action's element: {el, now, same,
+        holds, kind} -- {el} alone if it can't be read, {} if `ref` names none."""
+        el = b.located(ref)
+        tab = b._tab_of(target=el[0]) if el else None
+        if tab is None or tab.dialog:
+            return {"el": el} if el else {}
+        cdp = self.chrome.cdp()
+        args = []
+        try:
+            obj = cdp.call("DOM.resolveNode", {"backendNodeId": el[1]}, tab.session, timeout=EXPECT_WAIT)["object"]["objectId"]
+            if target and target[0] == el[0]:
+                try:
+                    args = [{"objectId": cdp.call("DOM.resolveNode", {"backendNodeId": target[1]}, tab.session,
+                                                  timeout=EXPECT_WAIT)["object"]["objectId"]}]
+                except (BrowserError, KeyError):
+                    pass
+            got = cdp.call("Runtime.callFunctionOn", {"objectId": obj, "functionDeclaration": LOOK_JS, "arguments": args,
+                                                      "returnByValue": True}, tab.session, timeout=EXPECT_WAIT)
+        except (BrowserError, KeyError):
+            return {"el": el}
+        return {"el": el, **((got.get("result") or {}).get("value") or {})}
 
     def _let_go(self, b: Browser) -> None:
         """The Browser's `acts`, let go if this thread's action holds it (`Browser.let_go`)."""
@@ -3349,6 +3646,7 @@ class Browsers:
         q = quads[0]
         xs, ys = q[0::2], q[1::2]
         box = [min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)]
+        b.on = self._seen(b, cdp, tab, node, obj, role, name)
         b.acting_on(f"{verb} {label}", box)
         return cdp, tab, node, obj, label, [sum(xs) / 4, sum(ys) / 4]
 
@@ -3691,6 +3989,53 @@ class Browsers:
 
 
 BUTTONS = {"left": 1, "right": 2, "middle": 4}
+#: The text of an element as shown, but for the controls in it (their words are not what it is about): a row's
+#: "Invoice #4411 — $120.00", not "... Delete Remove". Part of SEEN_JS and LOOK_JS.
+WORDS_JS = r"""
+  const SKIP = "button, select, textarea, input, script, style, svg, [role=button], [aria-hidden=true]";
+  const ROW = "tr, li, [role=row], [role=listitem], [role=option], [role=article], article";
+  const words = (e) => {
+    const out = [], w = document.createTreeWalker(e, NodeFilter.SHOW_TEXT);
+    for (let n = w.nextNode(); n; n = w.nextNode()) {
+      const p = n.parentElement, x = p && p.closest(SKIP);
+      if (!p || (x && x !== e && e.contains(x)) || (p.checkVisibility && !p.checkVisibility())) continue;
+      out.push(n.data);
+    }
+    return out.join(" ").replace(/\s+/g, " ").trim();
+  };"""
+#: On the element an action is on, the elements its checks were of its arguments: whether it is a password field,
+#: and what it is in -- the smallest of those holding it, else the row, list item or card nearest around it.
+SEEN_JS = r"""function (...checked) {
+  const t = this;""" + WORDS_JS + r"""
+  const own = (t.innerText || "").replace(/\s+/g, " ").trim();
+  const about = (e) => { let s = words(e); if (own && s.includes(own)) s = s.replace(own, " ").replace(/\s+/g, " ").trim();
+                         return s.length <= 200 ? s : ""; };
+  const pw = t instanceof HTMLInputElement && t.type === "password";
+  const holding = checked.filter((e) => e && e.nodeType === 1 && e !== t && e.contains(t))
+    .sort((a, b) => (a.contains(b) ? 1 : b.contains(a) ? -1 : 0));
+  for (const e of holding) { const s = about(e); if (s) return { pw, within: s }; }
+  const row = t.parentElement && t.parentElement.closest(ROW);
+  return { pw, within: row ? about(row) : "" };
+}"""
+#: A block's box by what it holds -- a row, a list item: its text and controls, not its whole width -- from its own
+#: corner, [x, y, width, height]; null for an element not a block (a button: its box is what it shows).
+TIGHT_JS = r"""function () {
+  if (!/^(block|list-item|flex|grid|table|table-row|flow-root)$/.test(getComputedStyle(this).display)) return null;
+  const b = this.getBoundingClientRect(), r = document.createRange();
+  r.selectNodeContents(this);
+  const c = r.getBoundingClientRect();
+  const x = Math.max(b.left, c.left), y = Math.max(b.top, c.top), x2 = Math.min(b.right, c.right), y2 = Math.min(b.bottom, c.bottom);
+  return c.width && c.height && x2 > x && y2 > y ? [x - b.left, y - b.top, x2 - x, y2 - y] : null;
+}"""
+#: On the element a check that failed was of (the action's element its argument, if one): what it reads now, but for
+#: its controls -- never a field's value -- and whether it holds that element, is it, and is a row or card.
+LOOK_JS = r"""function (t) {
+  const e = this;""" + WORDS_JS + r"""
+  const now = words(e) || (e.innerText || "").replace(/\s+/g, " ").trim();
+  return { now: now.slice(0, 300), same: !!t && t === e, holds: !!t && t !== e && e.contains(t),
+           kind: e.matches("tr, li, [role=row], [role=listitem], [role=option]") ? "row"
+               : e.matches("article, [role=article]") ? "card" : "" };
+}"""
 CLEAR_JS = r"""function () {
   if (typeof this.select === 'function') return this.select(), !!this.value;
   if (this.isContentEditable) { const r = document.createRange(); r.selectNodeContents(this);
