@@ -9,13 +9,34 @@ Code (`"type": "http"` in --mcp-config) and codex (`mcp_servers.<name>.url`) bot
     tools/call                  `call(name, arguments)`: what it says, as MCP's result ({content, isError})
     ping                        {}
 
-Standard library only."""
+Standard library only.
+
+A harness asks for `tools/list` once it has connected, and a turn it starts before that has none of the server's
+tools: Claude Code and codex both start one without waiting for their MCP servers. So each endpoint's last list is
+kept (`listed`, by `endpoint`), and the dashboard types a session's first message only once its actor's endpoints
+have listed their tools (sessions.py's `_first_message`, apps.py's `tools_of`)."""
 import json
-from typing import Callable, List, Optional, Tuple
+import threading
+import time
+from typing import Callable, Dict, List, Optional, Tuple
 
 PROTOCOL = "2025-06-18"     # the version answered to a client that names none
 NAME = "ag-dashboard"       # a server's name, where none is given (`handle`): its tools' names, as harnesses show them,
                             # carry it -- an app's server is given its own (docwriter.py's MCP_NAME, browser.py's NAME)
+
+_listed: Dict[str, float] = {}      # when each endpoint last answered `tools/list` (epoch seconds), by `endpoint`
+_listed_lock = threading.Lock()
+
+
+def endpoint(app: str, key: str) -> str:
+    """The id of an app's actor's MCP server, the one at /<app>/w/<key>/mcp, as `handle` and `listed` take it."""
+    return f"{app}/{key}"
+
+
+def listed(at: str) -> Optional[float]:
+    """When the endpoint `at` last answered `tools/list` (epoch seconds), else None."""
+    with _listed_lock:
+        return _listed.get(at)
 
 
 def result(text: str, error: bool = False) -> dict:
@@ -24,22 +45,23 @@ def result(text: str, error: bool = False) -> dict:
 
 
 def handle(body: bytes, tools: List[dict], call: Callable[[str, dict], dict],
-           name: str = NAME) -> Tuple[int, Optional[dict]]:
+           name: str = NAME, at: Optional[str] = None) -> Tuple[int, Optional[dict]]:
     """One POST to the server: (status, JSON to answer with, or None for none). `tools`: [{name, description,
     inputSchema}]; `call(name, arguments)`: a tool's result (`result`). A batch -- a list of messages -- is answered
-    with the list of their answers."""
+    with the list of their answers. `at`: the server's endpoint (`endpoint`), its `tools/list` answered kept (`listed`)."""
     try:
         message = json.loads(body or b"null")
     except ValueError:
         return 400, _error(None, -32700, "not JSON")
     if isinstance(message, list):
-        answers = [a for a in (_one(m, tools, call, name) for m in message) if a is not None]
+        answers = [a for a in (_one(m, tools, call, name, at) for m in message) if a is not None]
         return (200, answers) if answers else (202, None)
-    answer = _one(message, tools, call, name)
+    answer = _one(message, tools, call, name, at)
     return (200, answer) if answer is not None else (202, None)
 
 
-def _one(message, tools: List[dict], call: Callable[[str, dict], dict], server: str = NAME) -> Optional[dict]:
+def _one(message, tools: List[dict], call: Callable[[str, dict], dict], server: str = NAME,
+         at: Optional[str] = None) -> Optional[dict]:
     if not isinstance(message, dict) or message.get("jsonrpc") != "2.0":
         return _error(None, -32600, "not a JSON-RPC 2.0 message")
     if "id" not in message:                     # a notification, or a client's answer: nothing to say
@@ -52,6 +74,9 @@ def _one(message, tools: List[dict], call: Callable[[str, dict], dict], server: 
     if method == "ping":
         return _ok(mid, {})
     if method == "tools/list":
+        if at is not None:
+            with _listed_lock:
+                _listed[at] = time.time()
         return _ok(mid, {"tools": tools})
     if method == "tools/call":
         name, arguments = params.get("name"), params.get("arguments") or {}

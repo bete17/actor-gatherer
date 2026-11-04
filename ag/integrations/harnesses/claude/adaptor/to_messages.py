@@ -339,10 +339,60 @@ def only_sent_tools(items: List[dict], messages: Optional[list]) -> List[dict]:
     return kept[::-1]
 
 
-def to_messages(context: list, messages: Optional[list] = None, system_messages: str = "keep") -> List[dict]:
+def offered_tools(tools: Optional[list]) -> Optional[set]:
+    """The names of the tools a request's `tools` offers -- deferred ones (`defer_loading`) too; None
+    for a request that names none (nothing to check references against)."""
+    if not isinstance(tools, list):
+        return None
+    return {t["name"] for t in tools if isinstance(t, dict) and isinstance(t.get("name"), str)}
+
+
+def unloaded(name: str) -> dict:
+    """What a tool search's reference to a tool the request does not offer becomes: words, not a reference."""
+    return {"type": "text", "text": f"Loaded {name}. It is not available now."}
+
+
+def only_offered_references(messages: List[dict], offered: Optional[set]) -> List[dict]:
+    """`messages` with each tool search result's reference to a tool the request does not offer (`tool_reference`,
+    its tool neither in `offered` nor defined by an inline `tool_addition`) made words (`unloaded`); with None
+    `offered`, as they are. The API refuses a reference to a tool it is not given ("Tool reference ... not found
+    in available tools"), and Claude Code offers a deferred tool only while its own history loads it: a stored
+    result of an earlier tool search -- Claude Code's history compacted since, or the tool's MCP server not
+    connected yet when the turn began -- can name a tool the request leaves out. Claude Code drops such
+    references from its own messages; the context's are dropped here."""
+    if offered is None:
+        return messages
+    names = set(offered)
+    for _, b in _flat(messages):                 # the tools the request defines inline (tool search's blocks)
+        tool = b.get("tool") if b.get("type") == "tool_addition" else None
+        if isinstance(tool, dict) and tool.get("type") == "tool_definition" and isinstance(tool.get("definition"), dict) \
+                and isinstance(tool["definition"].get("name"), str):
+            names.add(tool["definition"]["name"])
+
+    def missing(b) -> bool:
+        return isinstance(b, dict) and b.get("type") == "tool_reference" and b.get("tool_name") not in names
+
+    def dangling(b) -> bool:                     # a tool search's result naming such a tool
+        return isinstance(b, dict) and b.get("type") == "tool_result" and isinstance(b.get("content"), list) \
+            and any(missing(r) for r in b["content"])
+
+    out = []
+    for m in messages:
+        blocks = m.get("content") if isinstance(m, dict) else None
+        if not isinstance(blocks, list) or not any(dangling(b) for b in blocks):
+            out.append(m)
+            continue
+        out.append(dict(m, content=[dict(b, content=[unloaded(r["tool_name"]) if missing(r) else r for r in b["content"]])
+                                    if dangling(b) else b for b in blocks]))
+    return out
+
+
+def to_messages(context: list, messages: Optional[list] = None, system_messages: str = "keep",
+                offered: Optional[set] = None) -> List[dict]:
     """The context as Claude Code's messages: each event's payload as it was sent, consecutive
     ones of a role joined, each `ag` message a system-role message, inline tool blocks only as the
-    request carries them (`only_sent_tools`), finished as a request (`finish`)."""
+    request carries them (`only_sent_tools`), finished as a request (`finish`), and tool search's references
+    only to the tools the request offers (`offered`; `only_offered_references`)."""
     items = []
     for entry in context:
         if not isinstance(entry, dict):
@@ -351,4 +401,4 @@ def to_messages(context: list, messages: Optional[list] = None, system_messages:
             items.append(ag_message(str(entry.get("text") or "")))
         elif isinstance(entry.get("payload"), dict):
             items.append(entry["payload"])
-    return finish(join(only_sent_tools(items, messages)), messages, system_messages)
+    return only_offered_references(finish(join(only_sent_tools(items, messages)), messages, system_messages), offered)
