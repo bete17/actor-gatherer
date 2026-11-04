@@ -6,16 +6,8 @@
   --mono: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .ed-top[hidden] { display: none; }
 /* in the page's top row, as tall as it (--top-h), so the rule under the row runs straight across: the file's head, and
-   the folder's bar beside it */
+   the folder's bar beside it (12-editor-tree.css) */
 .ed-top .ed-head { min-height: var(--top-h, 40px); box-sizing: border-box; }
-.ed-top .ed-bar { min-height: var(--top-h, 40px); box-sizing: border-box; align-content: center; padding-top: 6px;
-  border-bottom: 1px solid var(--grid); margin-bottom: 6px; }
-.ed-bar { position: sticky; top: 0; z-index: 1; background: var(--page); padding: 0 8px 6px; display: grid; gap: 5px; }
-.ed-tree:has(> .ed-bar) { padding-top: 0; }
-.ed-bar .row { display: flex; gap: 4px; }
-.ed-up { flex: none; display: inline-flex; align-items: center; padding: 2px 6px; color: var(--ink-2); }
-.ed-pick { min-width: 0; width: 100%; font: 12px/1.4 var(--mono); padding: 3px 6px; color: var(--ink); background: var(--surface);
-  border: 1px solid var(--ring); border-radius: 5px; }
 .ed-avs { display: inline-flex; align-items: center; flex: none; }
 .ed-avs img, .ed-avs .ed-noav { width: 15px; height: 15px; border-radius: 50%; margin-left: -5px; box-shadow: 0 0 0 1.5px var(--page); }
 .ed-avs > :first-child { margin-left: 0; }
@@ -140,7 +132,7 @@
    its colour's dot, its name on hover; the disk's change its dot, said on hover */
 .ed-top { container: ed / inline-size; }
 @container ed (max-width: 760px) {
-  .ed-tree { width: 170px; } .ed-head { flex-wrap: nowrap; }
+  .ed-head { flex-wrap: nowrap; }
   .ed-person { width: 10px; height: 10px; padding: 0; font-size: 0; border-radius: 50%; background: var(--who); border: 0; flex: none; }
   .ed-changed { font-size: 0; } .ed-changed::before { margin-right: 0; } .ed-writer .nm { display: none; } }
 .ed-grip { position: absolute; left: 0; right: 0; bottom: -7px; height: 9px; cursor: row-resize; z-index: 4; touch-action: none; }
