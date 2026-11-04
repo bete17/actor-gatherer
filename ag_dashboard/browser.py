@@ -47,7 +47,12 @@ piece is:
     at                    and a picture of it) or an area (a picture of it, its text): p1, p2, ... a ref the tools take
     the agent's tools     `TOOLS` + mcp.py: snapshot, click, type, press, select, hover, scroll, navigate, back, forward,
                           reload, tabs, screenshot, console, evaluate, wait, dialog, upload: an MCP server the actor
-                          reaches at /browser/w/<key>/mcp, each call run here, on the tab -- with or without a page open
+                          reaches at /browser/w/<key>/mcp, each call run here, on the tab -- with or without a page open.
+                          One that acts (ACTS) carries `expect`, the agent's checks of what it relies on that the user
+                          could have changed meanwhile -- JavaScript run in the page twice (`Browsers.call`): as it is,
+                          a false one refused then, holding nothing; again right before the action, the user's input
+                          held off from them until it has acted -- and is refused, told what is there now and what the
+                          user did, if one is false or its element is no longer what its snapshot showed (`_unchanged`)
     the user's message    `compose`: what the user sends the actor (api/sessions.py's /api/send) ends with <browser_state>: the
                           page they are on, what they did since their last message, what they picked; then forgotten
                           (`sent`) but for the picks' refs, which keep working
@@ -56,6 +61,7 @@ Standard library only."""
 import base64
 import collections
 import contextlib
+import functools
 import json
 import os
 import platform
@@ -82,9 +88,15 @@ ORIGIN = "http://127.0.0.1:4200"   # where the actors reach the dashboard (its M
 KEY = re.compile(r"[0-9a-f]{16}")
 IDLE_STOP = 600.0           # seconds the Chrome runs on with no Browser used
 CALL_WAIT = 20.0            # the most a call to Chrome is waited for
+NAV_WAIT = 20.0             # the most the agent's navigation waits for its site to answer, before it is stopped
 LOAD_WAIT = 15.0            # the most an action waits for the page it started loading
 SETTLE = 0.25               # seconds after an action before what it did is looked at
 ACTING_KEEP = 1.2           # seconds what the agent did stays marked on the screen after
+EXPECT_WORLD = "ag-expect"  # the world an action's checks (`expect`) run in, in each of a tab's pages: of their own
+EXPECT_TIME = 200           # the most milliseconds one check may run
+EXPECT_WAIT = 2.0           # the most seconds a check's calls to Chrome are waited for, as the user's input waits on
+                            # them: a page still opening another (its site slow to answer), or busy, answers none
+SINCE_TOLD = 6              # the most of what the user did lately told the agent with an action
 OPENED_BY_CLICK = 3.0       # seconds after a click in a Browser a tab that names no opener is taken as one it opened
 OPENED_WAIT = 0.6           # seconds a tab a page opens is waited for, before the dashboard opens it itself: a tab
                             # hidden from the user's tab strip opens none (Chrome says it would, then doesn't)
@@ -330,14 +342,18 @@ class Cdp:
             return self.n
 
     def call(self, method: str, params: Optional[dict] = None, session: Optional[str] = None,
-             timeout: float = CALL_WAIT, until: Optional[Callable[[], bool]] = None) -> dict:
+             timeout: float = CALL_WAIT, until: Optional[Callable[[], bool]] = None,
+             sent: Optional[Callable[[], None]] = None) -> dict:
         """Chrome's answer. `until`: what, once true, makes the answer not waited for ({} then) -- a click whose page
-        opened an alert is answered only once the alert is."""
+        opened an alert is answered only once the alert is. `sent`: run once the call is on its way, before its answer
+        is waited for (a Browser's `let_go`: a navigation sent, its site's answer not to hold up the user)."""
         mid = self._id()
         box: "queue.Queue" = queue.Queue(1)
         self.waiting[mid] = box
         try:
             self._write({"id": mid, "method": method, "params": params or {}, **({"sessionId": session} if session else {})})
+            if sent is not None:
+                sent()
             end = time.time() + timeout
             while True:
                 try:
@@ -347,7 +363,7 @@ class Cdp:
                     if until is not None and until():
                         return {}
                     if time.time() >= end:
-                        raise BrowserError(f"the browser did not answer ({method}) in {timeout:.0f} s") from None
+                        raise Unanswered(f"the browser did not answer ({method}) in {timeout:.0f} s") from None
         finally:
             self.waiting.pop(mid, None)
         if got is None:
@@ -600,6 +616,10 @@ class WsCdp(Cdp):
             self.sock.shutdown(socket.SHUT_RDWR)
         except OSError:
             pass
+
+
+class Unanswered(BrowserError):
+    """Chrome did not answer a call in time."""
 
 
 class CdpError(BrowserError):
@@ -910,9 +930,29 @@ class Viewer:
             self.cond.notify_all()
 
 
+def _users(method):
+    """A method of the user's (the view's): run holding the Browser's `acts`, so it never lands between an action's
+    checks and the action (`Browsers.call`) -- the user's click waits the few milliseconds those take. One the agent's
+    tools call themselves passes by_user=False, and runs as it is (they hold `acts` already)."""
+    @functools.wraps(method)
+    def run(self, *args, **kw):
+        if kw.get("by_user", True) is False:
+            return method(self, *args, **kw)
+        self.acts.acquire()
+        self.acts_by = threading.get_ident()
+        try:
+            if method.__name__ != "input":           # (input says itself which of it is the user acting)
+                self.user_at = time.time()
+            return method(self, *args, **kw)
+        finally:
+            self.let_go()
+    return run
+
+
 class Browser:
     """One Browser's tabs and what happens in them (module doc). Its lock guards its fields; calls to Chrome are made
-    outside it."""
+    outside it. `acts`: the agent's action, from its checks on (`Browsers.call`), or the user's input -- one at a
+    time."""
 
     def __init__(self, browsers: "Browsers", key: str, row: dict):
         self.browsers, self.chrome, self.key = browsers, browsers.chrome, key
@@ -936,10 +976,20 @@ class Browser:
         self.kept_picks: Dict[str, dict] = {}            # every pick, sent or not: its ref keeps working
         self.pick_n = 0
         self.log: List[str] = []                         # what the user did since their last message
+        self.lately: collections.deque = collections.deque(maxlen=40)   # and when: (time, what), told the agent
+        self.acts = threading.Lock()                     # one action at a time: the agent's (checked) or the user's
+        self.acts_by: Optional[int] = None               # the thread whose action holds it, the agent's or the user's
+        self.snapped = 0.0                               # when the agent last took a snapshot
+        self.told = 0.0                                  # what the user did until then: told the agent already
+        self.acted_on: Optional[Tuple[str, Tab, int]] = None   # the ref the agent's action now is on, its tab and node
+        self.named: Dict[str, Tuple[str, str]] = {}      # "e12" -> its (role, name) in the agent's last snapshot of it
+        self.worlds: Dict[str, int] = {}                 # a tab's target -> the context its page's checks run in
         self.refs: Dict[str, Tuple[str, int]] = {}       # "e12" -> (target, backend node id)
         self.ref_of: Dict[Tuple[str, int], str] = {}
         self.ref_n = 0
         self.acting: Optional[dict] = None               # what the agent does now: {label, box}
+        self.acting_since = 0.0                          # when it began that
+        self.user_at = 0.0                               # when the user last pressed, typed or chose in it
         self.clicked = 0.0                               # when the user or the agent last clicked in it
         self.behind = False                              # whether that click opens a link behind: Cmd/Ctrl, middle
         self.pending: List[dict] = []                    # tabs its pages asked for, Chrome not yet seen to open
@@ -995,9 +1045,10 @@ class Browser:
             self._retitle(shown)
         return cdp
 
-    def _open(self, cdp: Cdp, url: str, select: bool = True, target: Optional[str] = None) -> Tab:
+    def _open(self, cdp: Cdp, url: str, select: bool = True, target: Optional[str] = None, by_user: bool = True,
+              sent: Optional[Callable[[], None]] = None) -> Tab:
         """A tab of this Browser's: a new one, opened at `url`; or `target`, one Chrome opened for it, at the page it
-        has (`url`)."""
+        has (`url`). `by_user`, `sent`: as in `_go`."""
         adopted = target
         with browser_video.WINDOWS if cdp.mode == "own" else _NO_LOCK:   # (its windows: browser_video.py)
             if target is None:
@@ -1027,13 +1078,34 @@ class Browser:
         if url and url != "about:blank" and adopted is None:
             tab.loading = True        # from now: Page.navigate answers before its frameStartedLoading is handled
             try:
-                went = cdp.call("Page.navigate", {"url": url}, session)
+                went = self._go(cdp, tab, url, by_user, sent)
             except BaseException:
                 tab.loading = False
                 raise
             if went.get("errorText") and not went.get("loaderId"):   # nothing loading: a download, or aborted
                 tab.loading = False
         return tab
+
+    def _go(self, cdp: Cdp, tab: Tab, url: str, by_user: bool = True, sent: Optional[Callable[[], None]] = None) -> dict:
+        """The tab taken to `url`: Page.navigate's answer, given once the site answers (or the navigation is cut short:
+        net::ERR_ABORTED -- the user, or the page, went elsewhere first). `sent`: run once it is sent -- `let_go`, for a
+        navigation the user or the agent asked for: the page it leaves still takes input, and no one's is to wait on a
+        site's answer. The agent's (not `by_user`) stopped if its
+        site has not answered in NAV_WAIT: Unanswered -- else it would go on, its page answering nothing meanwhile (no
+        snapshot, no check: Chrome holds them until the navigation is answered), and go to the site whenever it does,
+        after the agent was told it did not. The user's goes on, as in their own browser."""
+        try:
+            return cdp.call("Page.navigate", {"url": url}, tab.session, timeout=CALL_WAIT if by_user else NAV_WAIT,
+                            sent=sent)
+        except Unanswered:
+            if by_user:
+                raise
+            try:
+                cdp.call("Page.stopLoading", {}, tab.session, timeout=5)
+            except BrowserError:
+                pass
+            raise Unanswered(f"{url} did not answer in {NAV_WAIT:.0f} s, so its loading was stopped: the site may be "
+                             "down, or slow") from None
 
     # PASSKEYS. A page asking for a passkey (Touch ID, a security key, a phone: WebAuthn) makes Chrome show its own
     # prompt over the tab, which no one sees in the dashboard's own Chrome (headless; nor, likely, on a tab hidden in
@@ -1050,6 +1122,13 @@ class Browser:
                                                             "mobile": False}, tab.session)
         except CdpError:
             pass
+
+    def let_go(self) -> None:
+        """`acts`, let go if this thread holds it: once what it does is under way, as the waits after (a site to
+        answer, a page loading, the page settling) are not to hold up the other's input or action."""
+        if self.acts_by == threading.get_ident():
+            self.acts_by = None
+            self.acts.release()
 
     def tab(self, index: Optional[int] = None) -> Tab:
         with self.lock:
@@ -1418,6 +1497,7 @@ class Browser:
                 return
         self._publish()
 
+    @_users
     def choose(self, n: int, index: Optional[int] = None, value: Optional[str] = None) -> None:
         """What the user chose in the drop-down's list or the picker `n` (`_ui`), shown by the view: set in the page,
         its `input` and `change` sent, as if chosen there."""
@@ -1504,6 +1584,7 @@ class Browser:
             raise BrowserError("those files are gone: give them again", 409)
         return paths
 
+    @_users
     def chosen(self, n: int, ids: Optional[list]) -> int:
         """The files the user chose for the page's file chooser `n` (sent first: `upload`), given to it; none: it is
         closed, unanswered -> how many it got."""
@@ -1528,6 +1609,7 @@ class Browser:
         self.note("gave the page " + _files_said(paths))
         return len(paths)
 
+    @_users
     def drop(self, x: float, y: float, ids: list) -> int:
         """Files the user dropped on the view (sent first: `upload`), dropped on the page there, as from the desktop."""
         paths = self._uploaded(ids)
@@ -1566,16 +1648,25 @@ class Browser:
 
     def note(self, what: str) -> None:
         """Something the user did, for the agent's next message: a run of typing into one field is one note."""
+        def again(last: Optional[str]) -> bool:
+            return last == what or (what.startswith("the page went to ") and last == "opened " + what[len("the page went to "):])
         with self.lock:
-            if self.log and (self.log[-1] == what or (what.startswith("the page went to ")
-                                                      and self.log[-1] == "opened " + what[len("the page went to "):])):
+            if self.lately and again(self.lately[-1][1]):
+                self.lately[-1] = (time.time(), self.lately[-1][1])   # the same, again: when it last went on
+            else:
+                self.lately.append((time.time(), what))
+            if self.log and again(self.log[-1]):
                 return
             self.log.append(what)
             del self.log[:-40]
 
     def _acting_now(self) -> bool:
+        """Whether a change of the page now -- a page loaded, a tab opened -- is the agent's doing: while it acts, and
+        for the ACTING_KEEP seconds its action stays marked after (Chrome may tell of the page its action loaded
+        after the tool has answered) unless the user pressed, typed or chose something since it began."""
         with self.lock:
-            return self.acting is not None and self.acting_until == 0
+            return self.acting is not None and (self.acting_until == 0 or (
+                time.time() < self.acting_until and self.user_at < self.acting_since))
 
     def _quick(self, events: list) -> None:
         """The screen sent at QUICK_SCALE while the user scrolls or drags -- the motion hides the softness -- and at
@@ -1627,6 +1718,7 @@ class Browser:
         else:
             self.chrome.later(self._recast)
 
+    @_users
     def input(self, events: list) -> dict:
         """The user's input, in order. A copy or cut among it answers what it put on the clipboard (`_copy`), for the
         user's: {"clipboard": {...}}."""
@@ -1637,6 +1729,9 @@ class Browser:
             return got
         self.chrome.touch()
         self._quick(events)
+        if any(isinstance(e, dict) and (e.get("type") in ("key", "text", "paste", "copy") or e.get("kind") == "mousePressed")
+               for e in events):
+            self.user_at = time.time()
         for e in events[:200]:
             if not isinstance(e, dict):
                 continue
@@ -1688,6 +1783,7 @@ class Browser:
     # keeps its own, in memory): what a copy put there is read back for the user's, and what the user pastes is put
     # there first. In the user's own Chrome it is the Mac's already.
 
+    @_users
     def copy(self, cut: bool = False, mods: int = 4) -> dict:
         """What copying (or cutting) in the page put on the clipboard (`_copy`)."""
         cdp = self.live()
@@ -1826,6 +1922,7 @@ class Browser:
         except CdpError:
             return None
 
+    @_users
     def navigate(self, url: str = "", action: str = "", by_user: bool = True) -> str:
         cdp = self.live()
         tab = self.tab()
@@ -1835,24 +1932,29 @@ class Browser:
             entries = hist.get("entries") or []
             if not 0 <= i < len(entries):
                 raise BrowserError(f"nothing to go {action} to")
-            cdp.call("Page.navigateToHistoryEntry", {"entryId": entries[i]["id"]}, tab.session)
+            cdp.call("Page.navigateToHistoryEntry", {"entryId": entries[i]["id"]}, tab.session, sent=self.let_go)
         elif action == "reload":
-            cdp.call("Page.reload", {}, tab.session)
+            cdp.call("Page.reload", {}, tab.session, sent=self.let_go)
         else:
             url = _url(url)
-            got = cdp.call("Page.navigate", {"url": url}, tab.session)
+            got = self._go(cdp, tab, url, by_user, self.let_go)
+            if got.get("errorText") == "net::ERR_ABORTED" and not got.get("isDownload") and not by_user:
+                raise BrowserError(f"{url} did not open: the page went elsewhere before it answered")
             if got.get("errorText"):
                 raise BrowserError(f"{url} did not open: {got['errorText']}")
             if by_user:
                 self.note(f"opened {url}")
         return url or action
 
-    def switch(self, index: int) -> None:
+    @_users
+    def switch(self, index: int, by_user: bool = True) -> None:
         with self.lock:
             if not 0 <= index < len(self.tabs):
                 raise BrowserError(f"no tab {index + 1}")
-            self.active = index
+            was, self.active = self.active, index
             tab = self.tabs[index]
+        if by_user and was != index:
+            self.note(f"switched to tab {index + 1}: {tab.title or tab.url or 'blank'}")
         cdp = self.chrome.cdp()
         try:
             if cdp.mode != "mine":                       # the user's Chrome: their window left as it is
@@ -1863,20 +1965,27 @@ class Browser:
         self._publish()
         self._save()
 
-    def new_tab(self, url: str = "") -> Tab:
+    @_users
+    def new_tab(self, url: str = "", by_user: bool = True) -> Tab:
         cdp = self.live()
-        tab = self._open(cdp, _url(url) if url else "about:blank")
+        tab = self._open(cdp, _url(url) if url else "about:blank", by_user=by_user, sent=self.let_go)
+        if by_user:
+            self.note(f"opened a new tab: {tab.url or 'blank'}")
         self._recast()
         self._publish()
         self._save()
         return tab
 
-    def close_tab(self, index: int) -> None:
+    @_users
+    def close_tab(self, index: int, by_user: bool = True) -> None:
         tab = self.tab(index)
         self.chrome.cdp().call("Target.closeTarget", {"targetId": tab.target})
+        if by_user:
+            self.note(f"closed tab {index + 1}: {tab.title or tab.url or 'blank'}")
         self._dropped(tab.target)
 
-    def answer_dialog(self, accept: bool, text: Optional[str] = None) -> str:
+    @_users
+    def answer_dialog(self, accept: bool, text: Optional[str] = None, by_user: bool = True) -> str:
         tab = self.tab()
         if not tab.dialog:
             raise BrowserError("no dialog is open")
@@ -1886,7 +1995,10 @@ class Browser:
                                tab.session)
         tab.dialog = None
         self._publish()
-        return f"the {d.get('type') or 'dialog'} \"{d.get('message', '')[:200]}\" was {'accepted' if accept else 'dismissed'}"
+        said = f"the {d.get('type') or 'dialog'} \"{d.get('message', '')[:200]}\" was {'accepted' if accept else 'dismissed'}"
+        if by_user:
+            self.note(said.replace(" was ", ": ", 1))
+        return said
 
     def selection(self) -> str:
         """What is selected in the page, for the user's clipboard."""
@@ -2009,7 +2121,7 @@ class Browser:
     def sent(self) -> None:
         """The message went: what it said of the user's actions and picks is told."""
         with self.lock:
-            self.log, self.picks = [], []
+            self.log, self.picks, self.told = [], [], time.time()
         self._publish()
 
     # -- the agent's tools
@@ -2019,21 +2131,26 @@ class Browser:
             for ref, (t, _) in list(self.refs.items()):
                 if t == target:
                     del self.ref_of[self.refs.pop(ref)]
+                    self.named.pop(ref, None)
+            self.worlds.pop(target, None)
 
-    def _ref(self, target: str, node: int) -> str:
+    def _ref(self, target: str, node: int, named: Optional[Tuple[str, str]] = None) -> str:
+        """The element's ref; `named`: its (role, name) as the snapshot showed it, kept for the check an action on it
+        makes (`Browsers._act`)."""
         with self.lock:
             ref = self.ref_of.get((target, node))
             if ref is None:
                 self.ref_n += 1
                 ref = f"e{self.ref_n}"
                 self.refs[ref], self.ref_of[(target, node)] = (target, node), ref
+            if named is not None:
+                self.named[ref] = named
             return ref
 
-    def resolve(self, ref: str) -> Tuple[Tab, int, str]:
-        """A ref's tab, node and live object: the tab made the active one, as the agent works there."""
-        ref = str(ref or "").strip().strip("[]")
-        if ref.startswith("ref="):
-            ref = ref[4:]
+    def resolve(self, ref: str, show: bool = True, wait: float = CALL_WAIT) -> Tuple[Tab, int, str]:
+        """A ref's tab, node and live object: the tab made the active one, as the agent works there (but not to `show`
+        it: a check's, before the action). `wait`: the most Chrome is waited for."""
+        ref = _canon(ref)
         with self.lock:
             if ref in self.refs:
                 target, node = self.refs[ref]
@@ -2051,11 +2168,11 @@ class Browser:
             raise BrowserError(f"{ref} was in a tab that is closed now")
         with self.lock:
             i = self.tabs.index(tab)
-        if i != self.active:
-            self.switch(i)
+        if i != self.active and show:
+            self.switch(i, by_user=False)
         cdp = self.chrome.cdp()
         try:
-            obj = cdp.call("DOM.resolveNode", {"backendNodeId": node}, tab.session)["object"]["objectId"]
+            obj = cdp.call("DOM.resolveNode", {"backendNodeId": node}, tab.session, timeout=wait)["object"]["objectId"]
         except CdpError:
             raise BrowserError(f"{ref} is gone: the page changed since (by you, the user, or itself) -- take a new "
                                f"snapshot") from None
@@ -2063,6 +2180,8 @@ class Browser:
 
     def acting_on(self, label: str, box: Optional[list] = None) -> None:
         with self.lock:
+            if self.acting is None or self.acting_until:
+                self.acting_since = time.time()
             self.acting, self.acting_until = {"label": label, "box": box}, 0
         self._publish()
 
@@ -2101,6 +2220,17 @@ def _pick_lines(p: dict) -> List[str]:
 def _a(word: Optional[str]) -> str:
     word = word or "a"
     return ("An " if word[:1] in "aeiou" else "A ") + word
+
+
+def _canon(ref) -> str:
+    """A ref as the agent may write it ("[e12]", "ref=e12"), as it is: e12."""
+    ref = str(ref or "").strip().strip("[]")
+    return ref[4:] if ref.startswith("ref=") else ref
+
+
+def _same(a: Tuple[str, str], b: Tuple[str, str]) -> bool:
+    """Whether two (role, name)s are the same, but for how their spaces run."""
+    return [" ".join(str(x or "").split()) for x in a] == [" ".join(str(x or "").split()) for x in b]
 
 
 def _named(role: str, name: str) -> str:
@@ -2623,7 +2753,32 @@ def instructions(root: str) -> str:
         "its other way (\"Other options\", \"Try another way\": a push to the user's phone, a code), or tell the user "
         "to.\n"
         f"- Downloads go to {downloads_dir()} (or, if the Browser runs in the user's own Chrome, where it saves them). "
-        f"Your working directory is {root}.").strip()
+        f"Your working directory is {root}.\n\n"
+        "## Assume the user is using the page while you think\n\n"
+        "The user may be using the browser at any moment, also while you are thinking and writing your next call: by "
+        "the time it runs they may have typed into a field, ticked a box, sorted or filtered a list, scrolled, opened "
+        "another tab or gone to another page. So every tool that acts on the page (click, type, press, select, hover, "
+        "scroll, navigate, back, forward, reload, evaluate, upload, and tabs to open, switch or close one) takes "
+        "`expect`, and you must always pass it: checks of everything the user could have changed that your call relies "
+        "on -- that would make it do the wrong thing, or the right thing to the wrong item, if it were no longer so. "
+        "Each check is a JavaScript expression run in the page right before the action, with `el` the element of its "
+        "`ref`; the action runs only if every check is true, and otherwise you are told what the page shows now and "
+        "what the user did.\n"
+        "- Write them from what you saw: the page you are on (`location.href`, the title), the item your action is "
+        "for (the row, card or message it is in, by its text), the values of fields you rely on, which option or tab "
+        "is selected, what is checked, what is open.\n"
+        "- For example, before clicking Delete in a row: `[{\"ref\": \"<the row>\", \"js\": \"el.innerText.includes("
+        "'Invoice #4411')\"}, {\"js\": \"location.pathname === '/invoices'\"}]`. Before typing into a field you saw "
+        "empty: `[{\"ref\": \"<the field>\", \"js\": \"el.value === ''\"}]`. Before submitting a form: a check of each "
+        "value in it that matters. Before an `evaluate` that reads the page: that it is still the page you mean.\n"
+        "- A check runs in the tab shown, or in its `ref`'s. To check another tab, give its number as `tab`: before "
+        "switching to or closing tab 3, that it is still the tab you mean -- `[{\"tab\": 3, \"js\": \"location.hostname "
+        "=== 'www.google.com'\"}]`, as the user may have closed, opened or moved tabs.\n"
+        "- A check that is always true, or only says the element exists, protects nothing. Don't weaken or drop a "
+        "check to get past it: when one fails, the user changed something -- take a new snapshot, see what they did, "
+        "and decide again (ask them if their change makes the task unclear).\n"
+        "- An action is also refused if its element's role or name is not what your snapshot showed: the page put "
+        "something else there.").strip()
 
 
 def launch_args(s: dict) -> List[str]:
@@ -2659,45 +2814,117 @@ def _tool(name: str, description: str, properties: Optional[dict] = None, requir
 
 
 REF = {"type": "string", "description": "the element's ref: e12 from a snapshot, or p1 that the user picked"}
+#: The tools that act on the page: each run only with its checks (`expect`) true -- `tabs` but to list them. Not
+#: `dialog`: a page showing one runs no script, so there is nothing to check in it (the dialog is what is there).
+ACTS = frozenset({"click", "type", "press", "select", "hover", "scroll", "navigate", "back", "forward", "reload", "tabs",
+                  "evaluate", "upload"})
+MAX_CHECKS = 20
+EXPECT = {"type": "array", "minItems": 1, "maxItems": MAX_CHECKS,
+          "description": "What this action relies on that the user could have changed: they may be using the page "
+                         "while you think and write this call. Each check runs in the page right before the action, "
+                         "which is done only if every one is true -- else you are told what is there now and what the "
+                         "user did. `js`: a JavaScript expression about the page as the user sees it (document, "
+                         "location, the elements -- not the page's own script variables), true if it is as this action "
+                         "needs; with `ref`, that element is `el`. It runs in the tab shown, or its `ref`'s; `tab` "
+                         "(its number, as `tabs` lists them): in that tab's page -- e.g. the one a `tabs` switch or "
+                         "close is for. E.g. [{\"ref\": \"e7\", \"js\": \"el.innerText.includes('Invoice #4411')\"}, "
+                         "{\"js\": \"location.pathname === '/invoices'\"}], or [{\"tab\": 3, \"js\": \"location.hostname "
+                         "=== 'mail.google.com'\"}]",
+          "items": {"type": "object", "properties": {"js": {"type": "string"}, "ref": REF,
+                                                     "tab": {"type": "integer", "minimum": 1,
+                                                             "description": "the tab whose page it runs in"}},
+                    "required": ["js"]}}
+#: A check that is a bare value -- `true`, `1`, a string -- the same whatever the page shows: refused.
+LITERAL = re.compile(r"\s*!*\s*(?:true|false|null|undefined|\d+(?:\.\d+)?|'[^']*'|\"[^\"]*\"|`[^`$]*`)\s*;?\s*")
+#: Run in a check's world, on its `ref`'s element: kept for the check to have as `el`.
+EXPECT_EL_JS = "function () { globalThis.__agExpectEl = this; }"
+#: A check (%s: its expression, as JSON): {ok, now -- what its `el` reads, never a password}. No waiting in it.
+EXPECT_JS = r"""(() => {
+  const el = globalThis.__agExpectEl; globalThis.__agExpectEl = undefined;
+  const v = eval(%s);
+  if (v && typeof v.then === 'function') throw new Error('it gave a promise: a check may not wait (no await, no promise)');
+  const now = !el || el.type === 'password' ? '' :
+    String((typeof el.value === 'string' && el.value) || el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+  return {ok: !!v, now: now.slice(0, 300)};
+})()"""
+
+
+def _checks(name: str, raw) -> List[dict]:
+    """An action's `expect` as the agent gave it: [{js, ref?, tab?}] -- a check alone, or a bare expression, taken as
+    one; `tab` numbered from 1, as `tabs` lists them.
+    A BrowserError if there is none, or one checks nothing."""
+    if isinstance(raw, (str, dict)):
+        raw = [raw]
+    if not isinstance(raw, list) or not raw:
+        raise BrowserError(f"Not done: {name} needs `expect` -- checks of what it relies on that the user could have "
+                           "changed, as they may be using the page while you think. E.g. [{\"ref\": \"e7\", \"js\": "
+                           "\"el.innerText.includes('Invoice #4411')\"}]. Call it again with them.")
+    if len(raw) > MAX_CHECKS:
+        raise BrowserError(f"Not done: at most {MAX_CHECKS} checks in `expect`")
+    out = []
+    for i, c in enumerate(raw, 1):
+        c = {"js": c} if isinstance(c, str) else c
+        js = c.get("js") if isinstance(c, dict) else None
+        if not isinstance(js, str) or not js.strip():
+            raise BrowserError(f"Not done: expect {i} has no `js`: a JavaScript expression, true if the page is as "
+                               f"this action needs it")
+        if LITERAL.fullmatch(js):
+            raise BrowserError(f"Not done: expect {i} ({js.strip()}) is the same whatever the page shows: check what "
+                               f"this action relies on that the user could have changed")
+        ref, tab = c.get("ref"), c.get("tab")
+        if tab is not None and not (isinstance(tab, int) and not isinstance(tab, bool) and tab >= 1
+                                    or isinstance(tab, str) and tab.strip().isdigit() and int(tab) >= 1):
+            raise BrowserError(f"Not done: expect {i}'s `tab` ({json.dumps(tab)}) is not a tab's number: 1 for the "
+                               "first, as `tabs` lists them")
+        out.append({"js": js, **({"ref": str(ref)} if ref else {}), **({"tab": int(tab)} if tab is not None else {})})
+    return out
+
+
+def _acting(name: str, description: str, properties: Optional[dict] = None, required: Optional[list] = None) -> dict:
+    """A tool that acts on the page (ACTS): its `expect` required."""
+    return _tool(name, description, {**(properties or {}), "expect": EXPECT}, [*(required or []), "expect"])
+
+
 TOOLS = [
     _tool("snapshot", "The page as an outline of its elements -- role, name, value, state -- each with a ref to act on "
           "it by, and the page's address, title and tabs. With `ref`: that element's part of the page only.",
           {"ref": {"type": "string", "description": "only this element and what is inside it"}}),
-    _tool("click", "Click an element.", {"ref": REF, "double": {"type": "boolean"},
+    _acting("click", "Click an element.", {"ref": REF, "double": {"type": "boolean"},
                                          "button": {"type": "string", "enum": ["left", "right", "middle"]},
                                          "modifiers": {"type": "array", "items": {"type": "string",
                                                        "enum": ["Alt", "Control", "Meta", "Shift"]}}}, ["ref"]),
-    _tool("type", "Type text into a field (its text replaced, unless `append`); `submit`: press Enter after.",
+    _acting("type", "Type text into a field (its text replaced, unless `append`); `submit`: press Enter after.",
           {"ref": REF, "text": {"type": "string"}, "submit": {"type": "boolean"}, "append": {"type": "boolean"}},
           ["ref", "text"]),
-    _tool("press", "Press a key in the page, or in an element: Enter, Tab, Escape, Backspace, ArrowDown, PageDown, "
+    _acting("press", "Press a key in the page, or in an element: Enter, Tab, Escape, Backspace, ArrowDown, PageDown, "
           "a letter, or a combination such as Meta+a or Shift+Tab.", {"key": {"type": "string"}, "ref": REF}, ["key"]),
-    _tool("select", "Choose options of a <select> by their value or label.",
+    _acting("select", "Choose options of a <select> by their value or label.",
           {"ref": REF, "values": {"type": "array", "items": {"type": "string"}}}, ["ref", "values"]),
-    _tool("hover", "Move the mouse over an element.", {"ref": REF}, ["ref"]),
-    _tool("scroll", "Scroll the page, or an element, by about a screen (`amount`: pixels instead); or, with only "
+    _acting("hover", "Move the mouse over an element.", {"ref": REF}, ["ref"]),
+    _acting("scroll", "Scroll the page, or an element, by about a screen (`amount`: pixels instead); or, with only "
           "`ref`, bring the element into view.",
           {"direction": {"type": "string", "enum": ["up", "down", "left", "right"]}, "amount": {"type": "number"},
            "ref": REF}),
-    _tool("navigate", "Open a page in the tab shown: a URL, or a host (https://, or http:// for localhost).",
+    _acting("navigate", "Open a page in the tab shown: a URL, or a host (https://, or http:// for localhost).",
           {"url": {"type": "string"}}, ["url"]),
-    _tool("back", "Go back a page."),
-    _tool("forward", "Go forward a page."),
-    _tool("reload", "Load the page again."),
+    _acting("back", "Go back a page."),
+    _acting("forward", "Go forward a page."),
+    _acting("reload", "Load the page again."),
     _tool("tabs", "The tabs: list them, open a new one (`url`), switch to one or close one (`index`, from 1).",
           {"action": {"type": "string", "enum": ["list", "new", "switch", "close"]}, "index": {"type": "integer"},
-           "url": {"type": "string"}}),
+           "url": {"type": "string"}, "expect": {**EXPECT, "description": "needed to open, switch or close: "
+                                                         + EXPECT["description"]}}),
     _tool("screenshot", "A picture of the page as shown (the user's view), or of an element; `full`: the whole page.",
           {"ref": REF, "full": {"type": "boolean"}}),
     _tool("console", "The page's console: its messages, errors and failed loads, latest last; `clear`: then forgotten.",
           {"clear": {"type": "boolean"}}),
-    _tool("evaluate", "Run a JavaScript expression in the page (awaited), its value as JSON; with `ref`, the element "
+    _acting("evaluate", "Run a JavaScript expression in the page (awaited), its value as JSON; with `ref`, the element "
           "is `el`.", {"expression": {"type": "string"}, "ref": REF}, ["expression"]),
     _tool("wait", "Wait until `text` shows in the page (at most `seconds`, 10 by default, 60 at most), or for `seconds`.",
           {"text": {"type": "string"}, "seconds": {"type": "number"}}),
     _tool("dialog", "Answer the page's alert, confirm or prompt: accept (with `text` for a prompt) or dismiss it.",
           {"accept": {"type": "boolean"}, "text": {"type": "string"}}, ["accept"]),
-    _tool("upload", "Give a file input files from this machine.",
+    _acting("upload", "Give a file input files from this machine.",
           {"ref": REF, "paths": {"type": "array", "items": {"type": "string"}}}, ["ref", "paths"]),
 ]
 
@@ -2930,8 +3157,13 @@ class Browsers:
     # -- the agent's tools
 
     def call(self, key: str, name: str, args: dict) -> dict:
-        """A tool's result (mcp.py's `result`, or with a picture): what went wrong said as an error the agent reads."""
+        """A tool's result (mcp.py's `result`, or with a picture): what went wrong said as an error the agent reads.
+        A tool that acts (ACTS) is run only with its checks (`expect`) all true, run twice: first as they are -- one
+        false refused then, the user's input never held up for it -- then again right before the action, holding the
+        Browser's `acts` from them until it has acted: the user's input waits those few milliseconds, as theirs is not
+        to land between a check and the action (`_users`). What the user did since the agent last looked is told."""
         b = self.get(key)
+        begun = time.time()
         try:
             b.live(loaded=True)
             self.chrome.touch()
@@ -2941,22 +3173,171 @@ class Browsers:
                 return mcp.result(f"The page shows {_a(d.get('type')).lower()} dialog: {json.dumps(d.get('message', ''))}"
                                   f"{' (default answer ' + json.dumps(d['default']) + ')' if d.get('default') else ''}. "
                                   "Answer it with the dialog tool first.", error=True)
-            return getattr(self, f"_t_{name}")(b, args)
+            acts = name in ACTS and not (name == "tabs" and (args.get("action") or "list") == "list")
+            if acts:
+                checks = _checks(name, args.get("expect"))
+                self._expect(b, checks, begun)               # as the page is: a false one refused, holding nothing
+                b.acts.acquire()
+                b.acts_by = threading.get_ident()
+                self._expect(b, checks, begun)               # as the action will find it: the user's input held
+            got = getattr(self, f"_t_{name}")(b, args)
+            self._reread(b)
+            return self._meanwhile(b, got, begun) if acts else got
         except BrowserError as exc:
             return mcp.result(str(exc), error=True)
         finally:
+            b.acted_on = None
+            self._let_go(b)
             b.acted()
+
+    def _let_go(self, b: Browser) -> None:
+        """The Browser's `acts`, let go if this thread's action holds it (`Browser.let_go`)."""
+        b.let_go()
+
+    def _expect(self, b: Browser, checks: List[dict], begun: float) -> None:
+        """Each check run in its page (`_check`), in order: a BrowserError for the first that is not true, saying what
+        is there now and what the user did since the agent's last snapshot -- `acts`, if held, let go first: saying it
+        is no part of the action, nor is the user's input to wait on it."""
+        cdp = self.chrome.cdp()
+        for i, c in enumerate(checks, 1):
+            tab, node, ref, n = b.tab(), None, _canon(c.get("ref")) if c.get("ref") else None, c.get("tab")
+            try:
+                if ref:
+                    tab, node, _ = b.resolve(ref, show=False, wait=EXPECT_WAIT)
+                    with b.lock:
+                        at = b.tabs.index(tab) + 1 if tab in b.tabs else 0
+                    if n is not None and at != n:
+                        self._let_go(b)
+                        b.acting_on("not done: the page changed")
+                        raise BrowserError(f"Not done: expect {i} is false: {ref} is in tab {at} now, not tab {n}."
+                                           + self._since(b, begun) + "\nTake a new snapshot, and decide again.")
+                elif n is not None:
+                    tab = b.tab(n - 1)
+                if tab.dialog:
+                    raise BrowserError("its page shows a dialog, and runs no script until it is answered: answer it "
+                                       "with the dialog tool first")
+                ok, now = self._check(cdp, b, tab, c["js"], node)
+            except Unanswered:
+                self._let_go(b)
+                b.acting_on("not done: the page is busy")
+                raise BrowserError(f"Not done: expect {i} could not be checked: its page answered nothing in "
+                                   f"{EXPECT_WAIT:.0f} s -- it is busy, or still opening another page whose site is slow "
+                                   "to answer. Wait, then take a new snapshot." + self._since(b, begun)) from None
+            except BrowserError as exc:
+                if str(exc).startswith("Not done: "):
+                    raise
+                self._let_go(b)
+                b.acting_on("not done: the page changed")
+                raise BrowserError(f"Not done: expect {i} could not be checked: {exc}." + self._since(b, begun)) from None
+            if ok is not True:
+                self._let_go(b)
+                b.acting_on("not done: the page changed")
+                if ref:
+                    role, name = b._ax(cdp, tab, node)
+                    there = f"{ref} is {_named(role or 'element', name)} now" + \
+                            (f", reading {json.dumps(now[:300], ensure_ascii=False)}" if now else "")
+                else:
+                    b._retitle(tab)
+                    there = (f"Tab {n} is" if n is not None else "The page is") + f" {json.dumps(tab.title or '')} — {tab.url}"
+                why = f"is false: {c['js']}" if ok is False else f"failed: {ok}"
+                raise BrowserError(f"Not done: expect {i} {why}\n{there}." + self._since(b, begun)
+                                   + "\nTake a new snapshot, and decide again.")
+
+    def _check(self, cdp: Cdp, b: Browser, tab: Tab, js: str, node: Optional[int]) -> Tuple[Any, str]:
+        """One check, `js`, run in the tab's page in a world of its own (the page's scripts neither see nor change
+        it), `el` the element `node` if one: (True or False, or why it could not be run; what `el` reads now --
+        never a password's value)."""
+        for again in (False, True):
+            ctx = b.worlds.get(tab.target)
+            try:
+                if ctx is None:
+                    ctx = cdp.call("Page.createIsolatedWorld", {"frameId": tab.target, "worldName": EXPECT_WORLD},
+                                   tab.session, timeout=EXPECT_WAIT)["executionContextId"]
+                    b.worlds[tab.target] = ctx
+                if node is not None:
+                    obj = cdp.call("DOM.resolveNode", {"backendNodeId": node, "executionContextId": ctx},
+                                   tab.session, timeout=EXPECT_WAIT)["object"]["objectId"]
+                    cdp.call("Runtime.callFunctionOn", {"objectId": obj, "functionDeclaration": EXPECT_EL_JS},
+                             tab.session, timeout=EXPECT_WAIT)
+                got = cdp.call("Runtime.evaluate", {"expression": EXPECT_JS % json.dumps(js), "contextId": ctx,
+                                                    "returnByValue": True, "timeout": EXPECT_TIME},
+                               tab.session, timeout=EXPECT_WAIT)
+            except CdpError as exc:
+                if "terminated" in str(exc):             # Chrome stopped it at EXPECT_TIME
+                    return f"it ran longer than {EXPECT_TIME} ms -- a check must be quick", ""
+                b.worlds.pop(tab.target, None)           # its world gone with the page it was made in: made again
+                if again:
+                    raise BrowserError(str(exc)) from None
+                continue
+            if got.get("exceptionDetails"):
+                d = got["exceptionDetails"]
+                said = (d.get("exception") or {}).get("description") or d.get("text") or "it threw"
+                return said.split("\n", 1)[0][:300] or "it threw", ""
+            value = (got.get("result") or {}).get("value") or {}
+            return bool(value.get("ok")), str(value.get("now") or "")
+        return "it could not be run", ""
+
+    def _since(self, b: Browser, begun: float) -> str:
+        """What the user did since the agent's last snapshot, to tell it: the latest SINCE_TOLD things."""
+        with b.lock:
+            after = b.snapped
+            did = [w for t, w in b.lately if after < t <= begun][-SINCE_TOLD:]
+            b.told = max(b.told, begun)
+        ago = "" if not after else " (just now)" if begun - after < 1 else f" ({int(begun - after)} s ago)"
+        if did:
+            return f"\nSince your last snapshot{ago}, the user: " + "; ".join(did) + "."
+        return f"\nThe user clicked, typed and navigated nothing since your last snapshot{ago}: the page changed itself."
+
+    def _meanwhile(self, b: Browser, got: dict, begun: float) -> dict:
+        """An action's result, with what the user did before it, since the agent last looked, not yet told it."""
+        with b.lock:
+            after = max(b.snapped, b.told)
+            did = [w for t, w in b.lately if after < t <= begun][-SINCE_TOLD:]
+            b.told = max(b.told, begun)
+        if did:                                          # its own text: the result's (an evaluation's value) as it is
+            got = {**got, "content": [*(got.get("content") or []),
+                                      {"type": "text", "text": "Meanwhile, the user: " + "; ".join(did) + "."}]}
+        return got
+
+    def _reread(self, b: Browser) -> None:
+        """The element the agent's action was on, its role and name as they are after it: what the agent did to it
+        is not taken for a change by someone else (`_act`)."""
+        if b.acted_on is None:
+            return
+        ref, tab, node = b.acted_on
+        if ref in b.named and not tab.dialog:            # (a page showing a dialog answers nothing)
+            role, name = b._ax(self.chrome.cdp(), tab, node)
+            if role or name:
+                with b.lock:
+                    b.named[ref] = (role, name)
+
+    def _unchanged(self, b: Browser, cdp: Cdp, tab: Tab, node: int, ref: str) -> Tuple[str, str]:
+        """The element's role and name now -- a BrowserError if they are not what the agent's snapshot showed (a list
+        re-sorted under its ref, an element the page reused for another thing). It is then what the action is on."""
+        role, name = b._ax(cdp, tab, node)
+        with b.lock:
+            seen = b.named.get(ref)
+        if seen is not None and (role or name) and not _same(seen, (role, name)):
+            self._let_go(b)
+            b.acting_on("not done: the page changed")
+            raise BrowserError(f"Not done: {ref} was {_named(seen[0] or 'element', seen[1])} in your snapshot; it is "
+                               f"{_named(role or 'element', name)} now -- the page changed (by the user, or itself)."
+                               + self._since(b, time.time()) + "\nTake a new snapshot, and decide again.")
+        b.acted_on = (ref, tab, node)
+        return role, name
 
     def _act(self, b: Browser, ref: str, verb: str) -> Tuple[Cdp, Tab, int, str, str, List[float]]:
         """The element `ref` names, brought into view, and where its middle is; marked on the user's screen as what
-        the agent does now ("clicking button "Pay"")."""
+        the agent does now ("clicking button "Pay""). Refused if it is not what the agent's snapshot showed: another
+        role or name (a list re-sorted under it, an element reused for another thing)."""
         tab, node, obj = b.resolve(ref)
+        ref = _canon(ref)
         cdp = self.chrome.cdp()
+        role, name = self._unchanged(b, cdp, tab, node, ref)
         try:
             cdp.call("DOM.scrollIntoViewIfNeeded", {"backendNodeId": node}, tab.session)
         except CdpError:
             pass
-        role, name = b._ax(cdp, tab, node)
         label = _named(role or "element", name) + f" [{ref}]"
         try:
             quads = cdp.call("DOM.getContentQuads", {"backendNodeId": node}, tab.session).get("quads") or []
@@ -2974,6 +3355,7 @@ class Browsers:
     def _after(self, b: Browser, tab: Tab, starts: int, tabs: int, did: str, ui: Optional[int] = None) -> dict:
         """What an action did, told: the page it went to, a tab it opened, a dialog it brought up -- and (`ui`: the
         Browser's `ui_n` before it) a file chooser it opened, or a drop-down or picker, whose list doesn't open."""
+        self._let_go(b)
         time.sleep(SETTLE)
         if tab.starts > starts:
             end = time.time() + LOAD_WAIT
@@ -3016,8 +3398,12 @@ class Browsers:
         start = None
         if args.get("ref"):
             tab, start, _ = b.resolve(str(args["ref"]))
+        with b.lock:
+            b.snapped = time.time()
         nodes = cdp.call("Accessibility.getFullAXTree", {}, tab.session).get("nodes") or []
-        lines = _outline(nodes, lambda node: b._ref(tab.target, node), start)
+        shown = {n["backendDOMNodeId"]: ((n.get("role") or {}).get("value") or "", (n.get("name") or {}).get("value") or "")
+                 for n in nodes if n.get("backendDOMNodeId")}
+        lines = _outline(nodes, lambda node: b._ref(tab.target, node, shown.get(node)), start)
         try:
             pos = cdp.call("Runtime.evaluate", {"returnByValue": True, "expression":
                            "[scrollX, scrollY, innerWidth, innerHeight, document.documentElement.scrollWidth, "
@@ -3100,6 +3486,7 @@ class Browsers:
     def _t_hover(self, b: Browser, args: dict) -> dict:
         cdp, tab, _, _, label, (x, y) = self._act(b, str(args.get("ref") or ""), "hovering over")
         cdp.call("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": x, "y": y}, tab.session)
+        self._let_go(b)
         time.sleep(SETTLE)
         return mcp.result(f"The mouse is over {label}.")
 
@@ -3119,6 +3506,7 @@ class Browsers:
         amount = float(args.get("amount") or (h if direction in (None, "up", "down") else w) * 0.8)
         dx, dy = {"up": (0, -amount), "down": (0, amount), "left": (-amount, 0), "right": (amount, 0)}.get(direction or "down")
         cdp.call("Input.dispatchMouseEvent", {"type": "mouseWheel", "x": x, "y": y, "deltaX": dx, "deltaY": dy}, tab.session)
+        self._let_go(b)
         time.sleep(SETTLE + 0.2)
         pos = cdp.call("Runtime.evaluate", {"returnByValue": True, "expression":
                        "[scrollX, scrollY, document.documentElement.scrollHeight]"}, tab.session)["result"].get("value")
@@ -3129,13 +3517,39 @@ class Browsers:
         url = _url(str(args.get("url") or ""))
         b.acting_on(f"opening {url}")
         starts, tabs = tab.starts, len(b.tabs)
-        b.navigate(url, by_user=False)
+        self._let_go(b)               # until the site answers, the page it leaves still takes the user's input
+        begun = time.time()
+        try:
+            b.navigate(url, by_user=False)
+        except BrowserError as exc:
+            raise BrowserError(self._not_opened(b, tab, str(exc), begun)) from None
         return self._after(b, tab, starts, tabs, f"Opened {url}.")
+
+    def _not_opened(self, b: Browser, tab: Tab, why: str, begun: float) -> str:
+        """The agent's navigation (from `begun`), not done: why, what the user did since its last snapshot (a page
+        they went to first cuts it short), and the page the tab shows instead."""
+        b.acting_on("not opened")
+        end = time.time() + 1.0
+        while time.time() < end:                         # their click that cut it short: noted a moment after it
+            with b.lock:                                 # (`_note_click`)
+                if b.user_at <= begun or any(t > begun for t, _ in b.lately):
+                    break
+            time.sleep(0.05)
+        with b.lock:
+            after = b.snapped
+            did = [w for t, w in b.lately if t > after][-SINCE_TOLD:]
+            if b.user_at > begun and not any(t > begun for t, _ in b.lately):
+                did.append("clicked or typed in the page")
+            b.told = max(b.told, time.time())
+        b._retitle(tab)
+        return (f"Not opened: {why}." + (f"\nSince your last snapshot, the user: {'; '.join(did)}." if did else "")
+                + f"\nThe tab shows {json.dumps(tab.title or '')} — {tab.url}" + (" (loading)." if tab.loading else "."))
 
     def _history(self, b: Browser, action: str) -> dict:
         tab = b.tab()
         b.acting_on({"back": "going back", "forward": "going forward", "reload": "reloading"}[action])
         starts, tabs = tab.starts, len(b.tabs)
+        self._let_go(b)
         b.navigate(action=action, by_user=False)
         return self._after(b, tab, starts, tabs, {"back": "Went back.", "forward": "Went forward.", "reload": "Reloaded."}[action])
 
@@ -3153,14 +3567,17 @@ class Browsers:
         i = int(args.get("index") or 0) - 1
         if action == "new":
             b.acting_on("opening a new tab")
-            tab = b.new_tab(str(args.get("url") or ""))
+            try:
+                tab = b.new_tab(str(args.get("url") or ""), by_user=False)
+            except Unanswered as exc:                    # the tab opened, its page not
+                raise BrowserError(f"Opened a new tab ({len(b.tabs)}), shown now, but {exc}.") from None
             if not args.get("url"):
                 return mcp.result("Opened a new tab, blank, shown now.")
             return self._after(b, tab, -1, len(b.tabs), "Opened a new tab, shown now.")
         if action == "switch":
-            b.switch(i)
+            b.switch(i, by_user=False)
         elif action == "close":
-            b.close_tab(i)
+            b.close_tab(i, by_user=False)
         with b.lock:
             tabs, active = list(b.tabs), b.active
         listed = "\n".join(f"{n + 1}{' (shown)' if n == active else ''}: {t.title or '(no title)'} — {t.url}"
@@ -3205,7 +3622,10 @@ class Browsers:
         cdp = self.chrome.cdp()
         b.acting_on("running a script")
         if args.get("ref"):
-            tab, _, obj = b.resolve(str(args["ref"]))
+            tab, node, obj = b.resolve(str(args["ref"]))
+            self._unchanged(b, cdp, tab, node, _canon(args["ref"]))
+        self._let_go(b)                                  # it may run a while: the user's input not held up by it
+        if args.get("ref"):
             got = cdp.call("Runtime.callFunctionOn", {"objectId": obj, "returnByValue": True, "awaitPromise": True,
                                                       "functionDeclaration": "async function () { const el = this; "
                                                       f"return await eval({json.dumps(expression)}); }}"}, tab.session)
@@ -3250,7 +3670,8 @@ class Browsers:
             time.sleep(0.3)
 
     def _t_dialog(self, b: Browser, args: dict) -> dict:
-        done = b.answer_dialog(bool(args.get("accept")), args.get("text") if isinstance(args.get("text"), str) else None)
+        done = b.answer_dialog(bool(args.get("accept")), args.get("text") if isinstance(args.get("text"), str) else None,
+                               by_user=False)
         return mcp.result(done[:1].upper() + done[1:] + ".")
 
     def _t_upload(self, b: Browser, args: dict) -> dict:
