@@ -8,6 +8,9 @@
 // dragged over it. Each pick a chip above the message box (bwPicks), going with the next message (browser.py's
 // `compose`), and a ref the agent's tools take. What the agent does is outlined on the screen and said in a line under
 // it (`bwFeed`), done or not; the element it acted on flashes, its outline fading over 3 s (css/09-browser.css's bw-fade).
+// While this page shows the view (`watch`), each action is first shown coming -- the agent's pointer moved to it,
+// "Next: ..." -- a moment before it is done (browser.py's `_lead_in`), and Esc, or Stop, stops it (`stop`).
+const BW_PAGE = Math.random().toString(36).slice(2, 12);   // this page, as the Browsers know it: whether it is shown
 const bwAll = new Map();                             // a Browser's key -> what this page has of it (bwFor)
 function bwKey(info) {
   const raw = info && info.session && info.session.role;
@@ -58,6 +61,12 @@ function bwFor(k) {
   b.cv = el("canvas", { class: "screen", hidden: "" });   // the screen as video, where it comes so (bwVideo)
   b.acting = el("div", { class: "acting", hidden: "" });
   b.acting.addEventListener("animationend", (ev) => { if (ev.animationName === "bw-fade") bwOutline(b, null); });
+  b.agentPtr = el("div", { class: "agent-pointer", hidden: "", "aria-hidden": "true" }, (() => {
+    const svg = svgEl("svg", { width: 20, height: 20, viewBox: "0 0 20 20" });
+    svg.append(svgEl("path", { d: "M3 2 L3 16 L7 12.2 L9.6 18 L12.2 16.8 L9.7 11.2 L15 11 Z", fill: "#E8590C", stroke: "#fff",
+      "stroke-width": "1.4", "stroke-linejoin": "round" }));
+    return svg;
+  })(), el("span", { class: "ripple" }));
   b.dragBox = el("div", { class: "drag", hidden: "" });
   b.hint = el("div", { class: "hint", hidden: "" });
   b.cover = el("div", { class: "cover" }, el("div", { text: "Opening the browser…" }));
@@ -66,13 +75,24 @@ function bwFor(k) {
   b.chooser = bwShield(el("div", { class: "dialog chooser", hidden: "" }));
   b.dl = bwShield(el("div", { class: "dl", hidden: "" }));
   b.stage = el("div", { class: "bw-stage", tabindex: "0", "aria-label": "The page: click to use it, as the agent does" },
-    b.img, b.cv, b.acting, b.dragBox, b.hint, b.tip, b.dl, b.dialog, b.chooser, b.cover);
+    b.img, b.cv, b.acting, b.agentPtr, b.dragBox, b.hint, b.tip, b.dl, b.dialog, b.chooser, b.cover);
   b.feed = bwFeed(b);
   b.host = el("div", { class: "bw" }, b.bar, b.tabs, b.stage, b.feed.root);
   bwInput(b);
   // the user scrolling: an outline from before is no longer where its element is
-  b.stage.addEventListener("wheel", () => bwOutline(b, null), { passive: true, capture: true });
-  b.stage.addEventListener("keydown", (ev) => { if (BW_SCROLL_KEYS.has(ev.key)) bwOutline(b, null); }, { capture: true });
+  b.stage.addEventListener("wheel", () => { bwOutline(b, null); b.agentPtr.hidden = true; }, { passive: true, capture: true });
+  b.stage.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape" && !b.mode && bwStoppable(b)) {          // the agent's actions stopped, not the page's Esc
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
+      b.escTaken = true;                                             // (its keyup too)
+      return bwStop(b);
+    }
+    if (BW_SCROLL_KEYS.has(ev.key)) { bwOutline(b, null); b.agentPtr.hidden = true; }
+  }, { capture: true });
+  b.stage.addEventListener("keyup", (ev) => {
+    if (ev.key === "Escape" && b.escTaken) { b.escTaken = false; ev.preventDefault(); ev.stopImmediatePropagation(); }
+  }, { capture: true });
   bwUi(b);
   new ResizeObserver(() => bwResize(b)).observe(b.stage);
   bwAll.set(k, b);
@@ -82,7 +102,9 @@ const bwSay = (b) => (e) => setLive(`Browser: ${e.message}`);
 // The Browser's stream: its state and screen, while its view is in the page; closed once it is not (bwSweep).
 function bwListen(b) {
   if (b.es || SNAPSHOT) return;
-  const es = b.es = new EventSource(`/browser/w/${b.key}/stream${typeof VideoDecoder === "function" ? "?video=1" : ""}`);
+  const q = new URLSearchParams({ page: BW_PAGE, ...(typeof VideoDecoder === "function" ? { video: "1" } : {}),
+                                  ...(document.hidden ? { hidden: "1" } : {}) });
+  const es = b.es = new EventSource(`/browser/w/${b.key}/stream?${q}`);
   es.addEventListener("state", (ev) => {
     const was = bwSignature();
     b.state = JSON.parse(ev.data);
@@ -170,10 +192,16 @@ function bwDraw(b) {
       onclick: (ev) => { ev.stopPropagation(); bwPost(b, "tab", { action: "close", index: i }).catch(bwSay(b)); } }))),
     el("button", { type: "button", class: "add", "aria-label": "New tab", title: "New tab", text: "+",
       onclick: () => bwPost(b, "tab", { action: "new" }).catch(bwSay(b)) }));
-  // what the agent does now, outlined; what it did, flashed then fading (bwFeedDraw), and said under the page
-  const a = st.acting;
-  if (a && a.box) bwOutline(b, a.box, "doing");
-  else if (b.outlined === "doing") bwOutline(b, null);
+  // what the agent is about to do, and does now: outlined, its pointer there; what it did, flashed then fading
+  // (bwFeedDraw), and said under the page
+  const a = st.acting, nx = st.next;
+  if (nx && nx.box) { bwOutline(b, nx.box, "next"); bwPoint(b, nx.box); }
+  else if (a && a.box) {
+    bwOutline(b, a.box, "doing");
+    bwPoint(b, a.box);
+    if (a.tool === "click" && b.pressed !== a.label + a.box.join()) { b.pressed = a.label + a.box.join(); bwPress(b); }
+  } else if (b.outlined === "doing" || b.outlined === "next") bwOutline(b, null);
+  if (!nx && !a && !b.agentPtr.hidden && !b.agentIdle) b.agentIdle = setTimeout(() => { b.agentPtr.hidden = true; b.agentIdle = 0; }, 2500);
   bwFeedDraw(b);
   if (b.outlined && b.outlinedAt !== bwSpot(b)) bwOutline(b, null);   // another page, or tab: it is not there
   // the page's dialog: answered here, or by the agent
@@ -213,8 +241,35 @@ function bwOutline(b, box, kind = "") {
   o.hidden = false;
   b.outlined = kind;
   b.outlinedAt = bwSpot(b);
-  if (kind === "doing") b.doingAt = b.outlinedAt;
+  if (kind === "doing" || kind === "next") b.doingAt = b.outlinedAt;
 }
+// The agent's pointer, gliding to where it acts (css: .agent-pointer's transition): from the bottom middle of the page
+// the first time, and after it was hidden (2.5 s after the agent last acted, or the user scrolled). A click: a ripple.
+function bwPoint(b, box) {
+  const p = b.agentPtr, x = box[0] + box[2] / 2, y = box[1] + box[3] / 2;
+  clearTimeout(b.agentIdle);
+  b.agentIdle = 0;
+  if (p.hidden) {
+    p.style.transition = "none";
+    p.style.transform = `translate(${b.stage.clientWidth / 2}px, ${b.stage.clientHeight - 30}px)`;
+    p.hidden = false;
+    void p.offsetWidth;
+    p.style.transition = "";
+  }
+  p.style.transform = `translate(${x}px, ${y}px)`;
+}
+function bwPress(b) {
+  b.agentPtr.classList.remove("press");
+  void b.agentPtr.offsetWidth;
+  b.agentPtr.classList.add("press");
+}
+// Esc, or Stop: the agent's actions stopped -- the one shown coming, the rest of its steps -- until the user's next
+// message (browser.py's `stop`). Offered while it acts, or is about to, and not stopped already.
+const bwStoppable = (b) => { const st = b.state || {}; return !st.halted && !!(st.next || st.acting || st.playing); };
+const bwStop = (b) => bwPost(b, "stop", {}).catch(bwSay(b));
+if (!SNAPSHOT) document.addEventListener("visibilitychange", () => {
+  for (const b of bwAll.values()) if (b.es) bwPost(b, "watch", { page: BW_PAGE, visible: !document.hidden }).catch(() => {});
+});
 // What the agent did (browser.py's `show`: the state's `actions`), as the user is told it: the latest in a line under
 // the page -- while it acts, what it does now -- which opens to the last ten, with their times; one of them hovered,
 // outlined again where its element is now (`where`), if it is still on the page. Each new one flashes the element it
@@ -226,12 +281,19 @@ function bwFeed(b) {
               when: el("span", { class: "tm", "aria-hidden": "true" }), list: el("ol", { class: "list", hidden: "" }) };
   f.line = el("button", { type: "button", class: "line", "aria-expanded": "false", onclick: () => bwFeedOpen(b, !b.feedOpen) },
     f.dot, f.text, f.when, el("span", { class: "more", "aria-hidden": "true" }, strokeIcon(ICONS.chevron, 12)));
-  f.root = el("div", { class: "bw-feed idle" }, f.list, f.line);
-  f.root.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && b.feedOpen) { ev.stopPropagation(); bwFeedOpen(b, false); f.line.focus(); } });
+  f.stop = el("button", { type: "button", class: "stop", hidden: "", title: "Stop the agent (Esc): its actions wait for your next message",
+                          onclick: () => bwStop(b) }, "Stop", el("kbd", { text: "Esc" }));
+  f.root = el("div", { class: "bw-feed idle" }, f.list, el("div", { class: "row" }, f.line, f.stop));
+  f.root.addEventListener("keydown", (ev) => {
+    if (ev.key !== "Escape") return;
+    if (b.feedOpen) { ev.stopPropagation(); bwFeedOpen(b, false); f.line.focus(); }
+    else if (bwStoppable(b)) { ev.stopPropagation(); bwStop(b); }
+  });
   return f;
 }
 function bwFeedDraw(b) {
-  const st = b.state || {}, f = b.feed, acts = st.actions || [], last = acts[acts.length - 1] || null, doing = st.acting;
+  const st = b.state || {}, f = b.feed, acts = st.actions || [], last = acts[acts.length - 1] || null;
+  const doing = st.next ? { label: `Next: ${st.next.label}` } : st.acting;
   const top = last ? last.i : 0;
   if (b.seen === undefined || top < b.seen) b.seen = top;            // joined (or the dashboard started again)
   else if (top > b.seen) {
@@ -245,11 +307,14 @@ function bwFeedDraw(b) {
   }
   f.root.classList.toggle("idle", !doing && !last);
   f.root.classList.toggle("doing", !!doing);
-  f.root.classList.toggle("no", !doing && !!last && !last.ok);
-  const said = doing ? `${doing.label}…` : last ? last.text : "The agent has done nothing on the page yet";
+  f.root.classList.toggle("no", !doing && !!last && !last.ok && !st.halted);
+  f.root.classList.toggle("halted", !doing && !!st.halted);
+  f.stop.hidden = !bwStoppable(b);
+  const said = doing ? `${doing.label}…` : st.halted ? "You stopped the agent (Esc): it waits for your next message"
+    : last ? last.text : "The agent has done nothing on the page yet";
   if (f.text.textContent !== said) f.text.textContent = said;
   f.line.title = doing || !last ? "" : last.detail ? `${last.text}\n\nWhat the agent was told:\n${last.detail}` : last.text;
-  if (!doing && last) { f.when.dataset.ago = String(last.at / 1000); f.when.textContent = ago(last.at / 1000); }
+  if (!doing && last && !st.halted) { f.when.dataset.ago = String(last.at / 1000); f.when.textContent = ago(last.at / 1000); }
   else { delete f.when.dataset.ago; f.when.textContent = ""; }
   f.line.disabled = !acts.length;
   if (!acts.length && b.feedOpen) bwFeedOpen(b, false);

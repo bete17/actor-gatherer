@@ -94,6 +94,8 @@ LOAD_WAIT = 15.0            # the most an action waits for the page it started l
 SETTLE = 0.25               # seconds after an action before what it did is looked at
 ACTING_KEEP = 1.2           # seconds after the agent's action a change of the page is still taken as its doing
 SHOWN_KEEP = 10             # the agent's latest actions the view lists, as the user is told them (`Browser.shown`)
+PACE = 0.6                  # seconds each of the agent's actions is shown coming before it is done, while the user watches
+TYPE_SHOWN = 1.0            # the most seconds text the agent types takes to appear, a character at a time, while watched
 EXPECT_WORLD = "ag-expect"  # the world an action's checks (`expect`) run in, in each of a tab's pages: of their own
 EXPECT_TIME = 200           # the most milliseconds one check may run
 EXPECT_WAIT = 2.0           # the most seconds a check's calls to Chrome are waited for, as the user's input waits on
@@ -882,8 +884,9 @@ class Viewer:
     the page can decode video (`video`), every video chunk since the last key frame, in order (a chunk can't be
     dropped: the next is drawn on it; a page too far behind, KEEP_CHUNKS, waits for a new key frame)."""
 
-    def __init__(self, video: bool = False):
+    def __init__(self, video: bool = False, page: str = "", visible: bool = True):
         self.cond = threading.Condition()
+        self.page, self.visible = page, visible          # which page it is; whether it is shown (its tab, in front)
         self.state: Optional[dict] = None
         self.frame: Optional[dict] = None
         self.video = video
@@ -992,10 +995,14 @@ class Browser:
         self.acting: Optional[dict] = None               # what the agent does now: {label, box}
         self.acting_since = 0.0                          # when it began that
         self.doing = ""                                  # what the agent does now, as the user is told it
+        self.doing_tool = ""                             # with which tool
         self.on: Optional[dict] = None                   # what its action is on (`Browsers._seen`)
         self.checked: List[dict] = []                    # its action's checks (`expect`)
         self.shown: collections.deque = collections.deque(maxlen=SHOWN_KEEP)   # its latest actions, as the user
         self.shown_n = 0                                 # is told them: {i, at, ok, text, box, detail, el}
+        self.next: Optional[dict] = None                 # what it is about to do, shown first (`Browsers._lead_in`)
+        self.playing = 0                                 # its `steps` calls under way
+        self.halt = threading.Event()                    # set: the user stopped it (Esc), until their next message
         self.user_at = 0.0                               # when the user last pressed, typed or chose in it
         self.clicked = 0.0                               # when the user or the agent last clicked in it
         self.behind = False                              # whether that click opens a link behind: Cmd/Ctrl, middle
@@ -1313,9 +1320,10 @@ class Browser:
 
     # -- what the page sees
 
-    def join(self, video: bool = False) -> Viewer:
-        """A page showing it (until `leave`): `video`, the page can decode video (browser_video.py)."""
-        v = Viewer(video)
+    def join(self, video: bool = False, page: str = "", visible: bool = True) -> Viewer:
+        """A page showing it (until `leave`): `video`, the page can decode video (browser_video.py); `page`, its id,
+        `visible`, whether it is shown (`watch`)."""
+        v = Viewer(video, page, visible)
         with self.lock:
             self.viewers.append(v)
             frame = self.frame
@@ -1417,13 +1425,14 @@ class Browser:
 
     def state(self) -> dict:
         with self.lock:
-            acting = {"label": self.doing, "box": self.acting.get("box")} \
+            acting = {"label": self.doing, "box": self.acting.get("box"), "tool": self.doing_tool} \
                 if self.acting and not self.acting_until and self.doing else None   # while it acts (`shown`: after)
             tab = self.tabs[self.active] if self.tabs else None
             return {"tabs": [{"title": t.title, "url": t.url, "loading": t.loading} for t in self.tabs],
                     "active": self.active, "picks": [{"id": p["id"], "label": p["label"]} for p in self.picks],
                     "acting": acting, "dialog": tab.dialog if tab else None, "error": self.error,
                     "actions": [{k: a[k] for k in ("i", "at", "ok", "text", "box", "detail")} for a in self.shown],
+                    "next": self.next, "playing": bool(self.playing), "halted": self.halt.is_set(),
                     "running": self.chrome.running(), "viewport": list(self.viewport[:2]),
                     "chrome": self.chrome.which(), "allow": self.chrome.status == "allow", "video": self.video.ok,
                     "video_off": "" if self.video.ok else self.video.why,
@@ -2128,10 +2137,32 @@ class Browser:
         return f"{text}\n\n" + "\n".join(lines)
 
     def sent(self) -> None:
-        """The message went: what it said of the user's actions and picks is told."""
+        """The message went: what it said of the user's actions and picks is told; an agent they stopped (`stop`)
+        may act again."""
         with self.lock:
             self.log, self.picks, self.told = [], [], time.time()
+        self.halt.clear()
         self._publish()
+
+    def stop(self) -> None:
+        """The user's Esc: the agent's action about to be done (`Browsers._lead_in`) is not, nor the rest of its steps,
+        and every one after is refused until their next message (`sent`). One under way finishes."""
+        self.halt.set()
+        self.note("pressed Esc to stop you")
+        self._publish()
+
+    def watch(self, page: str, visible: bool) -> None:
+        """Whether the page `page` shows its view now (its tab in front, or not)."""
+        with self.lock:
+            for v in self.viewers:
+                if v.page == page:
+                    v.visible = visible
+
+    def watching(self) -> bool:
+        """Whether someone watches: a page shows its view, in a tab in front -- the agent's actions then shown
+        coming, at a pace they can follow (`Browsers._lead_in`)."""
+        with self.lock:
+            return any(v.visible for v in self.viewers)
 
     # -- the agent's tools
 
@@ -2971,7 +3002,10 @@ def instructions(root: str) -> str:
         "field you typed into holds your text, the menu you opened is open), so a step that went wrong stops the rest. "
         "The steps run in order and stop at the first that is not done. Pass `snapshot: true` to get the page after "
         "them instead of taking a snapshot in another call. Steps can act only on elements you have seen: end them "
-        "at a step that opens another page, and look at it before going on.").strip()
+        "at a step that opens another page, and look at it before going on.\n\n"
+        "While the user watches, each action is shown to them a moment before it is done, and they can stop you with "
+        "Esc. Then every action on the page is refused until their next message: tell them where you stopped, and "
+        "wait for it.").strip()
 
 
 def launch_args(s: dict) -> List[str]:
@@ -3012,6 +3046,11 @@ REF = {"type": "string", "description": "the element's ref: e12 from a snapshot,
 ACTS = frozenset({"click", "type", "press", "select", "hover", "scroll", "navigate", "back", "forward", "reload", "tabs",
                   "evaluate", "upload"})
 MAX_CHECKS = 20
+#: The agent told, when the user stopped it with Esc: the action about to be done (STOPPED), and each after (HALTED).
+STOPPED = ("Not done: the user pressed Esc to stop you, before this was done.\n"
+           "Act on the page again only after their next message: tell them where you stopped, and wait.")
+HALTED = ("Not done: the user stopped you (Esc).\n"
+          "Act on the page again only after their next message: tell them where you stopped, and wait.")
 #: What a step of `steps` may be: a tool that acts, `wait` for what one brings about, `dialog` for one it opens.
 STEP_TOOLS = ACTS | {"wait", "dialog"}
 MAX_STEPS = 20
@@ -3376,7 +3415,7 @@ class Browsers:
         listed, formed = acts or name == "dialog", name not in ACTS     # shown done or not; its call as it should be
         ctx = _context(b, name, args)
         with b.lock:
-            b.doing, b.on, b.checked = _phrases(b, name, args, None, ctx)[0], None, []
+            b.doing, b.doing_tool, b.on, b.checked = _phrases(b, name, args, None, ctx)[0], name, None, []
         try:
             b.live(loaded=True)
             self.chrome.touch()
@@ -3389,7 +3428,13 @@ class Browsers:
             if acts:
                 checks = _checks(name, args.get("expect"))
                 b.checked, formed = checks, True
+            if listed and b.halt.is_set():               # the user stopped it (Esc): until their next message
+                raise BrowserError(HALTED)
+            if acts:
                 self._expect(b, checks, begun)               # as the page is: a false one refused, holding nothing
+            if listed and name != "evaluate":            # (a script: nothing to see coming)
+                self._lead_in(b, name, args)
+            if acts:
                 b.acts.acquire()
                 b.acts_by = threading.get_ident()
                 self._expect(b, checks, begun)               # as the action will find it: the user's input held
@@ -3423,6 +3468,18 @@ class Browsers:
                               "arguments, with its `expect`}", error=True)
         if len(steps) > MAX_STEPS:
             return mcp.result(f"Not done: at most {MAX_STEPS} steps in one call", error=True)
+        b = self.get(key)
+        with b.lock:
+            b.playing += 1
+        b._publish()
+        try:
+            return self._play(key, steps, bool(args.get("snapshot")))
+        finally:
+            with b.lock:
+                b.playing -= 1
+            b._publish()
+
+    def _play(self, key: str, steps: list, snapshot: bool) -> dict:
         out, failed = [], False
         for i, step in enumerate(steps, 1):
             tool = step.get("tool") if isinstance(step, dict) else None
@@ -3442,11 +3499,37 @@ class Browsers:
                     out.append({"type": "text", "text": f"Stopped there: step {i + 1} not run." if left == 1 else
                                 f"Stopped there: steps {i + 1}-{len(steps)} not run."})
                 break
-        if args.get("snapshot"):
+        if snapshot:
             snap = self.call(key, "snapshot", {})
             out.append({"type": "text", "text": "The page after them:\n" + "\n".join(
                 c.get("text", "") for c in snap.get("content") or [] if c.get("type") == "text")})
         return {"content": out, **({"isError": True} if failed else {})}
+
+    def _lead_in(self, b: Browser, name: str, args: dict) -> None:
+        """While the user watches (`Browser.watching`): what the agent is about to do, shown PACE seconds before it
+        is done -- its element brought into view and outlined, the agent's pointer moved to it (the view's) -- for them
+        to follow, and to stop (Esc: `Browser.stop`) before it is done: a BrowserError (STOPPED) then."""
+        if not b.watching():
+            return
+        box, at = None, b.located(str(args["ref"])) if args.get("ref") else None
+        with b.lock:
+            tab = b.tabs[b.active] if b.tabs else None
+        if at and tab is not None and tab.target == at[0] and not tab.dialog:
+            cdp = self.chrome.cdp()
+            try:
+                cdp.call("DOM.scrollIntoViewIfNeeded", {"backendNodeId": at[1]}, tab.session, timeout=EXPECT_WAIT)
+            except BrowserError:
+                pass
+            box = b.box_of(cdp, tab, at[1])
+        with b.lock:
+            b.next = {"label": b.doing, "box": box, "tool": name}
+        b._publish()
+        try:
+            if b.halt.wait(PACE):
+                raise BrowserError(STOPPED)
+        finally:
+            with b.lock:
+                b.next = None
 
     def _done(self, b: Browser, name: str, args: dict, ctx: dict, got: dict, begun: float) -> None:
         """An action done, shown the user (`Browser.show`): what it did, and the element it was on (marked by this
@@ -3492,6 +3575,8 @@ class Browsers:
                 why = f"{what} now reads {_q(seen['now'])}" if seen.get("now") else f"{what} changed"
         elif renamed:
             el, why = target, f"it reads {renamed.group(1)} now"
+        elif first in (STOPPED.split("\n")[0], HALTED.split("\n")[0]):
+            why = "you stopped it (Esc)"
         elif first.startswith("Not opened: "):
             why = first[len("Not opened: "):].rstrip(".")
         elif " is gone" in first or first.startswith("no element "):
@@ -3822,7 +3907,14 @@ class Browsers:
                 _press(cdp, tab, "Backspace")
         else:                    # the caret at its end: focus may leave it at the start, or on a selection it replaces
             cdp.call("Runtime.callFunctionOn", {"objectId": obj, "functionDeclaration": END_JS}, tab.session)
-        if text:
+        if text and b.watching() and len(text) > 1:      # seen typed, a character at a time, TYPE_SHOWN at most
+            wait = min(0.035, TYPE_SHOWN / len(text))
+            for ch in text:
+                cdp.call("Input.insertText", {"text": ch}, tab.session, until=lambda: tab.dialog is not None)
+                if tab.dialog:
+                    break
+                time.sleep(wait)
+        elif text:
             cdp.call("Input.insertText", {"text": text}, tab.session, until=lambda: tab.dialog is not None)
         if args.get("submit") and not tab.dialog:
             _press(cdp, tab, "Enter")

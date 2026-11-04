@@ -536,6 +536,16 @@ class ServerTest(Home):
         with self.assertRaises(urllib.error.HTTPError) as got:
             self.post(f"/browser/w/{key}/reveal", {"i": 3})
         self.assertEqual(got.exception.code, 404)
+        b = self.httpd.apps["browser"].get(key)
+        self.post(f"/browser/w/{key}/stop", {})                              # the user's Esc: until their next message
+        self.assertTrue(b.state()["halted"])
+        b.sent()
+        self.assertFalse(b.state()["halted"])
+        viewer = b.join(page="pg1", visible=True)
+        self.addCleanup(b.leave, viewer)
+        self.assertTrue(b.watching())
+        self.post(f"/browser/w/{key}/watch", {"page": "pg1", "visible": False})   # its tab behind another
+        self.assertFalse(b.watching())
 
     def test_an_unknown_browser_is_not_found(self):
         for path in (f"/browser/w/{'0' * 16}/nav", "/browser/w/zz/nav"):
@@ -1536,6 +1546,91 @@ class StepsTest(ChromeBase):
         listed = {t["name"]: t for t in browser.TOOLS}
         self.assertEqual(listed["steps"]["inputSchema"]["required"], ["steps"])
         self.assertIn("## Several actions in one call", browser.instructions(self.root))
+
+
+@unittest.skipUnless(browser.available(), "no Chrome here")
+class WatchedTest(ChromeBase):
+    """While the user watches, each action is shown coming (`next`) PACE seconds before it is done, and Esc stops it:
+    that one, the rest of its steps, and every action after until their next message."""
+
+    def setUp(self):
+        super().setUp()
+        self.text("navigate", url=self.write("invoices.html", INVOICES))
+        self.outline = self.text("snapshot")
+        self.a, self.b_ = self.ref(self.outline, "button \"Agent's"), self.ref(self.outline, "button \"User's")
+        self.viewer = self.b.join(page="pg", visible=True)
+        self.addCleanup(self.b.leave, self.viewer)
+
+    def said(self, got: dict) -> str:
+        return "\n".join(c["text"] for c in got["content"] if c.get("type") == "text")
+
+    def in_thread(self, name: str, **args):
+        done = []
+        t = threading.Thread(target=lambda: done.append(self.call(name, **args)))
+        t.start()
+        return t, done
+
+    def test_an_action_is_shown_coming_while_watched_and_not_when_its_tab_is_behind(self):
+        seen, start = [], time.time()
+        t, done = self.in_thread("click", ref=self.a)
+        self.until(lambda: (seen.append(self.b.state()["next"]) or seen[-1]) is not None)
+        t.join()
+        took = time.time() - start
+        nxt = seen[-1]
+        self.assertEqual(nxt["label"], "Clicking \"Agent's\"")
+        self.assertEqual(nxt["tool"], "click")
+        x, y = self.middle(self.a)
+        self.assertTrue(nxt["box"][0] <= x <= nxt["box"][0] + nxt["box"][2] and nxt["box"][1] <= y <= nxt["box"][1] + nxt["box"][3])
+        self.assertGreaterEqual(took, browser.PACE)
+        self.assertIsNone(self.b.state()["next"])
+        self.assertEqual(self.js("order.textContent"), "A")
+        self.b.watch("pg", False)                                           # nobody watching: at full speed
+        start = time.time()
+        self.call("click", ref=self.a)
+        self.assertLess(time.time() - start, browser.PACE)
+        self.assertEqual(self.js("order.textContent"), "AA")
+
+    def test_esc_stops_the_action_shown_coming_and_every_one_after_until_the_user_s_next_message(self):
+        t, done = self.in_thread("click", ref=self.a)
+        self.assertTrue(self.until(lambda: self.b.state()["next"] is not None))
+        self.b.stop()
+        t.join()
+        self.assertTrue(done[0].get("isError"))
+        self.assertIn("the user pressed Esc to stop you, before this was done", self.said(done[0]))
+        self.assertEqual(self.js("order.textContent"), "")                 # not clicked
+        self.assertEqual(self.b.state()["actions"][-1]["text"], "Didn't click \"Agent's\": you stopped it (Esc)")
+        self.assertIn("the user stopped you (Esc)", self.said(self.call("click", ref=self.b_)))
+        self.assertIn("page: Invoices", self.text("snapshot"))              # looking still is
+        self.assertIn("pressed Esc to stop you", self.b.compose("why?"))    # told with their message
+        self.b.sent()
+        self.b.watch("pg", False)
+        self.text("click", ref=self.b_)
+        self.assertEqual(self.js("order.textContent"), "B")
+
+    def test_esc_during_steps_stops_the_rest(self):
+        done = []
+        t = threading.Thread(target=lambda: done.append(self.bs.call(self.key, "steps", {"steps": [
+            {"tool": "click", "ref": self.a, "expect": HOLDS}, {"tool": "click", "ref": self.b_, "expect": HOLDS},
+            {"tool": "click", "ref": self.a, "expect": HOLDS}]})))
+        t.start()
+        self.assertTrue(self.until(lambda: self.b.state()["playing"]))
+        self.assertTrue(self.until(lambda: (self.b.state()["next"] or {}).get("label") == "Clicking \"User's\"", 5))
+        self.b.stop()
+        t.join()
+        said = self.said(done[0])
+        self.assertIn("Step 2 of 3, click: Not done: the user pressed Esc", said)
+        self.assertIn("Stopped there: step 3 not run.", said)
+        self.assertEqual(self.js("order.textContent"), "A")
+        self.assertFalse(self.b.state()["playing"])
+
+    def test_text_typed_while_watched_appears_a_character_at_a_time(self):
+        note = self.ref(self.outline, 'textbox "Note')
+        self.js("window.inputs = 0; note.addEventListener('input', () => inputs++)")
+        start = time.time()
+        self.text("type", ref=note, text="hello world")
+        self.assertEqual(self.js("note.value"), "hello world")
+        self.assertEqual(self.js("inputs"), 11)                            # one input per character
+        self.assertLess(time.time() - start, browser.PACE + browser.TYPE_SHOWN + 1.5)
 
 
 class UsersChromeTest(Home):

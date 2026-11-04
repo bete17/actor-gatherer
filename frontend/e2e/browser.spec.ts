@@ -198,3 +198,98 @@ test("an action done while the view was away is listed when it comes back, not f
   await expect(line.locator(".tm")).toHaveText("30s ago");
   await expect(page.locator(".bw-stage .acting")).toBeHidden({ timeout: 500 }); // a flash would last 3 s
 });
+
+test("an action shown coming: the agent's pointer moves to it, Next is said, and Esc or Stop stops it", async ({
+  page,
+}) => {
+  await browserActors(page);
+  const coming = { label: 'Clicking "Delete"', box: DELETE, tool: "click" };
+  await page.route(`**/browser/w/${KEY}/stream*`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      body: events([{ actions: [OLD] }, { actions: [OLD], next: coming, playing: true }], "", 60000),
+    }),
+  );
+  const stops: number[] = [],
+    keys: string[] = [];
+  await page.route(`**/browser/w/${KEY}/stop`, async (route) => {
+    stops.push(Date.now());
+    await route.fulfill({ json: {} });
+  });
+  await page.route(`**/browser/w/${KEY}/input`, async (route) => {
+    for (const e of route.request().postDataJSON().events || []) if (e.type === "key") keys.push(e.key);
+    await route.fulfill({ json: {} });
+  });
+  await openActor(page, CLAUDE);
+  const feed = page.locator(".bw-feed"),
+    outline = page.locator(".bw-stage .acting"),
+    pointer = page.locator(".bw-stage .agent-pointer");
+  await expect(feed.locator(".line .tx")).toHaveText('Next: Clicking "Delete"…');
+  await expect(outline).toHaveClass(/\bnext\b/);
+  await expect(outline).toHaveCSS("left", `${DELETE[0] - 3}px`);
+  await expect(pointer.locator("svg")).toBeVisible(); // (the pointer itself: a point, of no size)
+  // glided to the middle of what it is about to click
+  await expect(pointer).toHaveCSS(
+    "transform",
+    `matrix(1, 0, 0, 1, ${DELETE[0] + DELETE[2] / 2}, ${DELETE[1] + DELETE[3] / 2})`,
+  );
+  const stop = feed.locator(".stop");
+  await expect(stop).toBeVisible();
+  // Esc on the page stops the agent, and is not the page's
+  await page.locator(".bw-stage").focus();
+  await page.keyboard.press("Escape");
+  await expect.poll(() => stops.length).toBe(1);
+  await stop.click();
+  await expect.poll(() => stops.length).toBe(2);
+  await page.waitForTimeout(300);
+  expect(keys).toEqual([]);
+});
+
+test("stopped: the line says the agent waits for the user's message, and Esc is the page's again", async ({ page }) => {
+  await browserActors(page);
+  await page.route(`**/browser/w/${KEY}/stream*`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      body: events([{ actions: [DONE], halted: true }], "", 60000),
+    }),
+  );
+  const keys: string[] = [];
+  await page.route(`**/browser/w/${KEY}/input`, async (route) => {
+    for (const e of route.request().postDataJSON().events || []) if (e.type === "key") keys.push(e.key);
+    await route.fulfill({ json: {} });
+  });
+  await openActor(page, CLAUDE);
+  const feed = page.locator(".bw-feed");
+  await expect(feed.locator(".line .tx")).toHaveText("You stopped the agent (Esc): it waits for your next message");
+  await expect(feed).toHaveClass(/\bhalted\b/);
+  await expect(feed.locator(".stop")).toBeHidden();
+  await page.locator(".bw-stage").focus();
+  await page.keyboard.press("Escape");
+  await expect.poll(() => keys).toContain("Escape");
+});
+
+test("the page says whether it shows the view: when it joins, and as its tab is hidden or shown", async ({ page }) => {
+  await browserActors(page);
+  const joined: string[] = [],
+    watched: { page: string; visible: boolean }[] = [];
+  await page.route(`**/browser/w/${KEY}/stream*`, (route) => {
+    joined.push(route.request().url());
+    return route.fulfill({ status: 200, contentType: "text/event-stream", body: events([{ actions: [] }], "", 60000) });
+  });
+  await page.route(`**/browser/w/${KEY}/watch`, async (route) => {
+    watched.push(route.request().postDataJSON());
+    await route.fulfill({ json: {} });
+  });
+  await openActor(page, CLAUDE);
+  await expect.poll(() => joined.length).toBe(1);
+  const id = new URL(joined[0]).searchParams.get("page");
+  expect(id).toBeTruthy();
+  expect(new URL(joined[0]).searchParams.get("hidden")).toBeNull();
+  await page.evaluate(() => {
+    Object.defineProperty(document, "hidden", { configurable: true, get: () => true });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await expect.poll(() => watched).toEqual([{ page: id, visible: false }]);
+});
