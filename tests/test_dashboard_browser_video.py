@@ -190,6 +190,35 @@ class VideoChromeTest(Home):
         got = self.watch(v, lambda g: any(n == "video" for n, _ in g), 5)
         self.assertTrue([n for n, _ in got if n == "video"])  # still captured after the tab went to another page
 
+    def test_a_popup_window_a_page_opens_is_shown_by_frames_and_its_chrome_runs_on(self):
+        """The extension's button pressed on a popup window (a page's window.open with a size: "Sign in with Google",
+        say) ends the whole Chrome: such a tab is shown by its JPEG frames, and the Chrome runs on."""
+        self.popup("width=500,height=600")
+
+    def test_a_popup_window_opened_noopener_is_shown_by_frames_too(self):
+        """Opened noopener (Figma's "Continue with Google"), its page reads its bars visible: told by what was asked."""
+        self.popup("noopener,width=500,height=600")
+
+    def popup(self, features: str):
+        self.b.live()
+        self.b.resize(700, 500, 1.0)
+        v = self.b.join(video=True)
+        self.addCleanup(self.b.leave, v)
+        self.assertTrue(self.keys(self.watch(v, lambda g: bool(self.keys(g)))), self.b.video.why)
+        conn, tab = self.bs.chrome.conn, self.b.tab()
+        conn.call("Page.navigate", {"url": "file://" + os.path.join(self.root, "index.html")}, tab.session)
+        time.sleep(0.5)
+        two = "file://" + os.path.join(self.root, "two.html")
+        conn.call("Runtime.evaluate", {"expression": f"window.open('{two}', 'p', '{features}')",
+                                       "userGesture": True}, tab.session)
+        got = self.watch(v, lambda g: "popup" in (self.b.video.why or "") and any(n == "frame" for n, _ in g), 15)
+        self.assertEqual(len(self.b.tabs), 2)
+        self.assertIs(self.b.tab(), self.b.tabs[1])                      # the popup, shown
+        self.assertIn("popup", self.b.video.why)
+        self.assertIn("frame", [n for n, _ in got])                      # its screen, as frames
+        time.sleep(1)
+        self.assertTrue(conn.alive and self.bs.chrome.conn is conn)      # the Chrome not ended
+
     def test_the_view_grown_or_shrunk_the_video_comes_at_its_new_size(self):
         self.b.live()
         self.b.resize(700, 500, 2.0)
