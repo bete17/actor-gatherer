@@ -7,7 +7,7 @@
 import { useLayoutEffect } from "react";
 import { plural } from "../../core/format";
 import { useChat } from "./context";
-import { OpenedTurn, openings } from "./Pending";
+import { OpenedTurn, openings, waiting } from "./Pending";
 import { drawn } from "./pull";
 import { turnsBegan, useTurns } from "./store";
 import { Turn, type TurnPlace } from "./Turn";
@@ -21,6 +21,9 @@ export function Turns({ interrupting }: { interrupting: boolean }) {
     last = d.turns.length - 1,
     info = feed.info;
   const opens = openings(feed.heard);
+  // a message on its way to the agent (sent from here, queued in its session): the turn it opens begins, so the
+  // latest is not shown done meanwhile -- until the page hears the actor runs, the status still says idle
+  const coming = waiting(feed, host) !== null;
   const first = folds.first ?? 0;
   const answered = d.turns.filter((t) => (t.replies || []).length || t.calls).map((t) => t.n);
   const foldsAt = answered.length < 2 ? 0 : answered[answered.length - 2]; // the turns before this one fold
@@ -28,7 +31,7 @@ export function Turns({ interrupting }: { interrupting: boolean }) {
     const live = feed.running && !opens.length && t.n === last;
     return {
       live,
-      done: !live && t.n === last && !opens.length && DONE.includes(feed.status),
+      done: !live && t.n === last && !opens.length && !coming && DONE.includes(feed.status),
       folds: foldsAt,
       opened: opens.length > 0,
       began: live ? turnsBegan.get(feed.key + "\u0000" + host.typedAs(t.text).slice(0, 200)) : undefined,
