@@ -487,6 +487,29 @@ class RoomTest(unittest.TestCase):
             with self.assertRaisesRegex(editor.EditorError, "too large"):
                 self.editors.join(self.path, self.root, "p", 1)
 
+    def test_a_new_file_or_folder_and_the_folders_above_it(self):
+        got = editor.create(os.path.join(self.root, "new.py"), self.root)
+        self.assertEqual(got, {"path": os.path.join(self.root, "new.py"), "dir": False})
+        self.assertEqual(os.path.getsize(got["path"]), 0)
+        got = editor.create(os.path.join(self.root, "pkg", "sub"), self.root, folder=True)
+        self.assertTrue(os.path.isdir(got["path"]) and got["dir"])
+        got = editor.create(os.path.join(self.root, "lib", "deep", "m.py"), self.root)   # "lib/deep/m.py": both made
+        self.assertTrue(os.path.isfile(got["path"]))
+        self.assertTrue(os.path.isdir(os.path.join(self.root, "lib", "deep")))
+
+    def test_a_new_file_where_one_is_or_outside_the_root_is_refused(self):
+        for path, said in [(self.path, "there already"), (os.path.join(self.root, "pkg") + "/", "a name"),
+                           (os.path.join(self.root, "notes.py", "x.py"), "a file is where"),
+                           ("/etc/new.txt", "not under"), (os.path.join(self.root, ".."), "a name"),
+                           (os.path.join(self.root, "..", "out.txt"), "not under"), ("new.txt", "absolute")]:
+            if path.endswith("pkg/"):
+                os.makedirs(path)
+                said = "there already"
+            with self.assertRaisesRegex(editor.EditorError, said, msg=path):
+                editor.create(path, self.root)
+        with open(self.path) as fh:                                      # what was there: left as it was
+            self.assertTrue(fh.read())
+
     def test_a_link_out_of_the_root_is_refused(self):
         os.symlink("/etc/hosts", os.path.join(self.root, "hosts"))
         with self.assertRaisesRegex(editor.EditorError, "not under"):
@@ -785,6 +808,21 @@ class ServerTest(unittest.TestCase):
         q = urllib.parse.urlencode({"path": "/etc/hosts", "root": self.root, "conn": "p", "client": 1})
         with urllib.request.urlopen(f"{self.url}/api/edit/stream?{q}", timeout=10) as resp:
             self.assertIn(b"event: failed", resp.read())
+
+    def test_a_new_file_and_folder_made_by_the_page(self):
+        made = self.post("/api/edit/create", {"path": os.path.join(self.root, "src", "b.py"), "root": self.root})
+        self.assertEqual(made, {"path": os.path.join(self.root, "src", "b.py"), "dir": False})
+        self.post("/api/edit/create", {"path": os.path.join(self.root, "docs"), "root": self.root, "dir": True})
+        got = json.load(urllib.request.urlopen(
+            f"{self.url}/api/edit/list?{urllib.parse.urlencode({'dir': self.root, 'root': self.root})}", timeout=10))
+        self.assertEqual([e["name"] for e in got["entries"]], ["docs", "src", "a.md"])
+        with self.assertRaises(urllib.error.HTTPError) as no:           # there already
+            self.post("/api/edit/create", {"path": self.path, "root": self.root})
+        self.assertEqual(no.exception.code, 400)
+        with self.assertRaises(urllib.error.HTTPError) as no:           # not the page's own: no JSON
+            self.post("/api/edit/create", {"path": os.path.join(self.root, "c.py"), "root": self.root}, kind="text/plain")
+        self.assertEqual(no.exception.code, 403)
+        self.assertFalse(os.path.exists(os.path.join(self.root, "c.py")))
 
     def test_the_editor_is_served_and_said_to_be_there(self):
         with urllib.request.urlopen(f"{self.url}/vendor/editor.js", timeout=10) as resp:

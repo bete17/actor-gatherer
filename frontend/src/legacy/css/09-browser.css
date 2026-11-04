@@ -107,19 +107,6 @@
 .dw-page.off { visibility: hidden; pointer-events: none; left: 0; top: 0; width: 1px; height: 1px; }
 .side-btns { display: flex; gap: 6px; }
 .ed { display: flex; flex: 1; min-width: 0; min-height: 0; }
-.ed-tree { width: 250px; max-width: calc(100% - 300px); flex: none; overflow: auto; border-right: 1px solid var(--grid); padding: 6px 0 12px; font-size: 12.5px; }
-.ed-row { display: flex; align-items: center; gap: 5px; width: 100%; min-height: 23px; border: 0; border-radius: 0; background: none;
-  color: var(--ink); font: inherit; text-align: left; padding: 2px 10px; cursor: pointer; white-space: nowrap; }
-.ed-row:hover { background: var(--wash); }
-.ed-row.on { background: color-mix(in srgb, var(--s1) 16%, transparent); }
-.ed-row.dir { font-weight: 550; }
-.ed-row .chev { width: 10px; flex: none; color: var(--muted); font-size: 10px; }
-.ed-row .n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.ed-row .mk { flex: none; }
-.ed-row .mk.dirty { width: 7px; height: 7px; border-radius: 50%; background: var(--warning); }
-.ed-row .mk.fresh { width: 6px; height: 6px; border-radius: 50%; background: var(--s2); }
-.ed-row .mk.eds { font-size: 10.5px; color: var(--muted); border: 1px solid var(--ring); border-radius: 8px; padding: 0 5px; line-height: 14px; }
-.ed-note { color: var(--muted); font-size: 12px; padding: 2px 10px; } .ed-note.err { color: var(--critical); }
 .ed-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .ed-head { display: flex; align-items: center; gap: 6px 10px; flex-wrap: wrap; padding: 6px 12px; min-height: 40px;
   border-bottom: 1px solid var(--grid); font-size: 12.5px; }

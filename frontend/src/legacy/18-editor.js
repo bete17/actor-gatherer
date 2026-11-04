@@ -22,6 +22,8 @@ const ed = { root: "", home: "", lists: new Map(), open: new Set(), file: null, 
   timer: null, treeSig: "", barSig: "", host: null, bar: null, tree: null, head: null, body: null, side: null, changes: null,
   pv: null, pvSide: null,
   branches: [], brSig: "", brs: null, brOpen: null,
+  nav: null, fold: null, cursor: null, revealing: null, newItem: null, pick: null, menu: null, find: null,   // 18-editor-tree.js's
+  choose: null, choosing: null, go: null,                                                                     // 18-editor-open.js's
   auto: (() => { try { return localStorage.getItem(ED_AUTO_KEY) !== "0"; } catch (e) { return true; } })(),   // on unless turned off
   wrap: (() => { try { return localStorage.getItem(ED_WRAP_KEY) !== "0"; } catch (e) { return true; } })() };  // long lines wrapped: likewise
 const edB64 = (u8) => { let t = ""; for (let i = 0; i < u8.length; i += 0x8000) t += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(t); };
@@ -667,62 +669,13 @@ const edEntry = (path) => ((ed.lists.get(edDir(path)) || {}).entries || []).find
 
 // The tree: the folder's entries, and those of each folder opened in it; drawn again only when what it shows changed.
 async function edList(dir, draw = true) {
-  let got;
-  try { got = await get(`/api/edit/list?${new URLSearchParams({ dir, root: "/" })}`); }
-  catch (e) { got = { error: e.message, entries: [] }; }
+  const got = await edFetchList(dir);
   if (!(ed.root && edUnder(dir, ed.root)) && !(ed.file && dir === edDir(ed.file))) return;   // a folder shown before
   if (got.user) ed.user = got.user;
   if (got.home) ed.home = got.home;
+  if ("choose" in got && got.choose !== ed.choose) { ed.choose = got.choose; edBar(); }   // the system's Open dialog: its name, null when none opens here
   ed.lists.set(dir, got);
   if (draw) { edTree(); edHead(); }
-}
-function edToggle(dir) {
-  if (ed.open.has(dir)) ed.open.delete(dir);
-  else { ed.open.add(dir); if (!ed.lists.has(dir)) edList(dir); }
-  edTree();
-}
-function edTree() {
-  if (!ed.tree || !ed.root) return;
-  const rows = [], sig = [ed.root, ed.file];
-  const walk = (dir, depth) => {
-    const got = ed.lists.get(dir), pad = `padding-left: ${10 + depth * 14}px`;
-    if (!got || got.error || !got.entries.length) {
-      sig.push(dir, got ? got.error || "empty" : "loading");
-      rows.push(el("div", { class: "ed-note" + (got && got.error ? " err" : ""), style: pad, text: !got ? "Loading…" : got.error || "Empty" }));
-      return;
-    }
-    for (const e of got.entries) {
-      const p = edJoin(dir, e.name), writers = edWriters(e);
-      if (e.dir) {
-        const open = ed.open.has(p);
-        sig.push(p, open, writers.map((w) => w.channel));
-        sig.push(e.pending);
-        rows.push(el("button", { type: "button", class: "ed-row dir", style: pad, title: edTilde(p), "aria-expanded": open ? "true" : "false",
-          onclick: () => edToggle(p) }, el("span", { class: "chev", text: open ? "▾" : "▸" }), el("span", { class: "n", text: e.name }),
-          open ? null : edAvatars(writers, "files in it"), open ? null : edWaiting(e.pending, "in it")));
-        if (open) walk(p, depth + 1);
-        continue;
-      }
-      const fresh = got.now - e.mtime < 60 && !writers.some((w) => got.now - w.at < 60), on = p === ed.file;
-      sig.push(p, fresh, e.editors, e.dirty, e.conflicts, e.pending, writers.map((w) => w.channel));
-      rows.push(el("button", { type: "button", class: "ed-row" + (on ? " on" : ""), style: pad, "aria-current": on ? "true" : null,
-        title: [edTilde(p), fresh ? `Changed ${ago(e.mtime)}` : "", e.editors ? `Open in ${plural(e.editors, "editor")}` : "",
-          e.dirty ? "Unsaved changes" : ""].filter(Boolean).join("\n"), onclick: () => edOpen(p) },
-        el("span", { class: "chev" }), el("span", { class: "n", text: e.name }),
-        edAvatars(writers, "it"),
-        fresh ? el("span", { class: "mk fresh", title: "Changed in the last minute" }) : null,
-        e.conflicts ? el("span", { class: "mk cf", title: `${plural(e.conflicts, "conflict")} with the file on disk`, text: "!" }) : null,
-        edWaiting(e.pending, "to it"),
-        e.dirty && !e.conflicts ? el("span", { class: "mk dirty", title: "Unsaved changes" }) : null,
-        e.editors ? el("span", { class: "mk eds", title: `Open in ${plural(e.editors, "editor")}`, text: String(e.editors) }) : null));
-    }
-    if (got.more) rows.push(el("div", { class: "ed-note", style: pad, text: "More not listed" }));
-  };
-  walk(ed.root, 0);
-  const now = JSON.stringify(sig);
-  if (now === ed.treeSig && ed.tree.childElementCount) return;          // the same: left as it is (focus, hover)
-  ed.treeSig = now;
-  ed.tree.replaceChildren(...rows);
 }
 const edWaiting = (n, what) => n ? el("span", { class: "mk br", title: `${plural(n, "change")} from an actor's branch ${what}, waiting for you`, text: String(n) }) : null;
 // Above the tree, under the folder: the actors on branches of the project shown (branches.py), and what waits from them.
@@ -801,42 +754,6 @@ async function edDecide(b, path, take) {
   Promise.all([...dirs].map((d) => edList(d, false))).then(() => edTree());
 }
 
-// Above the tree: the folder shown -- typed, or the one above it, or an actor's working directory.
-function edFolders() {
-  const by = new Map();
-  for (const g of (state.home && state.home.gatherers) || [])
-    for (const a of g.agents) {
-      const d = (a.cwd || "").replace(/\/+$/, "");
-      if (!d) continue;
-      const had = by.get(d) || { last: 0, names: [] };
-      had.last = Math.max(had.last, a.last || 0);
-      if (statusOf(a)[0] !== "closed" && had.names.length < 3) had.names.push(edWhoName(a));
-      by.set(d, had);
-    }
-  return [...by.entries()].sort((x, y) => y[1].last - x[1].last).slice(0, 15);
-}
-// The folder shown, picked among the actors' (itself first, when not one of theirs); the folder above it, beside.
-// A long path said by its last two folders, the end of it what tells one from another (the whole in its title).
-const edShort = (p) => { const t = edTilde(p), parts = t.split("/").filter(Boolean); return t.length <= 26 || parts.length <= 2 ? t : `…/${parts.slice(-2).join("/")}`; };
-function edBar() {
-  if (!ed.bar) return;
-  const folders = edFolders();
-  const sig = JSON.stringify([ed.root, ed.home, folders.map(([d, v]) => [d, v.names])]);
-  if (sig === ed.barSig) return;
-  ed.barSig = sig;
-  const theirs = folders.some(([d]) => d === ed.root);
-  const pick = el("select", { class: "ed-pick", "aria-label": "The folder shown", title: `The folder shown: ${edTilde(ed.root)}` },
-    theirs ? null : el("option", { value: ed.root, selected: "", title: edTilde(ed.root), text: edShort(ed.root) }),
-    folders.length ? el("optgroup", { label: "Actors' folders" },
-      ...folders.map(([d, v]) => el("option", { value: d, selected: d === ed.root ? "" : null, title: edTilde(d),
-        text: `${edShort(d)}${v.names.length ? " — " + v.names.join(", ") : ""}` }))) : null);
-  pick.addEventListener("change", () => { if (pick.value) edGo(pick.value); });
-  const above = edDir(ed.root);
-  ed.bar.replaceChildren(el("div", { class: "row" },
-    el("button", { type: "button", class: "ed-up", title: ed.root === "/" ? "The top folder" : `The folder above: ${edTilde(above)}`,
-      "aria-label": "The folder above", disabled: ed.root === "/" ? "" : null, onclick: () => edGo(above) }, strokeIcon(ICONS.folderUp, 15)),
-    pick));
-}
 function edGo(dir) {
   dir = (dir || "").replace(/\/+$/, "") || "/";
   if (!dir.startsWith("/")) { ed.barSig = ""; edBar(); return; }        // not a path: shown as it was
@@ -845,6 +762,7 @@ function edGo(dir) {
   ed.lists = new Map([...ed.lists].filter(([d]) => ed.file && d === edDir(ed.file)));
   ed.open.clear(); ed.treeSig = ""; ed.barSig = "";
   try { localStorage.setItem(ED_ROOT_KEY, dir); } catch (e) { /* this page only */ }
+  edRemember(dir);
   ed.branches = []; edBranches();
   edBar(); edTree(); edList(dir); edFetchBranches();
   if (ed.pv && !ed.file) pvOpen(dir);                // no file open: the folder's project's preview
@@ -868,6 +786,8 @@ async function edOpen(path) {
   ed.file = path; ed.err = "";
   if (ed.pv) pvOpen(path);                           // its project's preview, if that shows
   if (!ed.lists.has(edDir(path))) edList(edDir(path));      // its writers
+  edReveal(path);                                    // and its row in the tree, the folders down to it opened
+  edRememberFile(path);                              // Go to file's "Opened lately"
   edTree(); edHead();
   let A;
   try { A = await edLib(); } catch (e) { ed.err = e.message; edHead(); return; }
@@ -1423,7 +1343,7 @@ function setEditor(open, dir = null) {
   if (PANE) { if (window.parent.agEditorPanel) window.parent.agEditorPanel.set(open, dir); return; }
   const wasMin = chatMin();
   state.editor = open;
-  if (!open) { edClose(); pvSleep(); keepMin(false); }   // the chat minimized only under it: closed, shown again
+  if (!open) { edClose(); pvSleep(); keepMin(false); edGoClose(); edPickClose(); edMenuClose(); }   // the chat minimized only under it: closed, shown again
   try { localStorage.setItem(ED_SHOWN_KEY, open ? "1" : ""); } catch (e) { /* this page only */ }
   for (const p of panes.others) p.call("editor", open);
   edMount();
@@ -1452,7 +1372,7 @@ async function edAtActor() {
   }
   setEditor(true, dir || cwd);
 }
-if (!PANE && !SNAPSHOT) window.agEditorPanel = { shown: () => !!state.editor, set: setEditor, min: () => !!state.chatMin, setMin: setChatMin };
+if (!PANE && !SNAPSHOT) window.agEditorPanel = { shown: () => !!state.editor, set: setEditor, goto: () => edGoto(), min: () => !!state.chatMin, setMin: setChatMin };
 // The chat minimized under the Editor: each pane only its message box, the actor's status at its right -- its avatar, moving
 // while it works, done with a check, a mark while it waits on the reader or stopped on an error -- and under it the latest
 // turn's commands and the lines its changes added and removed; the Editor the rest of the column. One choice for every
@@ -1567,23 +1487,29 @@ function edMount() {
   }
   if (!ed.host) {
     ed.bar = el("div", { class: "ed-bar" });
-    ed.tree = el("div", { class: "ed-rows" });
+    ed.tree = el("div", { class: "ed-rows", role: "tree", "aria-label": "The folder's files" });
     ed.head = el("div", { class: "ed-head" });
     ed.body = el("div", { class: "ed-body" + (ed.wrap ? " wrap" : "") });
     ed.body.addEventListener("mousedown", edToPdfClick, true);     // before CodeMirror's: ⌘+double-click, to the PDF
     ed.side = el("aside", { class: "ed-changes files", hidden: "", "aria-label": "An actor's changes to the file" });
     ed.pvSide = el("aside", { class: "ed-pv", hidden: "", "aria-label": "The project's preview" });
     ed.brs = el("div", { class: "ed-brs" });
-    const nav = el("nav", { class: "ed-tree", "aria-label": "Files" }, ed.bar, ed.brs, ed.tree);
+    const nav = ed.nav = el("nav", { class: "ed-tree", id: "ed-files", "aria-label": "Files" }, ed.bar, ed.brs, ed.tree);
+    ed.fold = el("button", { type: "button", class: "ed-fold", hidden: "", "aria-label": "Show the files",
+      "aria-controls": "ed-files", "aria-expanded": "false", onclick: () => edFoldTree(false) });
     const colGrip = () => el("div", { class: "ed-col-grip", role: "separator", "aria-orientation": "vertical",
       title: "Drag to resize · double-click: the width it had first" });
     const treeGrip = colGrip(), sideGrip = colGrip(), pvGrip = colGrip();
-    ed.host = el("div", { class: "ed" }, nav, treeGrip,
+    ed.host = el("div", { class: "ed" }, ed.fold, nav, treeGrip,
       el("div", { class: "ed-main" }, ed.head, el("div", { class: "ed-work" }, ed.body, sideGrip, ed.side, pvGrip, ed.pvSide)));
     widthGrip(treeGrip, "ag-dashboard-editor-tree-width", nav, "width", 120, (x) => x - nav.getBoundingClientRect().left);
     widthGrip(sideGrip, "ag-dashboard-editor-changes-width", ed.side, "width", 200, (x) => ed.side.getBoundingClientRect().right - x);
     widthGrip(pvGrip, "ag-dashboard-editor-preview-width", ed.pvSide, "width", 220, (x) => ed.pvSide.getBoundingClientRect().right - x);
     top.replaceChildren(ed.host, topGrip(top));
+    edTreeWire(nav);
+    let folded = false;
+    try { folded = localStorage.getItem(ED_TREE_FOLDED_KEY) === "1"; } catch (e) { /* this page only */ }
+    edFoldTree(folded, false);
   }
   const opening = top.hidden;
   top.hidden = false;

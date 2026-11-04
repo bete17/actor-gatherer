@@ -38,11 +38,13 @@ import os
 import queue
 import sqlite3
 import stat
+import subprocess
 import tempfile
 import threading
 import time
 import uuid
 from datetime import datetime, timezone
+from collections import deque
 from typing import Dict, List, Optional, Tuple
 
 from . import data, files
@@ -64,6 +66,8 @@ ZONE_GRACE = 5.0            # seconds the conflict zone stays after the last pag
 GONE_CHECK = 5.0            # the most a stream waits before it looks whether its page went
 SKIPPED = frozenset({".git", "node_modules", "__pycache__", ".venv", "venv", ".mypy_cache", ".pytest_cache",
                      ".ruff_cache", ".tox", ".DS_Store"})
+FILES_MAX = 20000           # the most files Go to file is given of one folder
+FILES_S = 2.0               # seconds a folder's walk for them may take
 TEMP = ".ag-edit"           # what a file being saved is written as first, beside it: not listed
 ROOT = "text"               # the document's one shared type: the file's text
 
@@ -92,6 +96,85 @@ def resolve(path: str, root: str) -> str:
     if os.path.commonpath([real, top]) != top:
         raise EditorError(f"{path} is not under {root}")
     return real
+
+
+def create(path: str, root: str, folder: bool = False) -> dict:
+    """A new file, empty -- or a folder -- at `path` under `root`, the folders above it made too (the Editor's New file,
+    New folder; a name such as "src/a.py" makes `src` as well): refused where anything is already."""
+    if not path or not root or not os.path.isabs(path) or not os.path.isabs(root):
+        raise EditorError("an absolute path and the directory it is under, please")
+    name = os.path.basename(path.rstrip("/"))
+    if not name or name in (".", "..") or "\0" in path:
+        raise EditorError("a name, please")
+    real = resolve(path.rstrip("/"), root)
+    if os.path.lexists(real):
+        raise EditorError(f"{name} is there already")
+    try:
+        os.makedirs(os.path.dirname(real), exist_ok=True)
+        if folder:
+            os.mkdir(real)
+        else:
+            with open(real, "x", encoding="utf-8"):
+                pass
+    except FileExistsError:                         # made meanwhile, or a file where a folder above it would go
+        raise EditorError(f"{name} is there already, or a file is where a folder above it would be") from None
+    except NotADirectoryError:
+        raise EditorError(f"a file is where a folder above {name} would be") from None
+    except PermissionError:
+        raise EditorError(f"{os.path.dirname(real)} may not be written") from None
+    return {"path": real, "dir": folder}
+
+
+def file_list(directory: str, root: str) -> dict:
+    """The files under `directory`, as paths from it, for the Editor's Go to file: in a git project, git's list of them
+    (those it tracks, and new ones it does not ignore); else a walk, the nearest first, of the folders but those listings
+    leave out (SKIPPED), links to folders not followed. At most FILES_MAX of them, the walk at most FILES_S seconds:
+    `more`, there were more."""
+    real = resolve(directory, root)
+    if not os.path.isdir(real):
+        raise EditorError(f"{directory} is not a directory")
+    got = _git_files(real)
+    if got is not None:
+        got = [f for f in got if not f.endswith(TEMP) and not any(part in SKIPPED for part in f.split("/"))]
+        got.sort(key=lambda f: (f.count("/"), f.lower()))
+        kept = [f for f in got[:FILES_MAX] if os.path.isfile(os.path.join(real, f))]   # not one deleted since, nor a submodule
+        return {"dir": directory, "files": kept, "more": len(got) > FILES_MAX, "git": True}
+    found: List[str] = []
+    more, until, todo = False, time.monotonic() + FILES_S, deque([""])
+    while todo and not more:
+        rel = todo.popleft()
+        try:
+            with os.scandir(os.path.join(real, rel)) as entries:
+                for entry in sorted(entries, key=lambda e: e.name.lower()):
+                    if entry.name in SKIPPED or entry.name.endswith(TEMP):
+                        continue
+                    path = f"{rel}/{entry.name}" if rel else entry.name
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            todo.append(path)
+                        elif entry.is_file():
+                            found.append(path)
+                    except OSError:
+                        continue
+                    if len(found) >= FILES_MAX or time.monotonic() > until:
+                        more = True
+                        break
+        except OSError:                             # unreadable: left out
+            continue
+    return {"dir": directory, "files": found, "more": more or bool(todo) and len(found) >= FILES_MAX, "git": False}
+
+
+def _git_files(real: str) -> Optional[List[str]]:
+    """git's list of the files under `real`, as paths from it -- those it tracks and the new ones it does not ignore --
+    if `real` is in a git work tree; else None."""
+    try:
+        done = subprocess.run(["git", "-C", real, "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+                              capture_output=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if done.returncode != 0:
+        return None
+    return list(dict.fromkeys(f for f in done.stdout.decode("utf-8", "surrogateescape").split("\0") if f))
 
 
 def read(path: str) -> Tuple[str, tuple]:
