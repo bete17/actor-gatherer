@@ -71,6 +71,13 @@ RUN_WITH = {".py": "python3 {file}", ".js": "node {file}", ".mjs": "node {file}"
             ".r": "Rscript {file}", ".rb": "ruby {file}", ".jl": "julia {file}"}
 SHOWN_AS_IS = {".html", ".htm", ".svg", ".md", ".markdown", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf"}
 IMAGES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".avif"}
+#: LaTeX: what a guess builds a document's main file with (`tex_main`), and what tells a main file from the rest.
+LATEX = "latexmk -pdf -synctex=1 -cd -interaction=nonstopmode "
+TEX_ROOT = re.compile(r"^[ \t]*%[ \t]*![ \t]*TeX[ \t]+root[ \t]*=[ \t]*(.+?)[ \t]*$", re.I | re.M)   # % !TeX root = main.tex
+TEX_CLASS = re.compile(r"^[^%\n]*\\documentclass\b", re.M)                    # not in a comment
+TEX_INPUT = re.compile(r"^[^%\n]*?\\(?:input|include|subfile)[ \t]*\{[ \t]*([^}]+?)[ \t]*\}", re.M)
+TEX_HEAD = 65_536           # the most bytes of a .tex file looked at
+TEX_MANY = 200              # the most .tex files of a folder looked at
 
 
 class PreviewError(ValueError):
@@ -171,11 +178,13 @@ def kind_of(path: str) -> str:
             else "html" if ext in (".html", ".htm") else "markdown" if ext in (".md", ".markdown") else "text")
 
 
-def guess(file: Optional[str], checkout: str) -> dict:
-    """A preview to start from, for a project with none: by the file open, else by what the checkout has."""
+def guess(file: Optional[str], checkout: str, folder: Optional[str] = None) -> dict:
+    """A preview to start from, for a project with none: by the file open, else by the folder shown (`folder`) and
+    what the checkout has. LaTeX's builds the document's main file, by its name (`tex_main`): the same one whichever
+    of its files is open."""
     ext = os.path.splitext(file or "")[1].lower()
     if ext == ".tex":
-        return {"command": "latexmk -pdf -synctex=1 -cd -interaction=nonstopmode {file}", "show": "{stem}.pdf"}
+        return _latex(tex_main(file, checkout) or file, checkout)
     if ext in RUN_WITH:
         return {"command": RUN_WITH[ext], "show": ""}
     if ext in SHOWN_AS_IS:
@@ -190,9 +199,73 @@ def guess(file: Optional[str], checkout: str) -> dict:
         if isinstance(script, str):
             port = 5173 if "vite" in script else 4321 if "astro" in script else 3000
             return {"command": f"npm run {name}", "show": f"http://localhost:{port}"}
+    main = tex_main(None, checkout, folder) if not file and folder else None
+    if main:
+        return _latex(main, checkout)
     if any(os.path.isfile(os.path.join(checkout, m)) for m in ("Makefile", "makefile")):
         return {"command": "make", "show": ""}
     return {"command": "", "show": ""}
+
+
+def _latex(main: str, checkout: str) -> dict:
+    """latexmk on a main file, by its path in the checkout (-cd: run in its folder), showing the PDF it writes there."""
+    rel = os.path.relpath(main, checkout)
+    return {"command": LATEX + shlex.quote(rel), "show": os.path.splitext(rel)[0] + ".pdf"}
+
+
+def _tex_head(path: str) -> str:
+    try:
+        with open(path, "rb") as fh:
+            return fh.read(TEX_HEAD).decode("utf-8", "replace")
+    except OSError:
+        return ""
+
+
+def tex_main(file: Optional[str], checkout: str, folder: Optional[str] = None) -> Optional[str]:
+    """The main file (real path) of the LaTeX document a .tex file (`file`) is part of -- or, with none, of the folder
+    shown (`folder`): the one a `% !TeX root = ...` line near its top names; the file itself, if it is one (a
+    \\documentclass, not in a comment); else a main file of its folder -- or of the nearest folder above it, in the
+    checkout, that has one: the one that \\input's (\\include's, \\subfile's) it, else main.tex, else the first by name.
+    A folder's: one of its own, main.tex, else the first by name. None: none."""
+    top = os.path.realpath(checkout)
+    if file:
+        file = os.path.realpath(file)
+        head = _tex_head(file)
+        named = TEX_ROOT.search(head[:4000])
+        if named:
+            p = inside(top, os.path.join(os.path.dirname(file), named.group(1)))
+            if p and os.path.isfile(p):
+                return p
+        if TEX_CLASS.search(head):
+            return file
+        here = os.path.dirname(file)
+    elif folder:
+        here = os.path.realpath(folder)
+    else:
+        return None
+    while True:
+        try:
+            names = sorted(n for n in os.listdir(here) if n.lower().endswith(".tex"))[:TEX_MANY]
+        except OSError:
+            names = []
+        mains = []
+        for n in names:
+            p = os.path.join(here, n)
+            if p != file and os.path.isfile(p):
+                head = _tex_head(p)
+                if TEX_CLASS.search(head):
+                    mains.append((p, head))
+        if mains:
+            if file:
+                stem = os.path.normpath(os.path.splitext(os.path.relpath(file, here))[0])
+                for p, head in mains:
+                    if any(os.path.normpath(re.sub(r"\.tex$", "", m.group(1), flags=re.I)) == stem
+                           for m in TEX_INPUT.finditer(head)):
+                        return p
+            return next((p for p, _ in mains if os.path.basename(p).lower() == "main.tex"), mains[0][0])
+        if not file or here == top or not here.startswith(top.rstrip(os.sep) + os.sep):
+            return None
+        here = os.path.dirname(here)
 
 
 # ---- runs
@@ -276,7 +349,7 @@ class Runs:
         run = self.runs.get(checkout)
         return {"key": key, "checkout": checkout, "name": os.path.basename(key) or key,
                 "git": branches.repository(checkout) is not None, "preview": row,
-                "guess": guess(file, checkout) if row is None else None, "run": run.view() if run else None,
+                "guess": guess(file, checkout, None if file else os.path.realpath(path)) if row is None else None, "run": run.view() if run else None,
                 "token": self.token(checkout), "pdfjs": os.path.isfile(os.path.join(PDFJS, "web", "viewer.html"))}
 
     def set(self, path: str, command: str, show: str, by: str = READER) -> dict:

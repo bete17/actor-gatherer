@@ -98,13 +98,52 @@ class TableTest(Base):
 
     def test_a_guess_by_the_file_open_else_by_the_project(self):
         self.assertEqual(preview.guess(self.plot, self.repo), {"command": "python3 {file}", "show": ""})
-        self.assertEqual(preview.guess("/x/paper.tex", self.repo)["show"], "{stem}.pdf")
-        self.assertIn("-synctex=1", preview.guess("/x/paper.tex", self.repo)["command"])
+        paper = self.tex("paper/paper.tex", "\\documentclass{article}\n\\begin{document}\nHi\n\\end{document}\n")
+        self.assertEqual(preview.guess(paper, self.repo),
+                         {"command": "latexmk -pdf -synctex=1 -cd -interaction=nonstopmode paper/paper.tex", "show": "paper/paper.pdf"})
         self.assertEqual(preview.guess("/x/index.html", self.repo), {"command": "", "show": "{file}"})
         with open(os.path.join(self.repo, "package.json"), "w") as fh:
             json.dump({"scripts": {"dev": "vite"}}, fh)
         self.assertEqual(preview.guess("/x/App.jsx", self.repo), {"command": "npm run dev", "show": "http://localhost:5173"})
         self.assertEqual(preview.guess(None, os.path.join(self.repo, "src")), {"command": "", "show": ""})
+
+    def tex(self, rel, text):
+        p = os.path.join(self.repo, rel)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "w") as fh:
+            fh.write(text)
+        return p
+
+    def test_latex_s_guess_builds_the_document_s_main_file_whichever_of_its_files_is_open(self):
+        doc = "\\documentclass{article}\n\\begin{document}\n%s\n\\end{document}\n"
+        main = self.tex("paper/main.tex", doc % "\\input{intro}\n\\include{sections/method}")
+        intro = self.tex("paper/intro.tex", "\\section{Intro}\n% \\documentclass in a comment is not one\n")
+        method = self.tex("paper/sections/method.tex", "\\section{Method}\n")
+        notes = self.tex("paper/notes.tex", "Loose notes, in no document.\n")
+        for f in (main, intro, method, notes):                   # its own, a file it \input's, one in a folder below
+            self.assertEqual(preview.tex_main(f, self.repo), main, f)
+        want = {"command": "latexmk -pdf -synctex=1 -cd -interaction=nonstopmode paper/main.tex", "show": "paper/main.pdf"}
+        self.assertEqual(preview.guess(method, self.repo), want)
+        self.assertEqual(preview.guess(None, self.repo, os.path.join(self.repo, "paper")), want)   # the folder shown
+        # A file that is a main file itself is built; of several, the one that \input's the file open, else main.tex.
+        slides = self.tex("paper/slides.tex", doc % "\\input{talk}")
+        talk = self.tex("paper/talk.tex", "\\begin{frame}Hi\\end{frame}\n")
+        self.assertEqual(preview.tex_main(slides, self.repo), slides)
+        self.assertEqual(preview.tex_main(talk, self.repo), slides)
+        self.assertEqual(preview.tex_main(notes, self.repo), main)
+        # `% !TeX root = ...` names it; a name outside the checkout is not taken.
+        fig = self.tex("paper/figs/plot.tex", "% !TeX root = ../slides.tex\n\\begin{tikzpicture}\\end{tikzpicture}\n")
+        self.assertEqual(preview.tex_main(fig, self.repo), slides)
+        self.tex("paper/figs/plot.tex", "%!TEX root=/etc/hosts\n")
+        self.assertEqual(preview.tex_main(fig, self.repo), main)
+        # None anywhere up to the checkout: the file open itself.
+        lone = self.tex("other/lone.tex", "\\section{Alone}\n")
+        self.assertIsNone(preview.tex_main(lone, self.repo))
+        self.assertEqual(preview.guess(lone, self.repo)["command"].split()[-1], "other/lone.tex")
+        self.assertIsNone(preview.tex_main(None, self.repo, os.path.join(self.repo, "other")))
+        spaced = self.tex("my paper/a b.tex", doc % "Hi")             # quoted for the shell
+        self.assertEqual(preview.guess(spaced, self.repo)["command"].split(" ", 5)[-1], "'my paper/a b.tex'")
+        self.assertEqual(preview.guess(spaced, self.repo)["show"], "my paper/a b.pdf")
 
 
 class RunTest(Base):
