@@ -29,14 +29,15 @@ const REFUSED = act(
   "Not done: expect 1 is false: el.innerText.includes('#4411')",
 );
 
-/** The test home's actors as Browsers' (their sessions' `role`), a Chrome there to run them; the home's own stream
- * held back, so it does not replace this one. */
+/** The test home's Claude Code actor (CLAUDE) as a Browser's (its session's `role`), a Chrome there to run it; the home's
+ * own stream held back, so it does not replace this one. Only that one: the Codex actor, shown first, with the same
+ * Browser would show its view too -- moved into CLAUDE's card when that is opened, losing its focus. */
 async function browserActors(page: Page) {
   await page.route("**/api/home", async (route) => {
     const home = await (await route.fetch()).json();
     home.browser = true;
     for (const a of home.gatherers.find((g: { name: string }) => g.name === GATHERER).agents)
-      a.session = { ...(a.session || {}), role: JSON.stringify({ browser: KEY }) };
+      if (a.harness === "claude") a.session = { ...(a.session || {}), role: JSON.stringify({ browser: KEY }) };
     await route.fulfill({ json: home });
   });
   await page.route("**/api/stream*", (route) => route.abort());
