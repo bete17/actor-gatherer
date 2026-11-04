@@ -115,6 +115,66 @@ test("the rail starts a new actor in a gatherer: its harness picked beside the r
   await expect(plus).toHaveAttribute("aria-expanded", "false");
 });
 
+test("the rail's avatars have the list's bookmark and ×, over their corners: pressed, they save or close, not show", async ({
+  page,
+}) => {
+  // the home as the server has it, but the Claude Code actor's process run by the dashboard, so it can be closed (its
+  // stream held back, so the server's own home does not replace it)
+  await page.route("**/api/home", async (route) => {
+    const home = await (await route.fetch()).json();
+    const claude = home.gatherers
+      .find((x: { name: string }) => x.name === GATHERER)
+      .agents.find((a: { harness?: string }) => a.harness === "claude");
+    claude.session = { session_id: "s-claude", pid: 4242, status: "idle", cwd: "/work/demo" };
+    claude.chattable = true;
+    await route.fulfill({ json: home });
+  });
+  await page.route("**/api/stream*", (route) => route.abort());
+  const saved: unknown[] = [],
+    stopped: unknown[] = [];
+  await page.route("**/api/saved", async (route) => {
+    const asked = route.request().postDataJSON();
+    saved.push(asked);
+    // as the server answers: every actor saved
+    await route.fulfill({ json: asked.saved ? { [asked.gatherer]: { [asked.channel]: "2026-10-01T00:00:00Z" } } : {} });
+  });
+  await page.route("**/api/stop", async (route) => {
+    stopped.push(route.request().postDataJSON());
+    await route.fulfill({ json: {} });
+  });
+  await open(page);
+  await page.locator("#agents .lb-fold").click();
+  const rail = page.locator("#rail");
+  const claude = rail.locator(".r-actor", { hasText: CLAUDE });
+  const codex = rail.locator(".r-actor", { hasText: CODEX });
+  await expect(claude.locator(".close-btn")).toHaveCount(1);
+  await expect(codex.locator(".close-btn")).toHaveCount(0); // no process of it the dashboard runs: none to close
+  // over the tile's corners, beside the avatar: no taller for them, and shown only while hovered
+  const [tile, pic, bookmark, x] = await Promise.all(
+    [claude, claude.locator(".r-pic"), claude.locator(".save-btn"), claude.locator(".close-btn")].map((n) =>
+      n.boundingBox(),
+    ),
+  );
+  expect(bookmark!.x + bookmark!.width).toBeLessThanOrEqual(pic!.x);
+  expect(x!.x).toBeGreaterThanOrEqual(pic!.x + pic!.width);
+  for (const b of [bookmark!, x!]) expect(b.y).toBeGreaterThanOrEqual(tile!.y);
+  await expect(claude.locator(".close-btn")).toHaveCSS("opacity", "0");
+  await claude.hover();
+  await expect(claude.locator(".close-btn")).toHaveCSS("opacity", "1");
+  await claude.locator(".save-btn").click();
+  await expect.poll(() => saved.length).toBe(1);
+  expect(saved[0]).toMatchObject({ gatherer: GATHERER, saved: true });
+  await expect(claude.locator(".save-btn.on")).toHaveCount(1); // filled, and shown with the pointer away too
+  await page.mouse.move(700, 450);
+  await expect(claude.locator(".save-btn.on")).toHaveCSS("opacity", "1");
+  await expect(claude).toHaveAttribute("aria-current", "false"); // pressing it did not show the actor
+  await claude.hover();
+  await claude.locator(".close-btn").click();
+  await expect.poll(() => stopped.length).toBe(1);
+  expect(stopped[0]).toEqual({ session_id: "s-claude" });
+  await expect(claude).toHaveAttribute("aria-current", "false");
+});
+
 test("shows every actor over the whole page", async ({ page }) => {
   await open(page);
   await page.locator("#agents .lb-full").click();
