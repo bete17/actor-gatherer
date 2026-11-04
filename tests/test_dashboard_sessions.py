@@ -584,6 +584,117 @@ class ChatTerminalTest(SessionsBase):
         self.assertFalse(self.session(sid)["terminal"])
 
 
+@unittest.skipUnless(sessions.TERMINALS, "a terminal needs a Unix pseudo-terminal")
+class ChatToolsTest(SessionsBase):
+    """A session the dashboard gives its own MCP server's tools (an app's actor: apps.py's `tools_of`) starts its
+    terminal without its first message on the command line, and has the message typed in once that server has listed
+    its tools (sessions.py's `_first_message`): its harness starts the turn without waiting for them, and that turn
+    would run without the tools."""
+
+    AT = "x/0123456789abcdef"
+
+    def setUp(self):
+        super().setUp()
+        self.chat(None)
+        from ag_dashboard import apps
+        self.tools = unittest.mock.patch.object(apps, "tools_of", lambda s: [self.AT])
+        self.tools.start()
+
+    def tearDown(self):
+        self.tools.stop()
+        super().tearDown()
+
+    def typed(self):
+        return "".join(x.get("typed", "") for x in self.logged()) if os.path.exists(self.log) else ""
+
+    def argvs(self):
+        return [x["argv"] for x in self.logged() if "argv" in x] if os.path.exists(self.log) else []
+
+    def noted(self, sid, words):
+        """Whether the session's terminal log has the dashboard's note `words` (written once the message is typed)."""
+        def got():
+            with open(sessions.log_path(sid)) as fh:
+                return words in fh.read()
+        return self.until(got)
+
+    def list_tools(self):
+        from ag_dashboard import mcp
+        mcp.handle(json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}).encode(), [], lambda n, a: {},
+                   at=self.AT)
+
+    def test_the_first_message_waits_for_its_tools_to_be_listed(self):
+        sid = self.s.create("g", self.work)["session_id"]
+        self.s.send(sid, "hi", 90, 25)
+        [argv] = self.until(self.argvs)
+        self.assertEqual(argv[-2:], ["--session-id", sid])               # not on its command line
+        time.sleep(0.6)
+        self.assertEqual(self.typed(), "")                               # its box is there, its tools not yet
+        self.list_tools()
+        self.until(lambda: self.typed() == "\x1b[200~hi\x1b[201~\r")
+        self.noted(sid, "its tools listed")
+
+    def test_a_list_from_before_its_start_does_not_count(self):
+        self.list_tools()                                                # an earlier run's
+        sid = self.s.create("g", self.work)["session_id"]
+        self.s.send(sid, "hi", 90, 25)
+        time.sleep(0.6)
+        self.assertEqual(self.typed(), "")
+        self.list_tools()
+        self.until(lambda: self.typed() == "\x1b[200~hi\x1b[201~\r")
+
+    def test_without_its_tools_it_goes_after_a_while(self):
+        with unittest.mock.patch.object(sessions, "TOOLS_WAIT", 0.5):
+            sid = self.s.create("g", self.work)["session_id"]
+            self.s.send(sid, "hi", 90, 25)
+            self.until(lambda: self.typed() == "\x1b[200~hi\x1b[201~\r")
+        self.noted(sid, f"its tools not listed 0.5s after its message box showed ({self.AT})")
+
+    def at_box_after(self, away):
+        """sessions.py's `_at_box`, with a dialog over the box (NotAtBox) while `away[0]`."""
+        real = sessions.Sessions._at_box
+
+        def at_box(this, s, t):
+            if away[0]:
+                raise sessions.NotAtBox("a dialog", Box.AWAY)
+            return real(this, s, t)
+        return unittest.mock.patch.object(sessions.Sessions, "_at_box", at_box)
+
+    def test_it_waits_for_the_box_while_a_dialog_has_the_keys(self):
+        """The box looked for as for any message (`_at_box`): not typed while it is away (a trust prompt)."""
+        away = [True]
+        with self.at_box_after(away):
+            sid = self.s.create("g", self.work)["session_id"]
+            self.s.send(sid, "hi", 90, 25)
+            self.list_tools()
+            time.sleep(0.8)
+            self.assertEqual(self.typed(), "")
+            away[0] = False
+            self.until(lambda: self.typed() == "\x1b[200~hi\x1b[201~\r")
+
+    def test_its_wait_for_the_tools_counts_from_its_box(self):
+        """Claude Code connects its MCP servers only once its folder is trusted: a trust prompt answered after
+        TOOLS_WAIT still has the message wait for the tools listed after it."""
+        away = [True]
+        with self.at_box_after(away), unittest.mock.patch.object(sessions, "TOOLS_WAIT", 0.5):
+            sid = self.s.create("g", self.work)["session_id"]
+            self.s.send(sid, "hi", 90, 25)
+            time.sleep(0.8)                                              # the dialog outlasts TOOLS_WAIT
+            away[0] = False
+            time.sleep(0.25)
+            self.assertEqual(self.typed(), "")                           # its box is there, its tools not yet
+            self.list_tools()
+            self.until(lambda: self.typed() == "\x1b[200~hi\x1b[201~\r")
+        self.noted(sid, "its tools listed")
+
+    def test_a_session_given_no_tools_starts_with_the_message_on_its_command_line(self):
+        from ag_dashboard import apps
+        with unittest.mock.patch.object(apps, "tools_of", lambda s: []):
+            sid = self.s.create("g", self.work)["session_id"]
+            self.s.send(sid, "hi", 90, 25)
+            [argv] = self.until(self.argvs)
+        self.assertEqual(argv[-2:], ["--", "hi"])
+
+
 
 @unittest.skipUnless(sessions.TERMINALS, "a terminal needs a Unix pseudo-terminal")
 class ChatBoxTest(SessionsBase):

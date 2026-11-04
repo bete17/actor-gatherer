@@ -8,12 +8,13 @@ import re
 import sys
 import tempfile
 import tokenize
+import time
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from ag_dashboard import apps, sessions  # noqa: E402
+from ag_dashboard import apps, mcp, sessions  # noqa: E402
 
 DASHBOARD = os.path.join(ROOT, "ag_dashboard")
 OWN = {"apps.py", "docwriter.py", "docwriter_guard.py", "browser.py", "browser_video.py", "api/docwriter.py",
@@ -126,6 +127,41 @@ class EveryAppGivesTheInterfaceTest(unittest.TestCase):
             self.assertIsNone(apps.of({"role": role}))
             self.assertEqual(sessions.extra_args({"role": role, "harness": "claude"}), [])
         self.assertFalse(sessions.known_role(json.dumps({"nope": "0123456789abcdef"})))
+
+    def test_its_actor_waits_for_its_tools_where_its_harness_is_given_them(self):
+        """apps.py's `tools_of`: the endpoint of the app's MCP server (/<name>/w/<key>/mcp) for its actor, where its
+        harness takes an MCP server's tools; [] for any other session, and for a harness given none (agy)."""
+        for a in apps.APPS:
+            role = json.dumps({a.name: "0123456789abcdef"})
+            self.assertEqual(apps.tools_of({"role": role, "harness": "claude", "cwd": "/w"}),
+                             [f"{a.name}/0123456789abcdef"])
+            self.assertEqual(apps.tools_of({"role": role, "harness": "antigravity", "cwd": "/w"}), [])
+        for role in (None, "coordinator"):
+            self.assertEqual(apps.tools_of({"role": role, "harness": "claude", "cwd": "/w"}), [])
+
+
+class ListedTest(unittest.TestCase):
+    """mcp.py keeps when each endpoint last answered `tools/list` (`listed`), for a first message to wait on."""
+
+    def call(self, method, at, id_=1):
+        return mcp.handle(json.dumps({"jsonrpc": "2.0", "id": id_, "method": method}).encode(), [], lambda n, a: {},
+                          at=at)
+
+    def test_a_list_is_kept_by_its_endpoint(self):
+        at = mcp.endpoint("listedtest", "0123456789abcdef")
+        self.assertIsNone(mcp.listed(at))
+        before = time.time()
+        self.call("initialize", at)
+        self.call("ping", at)
+        self.assertIsNone(mcp.listed(at))                    # only a list of its tools counts
+        self.assertEqual(self.call("tools/list", at), (200, {"jsonrpc": "2.0", "id": 1, "result": {"tools": []}}))
+        self.assertGreaterEqual(mcp.listed(at), before)
+        self.assertIsNone(mcp.listed(mcp.endpoint("listedtest", "fedcba9876543210")))     # another endpoint's: not
+        batch = json.dumps([{"jsonrpc": "2.0", "id": 2, "method": "tools/list"}]).encode()
+        mcp.handle(batch, [], lambda n, a: {}, at="listedbatch/0123456789abcdef")    # in a batch, too
+        self.assertIsNotNone(mcp.listed("listedbatch/0123456789abcdef"))
+        self.call("tools/list", None)                         # a server that names no endpoint: none kept
+        self.assertNotIn(None, mcp._listed)
 
 
 if __name__ == "__main__":
