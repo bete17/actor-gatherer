@@ -367,14 +367,16 @@ The Editor's Execute button (preview.py, the page's "the project's preview") run
 command, in the checkout of the file open -- and shows what it makes beside the file: a file of the checkout (image,
 SVG, PDF, HTML, Markdown, text), the page of a server it starts (a URL: kept running until Stop, the panel closed, or
 IDLE with no page watching), or its output. One preview per repository, in dashboard.db's `previews`, shared by its
-worktrees. The reader sets it in the panel's form (prefilled with a guess by the file open); an actor with
-`ag preview set`, told of it by the gatherer guide. An actor's command runs only once the reader lets it ("Run it");
-`ag preview run` runs only a command let run. HTML and SVG are served sandboxed (an opaque origin: no call to the
-dashboard's API); a server's page is its own origin. A PDF is shown in pdf.js's viewer (DocWriter's copy, served at
-/vendor/pdfjs/), kept from run to run: each new build opens at the page, zoom and place the reader had; the PDF's own
-scripts are off. SyncTeX both ways, for a build that wrote it (-synctex=1, in the LaTeX guess): a double-click in the
-PDF opens its source in the Editor at the line; "→ PDF" in the Editor's header, or ⌘+double-click (Ctrl+ elsewhere) on a
-line of the source, shows it in the PDF, marked.
+worktrees. The reader sets it in the panel's form (prefilled with a guess by the file open -- for a .tex file, latexmk
+on its document's main file, by name: `% !TeX root`, else the file with \documentclass in its folder or the nearest
+above); an actor with `ag preview set`, told of it by the gatherer guide. An actor's command runs only once the reader
+lets it ("Run it"); `ag preview run` runs only a command let run. HTML and SVG are served sandboxed (an opaque origin:
+no call to the dashboard's API); a server's page is its own origin. A PDF is shown in pdf.js's viewer (DocWriter's copy,
+served at /vendor/pdfjs/), kept from run to run: each new build opens at the page, zoom and place the reader had; the
+PDF's own scripts are off; its sidebar is closed when it opens (a rebuild keeps it as the reader left it). SyncTeX both
+ways, for a build that wrote it (-synctex=1, in the LaTeX guess): a double-click in the PDF opens its source in the
+Editor at the line; "→ PDF" in the Editor's header, or ⌘+double-click (Ctrl+ elsewhere) on a line of the source, shows
+it in the PDF, marked.
 
 Not done yet:
 
