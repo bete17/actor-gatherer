@@ -71,15 +71,16 @@ def _num(body: dict, k: str):
 
 
 @router.get("/browser/w/{key}/stream")
-def stream(srv: Parts, key: Key, video: str = "") -> Response:
+def stream(srv: Parts, key: Key, video: str = "", page: str = "", hidden: str = "") -> Response:
     """Server-sent events, until the page goes: a Browser's `state` {tabs, active, picks, acting, dialog, error, running,
     viewport, video} as it changes, and its screen, `frame` {data (a JPEG, base64), w, h (the page's size), seq}, as it
     does.
 
     With ?video=1 (the page decodes video), `video` chunks {t: key | delta, ts, d (base64), seq; a key's codec, w, h}
-    instead where they can be (browser_video.py), every one from a key frame on, in order."""
+    instead where they can be (browser_video.py), every one from a key frame on, in order. `page`: the page's id, for
+    it to say whether it is shown (`watch`); ?hidden=1, it is not, now."""
     b = _browser(srv, key)
-    viewer = b.join(video == "1")
+    viewer = b.join(video == "1", page[:64], hidden != "1")
 
     async def events():
         while True:
@@ -226,6 +227,30 @@ def tab(srv: Parts, key: Key, body: Object) -> Response:
     else:
         raise browser.BrowserError("switch, close or new")
     return answer({})
+
+
+@router.post("/browser/w/{key}/stop")
+def stop(srv: Parts, key: Key, body: Object) -> Response:
+    """The user's Esc: the agent's actions stopped, until their next message (browser.py's `stop`) -> {}."""
+    b = _browser(srv, key)
+    b.stop()
+    return answer({})
+
+
+@router.post("/browser/w/{key}/watch")
+def watch(srv: Parts, key: Key, body: Object) -> Response:
+    """{page, visible}: whether that page shows the Browser's view now -- its tab in front -> {}."""
+    b = _browser(srv, key)
+    b.watch(str(body.get("page") or "")[:64], bool(body.get("visible")))
+    return answer({})
+
+
+@router.post("/browser/w/{key}/where")
+def where(srv: Parts, key: Key, body: Object) -> Response:
+    """{i}: where the element of the agent's action i (the view's list of them) is on the screen now -> {box}, null if
+    it is gone, in another tab, or out of view."""
+    b = _browser(srv, key)
+    return answer({"box": b.where(int(body.get("i") or 0))})
 
 
 @router.post("/browser/w/{key}/{what}")

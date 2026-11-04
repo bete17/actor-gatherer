@@ -1097,8 +1097,9 @@ class ClaudeCode(Harness):
         return {"files": files, "where": where, "note": note, "home": base}
 
     def mcp_args(self, name: str, url: str) -> Optional[List[str]]:
-        """`--mcp-config`, the server over HTTP."""
-        return ["--mcp-config", json.dumps({"mcpServers": {name: {"type": "http", "url": url}}})]
+        """`--mcp-config`, the server over HTTP, its tools always loaded (`alwaysLoad`): else Claude Code may hold them
+        back behind its tool search, a model call more each time the run first wants one -- and they are its work."""
+        return ["--mcp-config", json.dumps({"mcpServers": {name: {"type": "http", "url": url, "alwaysLoad": True}}})]
 
     def edit_guard_args(self, command: str) -> List[str]:
         """`--settings` with a PreToolUse hook on its edit tools (EDIT_TOOLS) running `command`."""
