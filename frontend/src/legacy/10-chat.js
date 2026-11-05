@@ -93,10 +93,13 @@ function chatCard(info) {
     // in the session's terminal, and may never come back as a message -- not shown pending; the terminal shown once
     // the session has one (its own, or one the message opened)
     const slash = t.startsWith("/");
-    // else shown at once, pending, until the session's own record of it shows (sentHere); `ran`: typed into a terminal
-    // open already, at its message box (sessions.py's `send`) -- not one it opens, which may ask first (canInterrupt)
-    const mine = slash ? null : { key: key(...state.selected), text: t, base: heardCount(heard(info), t), at: Date.now(),
-      ran: !!(info.session && info.session.terminal) };
+    // else shown at once until the session's own record of it shows (sentHere); `ran`: typed into a terminal open
+    // already, at its message box (sessions.py's `send`) -- not one it opens, which may ask first (canInterrupt). `opens`:
+    // the actor at no turn, it opens one, drawn as that turn's message at once; at one, it waits for its next step: pending
+    const k = key(...state.selected);
+    const busy = ctx.running || turnStatus(info)[0] === "asking" || opened(info) || sentHere.some((m) => m.key === k && m.opens);
+    const mine = slash ? null : { key: k, text: t, base: heardCount(heard(info), t), at: Date.now(),
+      ran: !!(info.session && info.session.terminal), opens: !busy };
     const box = document.getElementById("composer-text"), was = box ? box.value : "";
     if (mine) sentHere.push(mine);
     if (box) { box.value = ""; fitBox(box); }

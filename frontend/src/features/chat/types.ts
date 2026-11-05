@@ -113,6 +113,9 @@ export interface Typed {
   joins?: boolean;
   chat?: boolean;
   kind?: string;
+  /** a turn opening that only this page knows of yet: a message it sent (`SentHere.opens`), or one sent from Chat
+   * elsewhere (`chat`) while the actor was at no turn -- not seen by the session for long, it says so (`NotSeen`) */
+  ours?: boolean;
 }
 
 /** What the actor's records say the user wrote (the old page's heard()): stored, typed, and queued. */
@@ -129,6 +132,9 @@ export interface SentHere {
   at: number;
   /** typed into its terminal, opening a turn -- not kept for the end of the turn under way */
   ran?: boolean;
+  /** sent while the actor was at no turn: it opens one, drawn as that turn's message at once (Pending.tsx's `opening`),
+   * not pending -- pending is for a message that waits for the agent's next step */
+  opens?: boolean;
 }
 
 /** What the old page hands the turn list at each draw (16-files-view.js's talkFeed). */
@@ -152,6 +158,10 @@ export interface ChatFeed {
   heard: Heard;
   /** sent from here, not had yet */
   mine: SentHere[];
+  /** sent from here and had since (by the count of its words, as `mine` goes): the server's copy of the same send
+   * (its `chat_sent`, typed `chat`) is not pending any more -- it says so later, when the message comes back where it
+   * was first stored, at its first time (sent again after Esc took it back) */
+  had?: SentHere[];
   /** Esc sent for this actor lately */
   interrupting: boolean;
   /** Esc would interrupt it */

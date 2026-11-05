@@ -8,7 +8,7 @@ import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { ChatContext } from "./context";
 import { FirstTurns } from "./Hello";
-import { openings } from "./Pending";
+import { opening } from "./Pending";
 import { drawn, listenForPulls } from "./pull";
 import { TURNS_SHOWN, turnsBegan, useTurns } from "./store";
 import { Turns } from "./Turns";
@@ -27,7 +27,7 @@ export function drawTurns(feed: ChatFeed, host: ChatHost): HTMLDivElement {
   }
   useTurns.getState().forFiles(feed.files);
   const turns = feed.data.turns,
-    opens = openings(feed.heard);
+    opens = opening(feed, host); // the turns opening: the session's, and what was just sent to open one
   // the latest turn no longer at work, and no message sent from here to open one still on its way: the Esc sent for it
   // is over too (one sent before the session had the message stops the turn it opens)
   let interrupting = feed.interrupting;

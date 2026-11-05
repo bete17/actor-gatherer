@@ -11,6 +11,13 @@
 .files .fl-talk { flex: 1; min-height: 0; position: relative; overflow: auto; padding: 6px 0 24px; font-size: 13.5px; --lh: 20px; line-height: var(--lh); }
 .files .fl-grid:not(.open) .fl-talk { font-size: 14px; --lh: 21px; }
 .files .fl-turn { margin: 2px 6px; padding: 7px 8px 9px 10px; }
+/* a turn opening (Pending.tsx's OpenedTurn): grown in from nothing, so what is under it -- the actor -- slides down to make
+   room rather than jumping; the turn ag stores in its place goes on from where it was (--in, Pending.tsx's useGrowing) */
+.files .fl-turn.fl-in { animation: fl-turn-in .32s cubic-bezier(.4, .05, .25, 1) var(--in, 0ms) 1 backwards; interpolate-size: allow-keywords; }
+@keyframes fl-turn-in { from { height: 0; padding-top: 0; padding-bottom: 0; opacity: 0; overflow: hidden; } to { height: auto; overflow: hidden; } }
+@supports not (interpolate-size: allow-keywords) {     /* its height not animated to its own: up to a height that holds most */
+  @keyframes fl-turn-in { from { max-height: 0; padding-top: 0; padding-bottom: 0; opacity: 0; overflow: hidden; }
+    to { max-height: 200px; overflow: hidden; } } }
 .files .fl-grid:not(.folded) .fl-turn.on { box-shadow: inset 2px 0 0 var(--muted); }   /* the turn whose files and commands show: a grey bar */
 /* the user's message: a band across the turn, at its head, in the colour the page gives the user (--s7) -- at the left,
    with the replies under it, however wide the page */
@@ -373,6 +380,11 @@ svg.stage { height: 32px; width: auto; flex: none; overflow: visible; --t: 0s; -
 @keyframes w-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: scale(.92); } }
 svg.stage.arriving { transform-origin: 30% 90%; animation: w-arrive .55s cubic-bezier(.3, 1.3, .5, 1) var(--z) 1 both; }
 @keyframes w-arrive { from { opacity: 0; transform: translateY(4px) scale(.6); } to { opacity: 1; transform: none; } }
+/* in Chat, the actor that arrives was just there, done, under the turn before (.fl-done's small avatar, 24px at 17px, 6px):
+   the stage grows from it -- its character (64 of the 102 by 82 view box, at 8, 14; the stage 60px high, at 4px, 4px in
+   .fl-status) laid over the small avatar at first -- rather than fading in from nothing */
+.files .fl-talk > .fl-status svg.stage.arriving { transform-origin: 0 0; animation: w-from-done .52s cubic-bezier(.4, .05, .25, 1) var(--z) 1 both; }
+@keyframes w-from-done { from { transform: translate(10px, -3.25px) scale(.5125); } to { transform: none; } }
 /* thinking (no call running): moving as its character does, slower; a thought by its head -- two puffs, then a cloud, grown in
    from --b, its dots hopping in the avatar's colour (--dot); popped away (--y) as a call begins */
 .stage.s-think .me { transform-origin: var(--o, 50% 50%); animation: var(--m, b-bob) calc(var(--d, 2.4s) * 1.4) var(--e, ease-in-out) var(--t) infinite; }
@@ -525,7 +537,7 @@ svg.stage.arriving { transform-origin: 30% 90%; animation: w-arrive .55s cubic-b
 .stage .swish.s2 { animation-name: w-swish2; }
 @keyframes w-swish { 0%, 6%, 14%, 26%, 34%, 100% { opacity: 0; } 10%, 30% { opacity: .9; } }
 @keyframes w-swish2 { 0%, 16%, 24%, 36%, 44%, 100% { opacity: 0; } 20%, 40% { opacity: .9; } }
-@media (prefers-reduced-motion: reduce) { svg.stage, svg.stage *, :is(.files .fl-done, .mini-st) .done { animation: none !important; }
+@media (prefers-reduced-motion: reduce) { svg.stage, svg.stage *, :is(.files .fl-done, .mini-st) .done, .files .fl-turn.fl-in { animation: none !important; }
   svg.stage .leave, svg.stage .o-confetti { display: none !important; } }
 /* the stage and, while it thinks, its character's effect round it (.buddy) laid over the character */
 .stage-box { position: relative; display: inline-flex; flex: none; isolation: isolate; }

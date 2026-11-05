@@ -78,3 +78,11 @@ export const useTurns = create<TurnsState>()((set, get) => ({
 /** When each turn the session opened before ag stored it began: by the actor and its first message's words (the host's
  * typedAs), so the turn ag stores from it counts from when it was sent. */
 export const turnsBegan = new Map<string, number>();
+
+/** When this page first drew each turn opening (Pending.tsx's `seeing`), by the actor and its message's words: it grows in
+ * from then, and the turn ag stores in its place goes on growing from there. */
+export const turnsSeen = new Map<string, number>();
+
+/** The turn each actor was last drawn at work, by the actor's key: its place in the conversation, and when the page first
+ * drew it no longer at work (null: not yet) -- Turns.tsx's HOLD_MS. */
+export const atWork = new Map<string, { n: number; stopped: number | null }>();

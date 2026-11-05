@@ -265,6 +265,175 @@ describe("Turns", () => {
     expect(host.calls).toContainEqual(["setChatView", "terminal"]);
   });
 
+  it("does not show pending the server's copy of a send this page has seen had", () => {
+    // sent again after Esc took it back: ag keeps it where it was first stored, at its first time, so the server lists
+    // the send as not had yet (its `chat_sent`) for a moment after this page's count of its words went up
+    const pendingTexts = (node: HTMLElement) =>
+      [...node.querySelectorAll("#fl-turn-0 > .fl-pending .fl-user .tx")].map((t) => t.textContent);
+    const { page } = testPage(turns(1), {
+      running: true,
+      status: "running",
+      heard: {
+        stored: [],
+        typed: [
+          { text: "Write a loop", at: NOW - 1, sent: null, chat: true },
+          { text: "Sent elsewhere", at: NOW - 1, sent: null, chat: true },
+        ],
+        queued: [],
+      },
+      had: [{ text: "Write a loop", at: NOW * 1000 - 1200 }],
+    });
+    expect(pendingTexts(page.draw())).toEqual(["Sent elsewhere"]);
+    // the same words sent here long before: not this send
+    expect(pendingTexts(page.draw({ had: [{ text: "Write a loop", at: NOW * 1000 - 60000 }] }))).toEqual([
+      "Write a loop",
+      "Sent elsewhere",
+    ]);
+  });
+
+  it("draws a message sent to an actor at no turn as the turn it opens, at once, not pending", () => {
+    const mine = [{ text: "And now?", at: NOW * 1000 - 2000, opens: true }];
+    const { page } = testPage(turns(2), { running: false, status: "idle", mine });
+    const node = page.draw();
+    expect(node.querySelector(".fl-pending")).toBeNull();
+    expect(node.querySelector(".fl-done")).toBeNull(); // the turn before: no longer the latest, done
+    const opened = () => node.querySelectorAll(":scope > .fl-turn.opened");
+    expect(opened().length).toBe(1);
+    expect(opened()[0].querySelector(".fl-head .fl-user .tx")!.textContent).toBe("And now?");
+    expect(opened()[0].querySelector(".fl-times")!.textContent).toBe("last activity 2s ago · 2s so far");
+    expect(node.lastElementChild!.className).toBe("fl-status"); // the actor at work under it
+    // the session's own record of the send: the same turn, still from when it was sent
+    page.draw({ heard: { stored: [], typed: [{ text: "And now?", sent: NOW - 1, at: NOW - 1 }], queued: [] } });
+    expect(opened().length).toBe(1);
+    expect(opened()[0].querySelector(".fl-times")!.textContent).toBe("last activity 2s ago · 2s so far");
+    // stored, in its place: still from when it was sent
+    page.draw({
+      data: { turns: [...turns(2), turn(2, { text: "And now?", at: NOW - 1 })], turn: 2 },
+      running: true,
+      status: "running",
+      mine: [],
+      heard: { stored: [], typed: [], queued: [] },
+    });
+    expect(opened().length).toBe(0);
+    expect(node.querySelector("#fl-turn-2 .fl-times")!.textContent).toBe("last activity 2s ago · 2s so far");
+  });
+
+  it("keeps a message sent to an actor at a turn pending: it waits for the agent's next step", () => {
+    const { page } = testPage(turns(2), {
+      running: true,
+      status: "running",
+      mine: [{ text: "And also?", at: NOW * 1000 - 1000 }],
+    });
+    const node = page.draw();
+    expect(node.querySelector(".fl-turn.opened")).toBeNull();
+    expect(node.querySelector("#fl-turn-1 > .fl-pending .lbl")!.textContent).toBe("Pending");
+  });
+
+  it("says when the session has not seen a turn opened from here for long, and the way to its terminal", () => {
+    const { page, host } = testPage(turns(1), {
+      info: { ...ACTOR, session: { status: "terminal", terminal: { cols: 80 } } },
+      mine: [{ text: "Hello?", at: NOW * 1000 - 20000, opens: true }],
+    });
+    const node = page.draw();
+    const opened = node.querySelector(":scope > .fl-turn.opened")!;
+    expect(opened.querySelector(".fl-working .now")!.textContent).toBe("Not seen yet");
+    expect(opened.querySelector(".fl-pending .lbl")!.textContent).toBe(
+      "Not seen by the session yet; its terminal may be asking something first. Open the terminal",
+    );
+    act(() => opened.querySelector<HTMLButtonElement>(".to-term")!.click());
+    expect(host.calls).toContainEqual(["setChatView", "terminal"]);
+  });
+
+  it("opens a turn for a message sent from Chat elsewhere to an actor at no turn", () => {
+    const typed = [{ text: "From the other tab", at: NOW - 1, sent: null, chat: true }];
+    const { page } = testPage(turns(1), { heard: { stored: [], typed, queued: [] } });
+    const node = page.draw();
+    expect(node.querySelector(".fl-pending")).toBeNull();
+    expect(node.querySelector(":scope > .fl-turn.opened .fl-user .tx")!.textContent).toBe("From the other tab");
+  });
+
+  it("keeps the latest turn at work a moment after its status stops saying so: not Done for a blink", () => {
+    const { page } = testPage(turns(2), { running: true, status: "running", info: { ...ACTOR, last: NOW } });
+    const node = page.draw();
+    expect(node.lastElementChild!.className).toBe("fl-status");
+    // the status a moment behind: idle, as the turn goes on at once with the message held for its end
+    vi.setSystemTime(NOW * 1000 + 200);
+    page.draw({ running: false, status: "idle" });
+    expect(node.querySelector(".fl-done")).toBeNull();
+    expect(node.querySelector("#fl-turn-1 .fl-working .now")!.textContent).toBe("Working…");
+    expect(node.lastElementChild!.className).toBe("fl-status");
+    // idle still, HOLD_MS after the page first drew it so: done
+    vi.setSystemTime(NOW * 1000 + 850);
+    page.draw({});
+    expect(node.querySelector(".fl-done")).not.toBeNull();
+  });
+
+  it("holds no turn at work for an actor come back to, its turn over long since", () => {
+    const { page } = testPage(turns(2), { running: true, status: "running" }); // its last activity ten minutes ago
+    const node = page.draw();
+    page.draw({ running: false, status: "idle" });
+    expect(node.querySelector(".fl-done")).not.toBeNull();
+  });
+
+  it("holds the turn the one at work goes on to at once, not the one before a message taken back", () => {
+    // the turn ends and its held message opens the next at once, the status a moment behind
+    const { page } = testPage(turns(2), { running: true, status: "running", info: { ...ACTOR, last: NOW } });
+    const node = page.draw();
+    vi.setSystemTime(NOW * 1000 + 100);
+    page.draw({ running: false, status: "idle", data: { turns: [...turns(2), turn(2, { text: "Next" })], turn: 2 } });
+    expect(node.querySelector(".fl-done")).toBeNull();
+    expect(node.querySelector("#fl-turn-2 .fl-working .now")!.textContent).toBe("Working…");
+    // a message sent here, taken back before it was stored: the turn before is not held at work
+    const other = testPage(turns(2), { mine: [{ text: "Gone", at: NOW * 1000, opens: true }] });
+    const n2 = other.page.draw();
+    other.page.draw({ mine: [] });
+    expect(n2.querySelector("#fl-turn-1 .fl-working:not(.fl-finished)")).toBeNull();
+    expect(n2.querySelector(".fl-done")).not.toBeNull();
+  });
+
+  it("holds the turn stored from a message sent a moment ago at work, the actor not yet heard to run", () => {
+    const { page } = testPage(turns(1), { mine: [{ text: "And now?", at: NOW * 1000, opens: true }] });
+    const node = page.draw();
+    vi.setSystemTime(NOW * 1000 + 300);
+    page.draw({ data: { turns: [...turns(1), turn(1, { text: "And now?", at: NOW })], turn: 1 }, mine: [] });
+    expect(node.querySelector(".fl-done")).toBeNull();
+    expect(node.querySelector("#fl-turn-1 .fl-working .now")!.textContent).toBe("Working…");
+  });
+
+  it("holds nothing at work once Esc is sent from here, nor a turn that says it stopped", () => {
+    const { page } = testPage(turns(2), { running: true, status: "running" });
+    const node = page.draw();
+    page.draw({ running: false, status: "idle", interrupting: true });
+    page.draw({ interrupting: false }); // the Esc over, redrawn: still not held
+    expect(node.querySelector("#fl-turn-1 .fl-working:not(.fl-finished)")).toBeNull();
+    expect(node.querySelector(".fl-done")).not.toBeNull();
+    const other = testPage(turns(2), { running: true, status: "running" });
+    const n2 = other.page.draw();
+    const stopped = turn(1, { stopped: { kind: "interrupted" } });
+    other.page.draw({ running: false, status: "idle", data: { turns: [turn(0), stopped], turn: 1 } });
+    expect(n2.querySelector("#fl-turn-1 .fl-working:not(.fl-finished)")).toBeNull();
+  });
+
+  it("grows a turn in as it opens; the turn stored in its place goes on from there", () => {
+    const { page } = testPage(turns(1), { mine: [{ text: "Grow?", at: NOW * 1000, opens: true }] });
+    const node = page.draw();
+    const opened = node.querySelector<HTMLElement>(":scope > .fl-turn.opened")!;
+    expect(opened.classList.contains("fl-in")).toBe(true);
+    expect(opened.style.getPropertyValue("--in")).toBe("-0ms");
+    vi.setSystemTime(NOW * 1000 + 100);
+    page.draw({
+      data: { turns: [...turns(1), turn(1, { text: "Grow?", at: NOW })], turn: 1 },
+      running: true,
+      status: "running",
+      mine: [],
+    });
+    const stored = node.querySelector<HTMLElement>("#fl-turn-1")!;
+    expect(stored.classList.contains("fl-in")).toBe(true);
+    expect(stored.style.getPropertyValue("--in")).toBe("-100ms");
+    // the turns drawn before: not growing
+    expect(node.querySelector<HTMLElement>("#fl-turn-0")!.classList.contains("fl-in")).toBe(false);
+  });
+
   it("does not show the latest turn done while a message is on its way to open the next", () => {
     const { page } = testPage(turns(1), { running: false, status: "idle" });
     expect(page.draw().querySelector(".fl-done")).not.toBeNull();

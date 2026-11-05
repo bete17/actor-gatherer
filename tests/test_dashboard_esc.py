@@ -33,6 +33,7 @@ const opened = () => openedNow;
 const posted = [];
 const post = (url, body) => { posted.push([url, body]); return Promise.resolve({}); };
 const setLive = () => {}, keepingPlace = () => {}, renderMain = () => {};
+const sentHere = [], ESC_GONE_MS = 2500;      // the messages sent from here (none), and how long an Esc has to take one back
 %s
 const api = {
   canInterrupt: (info) => canInterrupt(info),
