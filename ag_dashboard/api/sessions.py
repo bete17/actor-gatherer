@@ -35,8 +35,8 @@ def start(srv: Parts, body: Body) -> Response:
 
 @router.post("/api/send")
 def send_message(srv: Parts, body: Body) -> Response:
-    """{session_id, text, cols?, rows?, fullscreen?} or {gatherer, channel, text, ...}: a message to the session ->
-    the session.
+    """{session_id, text, cols?, rows?, fullscreen?, cid?} or {gatherer, channel, text, ...}: a message to the session ->
+    the session. `cid`: the send's id, as the page knows it (Chat's view, chat_view.py, tells the message it became by it).
 
     Typed into its terminal, or one opened for it (that size, that screen), or to its agent (sessions.py's `send`);
     a Claude Code or codex session not started here (gatherer, channel) taken into the table first (sessions.py's
@@ -64,7 +64,8 @@ def send_message(srv: Parts, body: Body) -> Response:
     told = None
     if running is not None and text.strip() and text.lstrip()[0] not in "/!":
         text, told = app.compose(running, row, text)
-    sent = started.send(sid, text, int(body.get("cols") or 120), int(body.get("rows") or 32), bool(body.get("fullscreen")))
+    sent = started.send(sid, text, int(body.get("cols") or 120), int(body.get("rows") or 32), bool(body.get("fullscreen")),
+                        str(body.get("cid") or "") or None)
     if told is not None:                         # the app told the message went
         told()
     return answer(sent)

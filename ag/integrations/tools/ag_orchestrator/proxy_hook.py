@@ -193,16 +193,18 @@ class ProxyHook:
         """The hook server's report, once the answer is back: the call's input tokens, to the read."""
         await report_measured(self.ag_clients, request, tokens)
 
-    async def failed(self, request, status: Optional[int], error: str) -> None:
+    async def failed(self, request, status: Optional[int], error: str, withdrawn: Optional[bool] = None) -> None:
         """The hook server's report that one of the session's own calls failed -- its endpoint answered an error, or
         could not be reached: recorded (`call_failed`), on the read it came from -- what tells a turn that stopped on an
-        error from one under way."""
+        error from one under way. `withdrawn`: a hook's own, whether it had what the call stored withdrawn -- on a
+        hang-up, none (False) unless it says it did."""
         kept = (getattr(request, "state", None) or {}).get(self.ANSWERED)
         if kept is None:
             return
         gatherer, channel, _cwd = kept
         reached = getattr(request, "answer_reached", None) if status == HUNG_UP else None   # Esc: before its words, or after
-        await self.recorded(gatherer, channel, [call_failed(read_of(request), status, error, reached)])
+        withdrawn = bool(withdrawn) if status == HUNG_UP else None
+        await self.recorded(gatherer, channel, [call_failed(read_of(request), status, error, reached, withdrawn)])
 
     async def before_end(self, request, status: int, answer: dict) -> None:
         """The hook server's report, once the answer to one of the session's own calls is back whole and before the

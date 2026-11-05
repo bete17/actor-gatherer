@@ -32,7 +32,7 @@ function keepingPlace(draw) {
   for (const k of following) { const n = main.querySelector(`[data-keep="${k}"]`); if (n) n.scrollTop = n.scrollHeight; }
   window.scrollTo(0, pageY);
 }
-// The server's stream for the selected agent: `home` and `agent` at once, then each time one changes
+// The server's stream for the selected agent: `home`, `agent` and `chat` (what Chat shows of it) at once, then each time one changes
 // (the server is woken by ag's notifications). It reconnects by itself, as an EventSource does, and a new stream
 // starts with both again, so nothing is missed while it was down. Reopened when the selection
 // changes; closed while paused. A message for an agent no longer selected is dropped.
@@ -52,6 +52,7 @@ function connect() {
   const mine = () => state.stream === es;
   es.addEventListener("home", (ev) => { if (mine()) { panesTake("home", ev.data); streamTake("home", ev.data, mine); } });
   es.addEventListener("agent", (ev) => { if (mine()) streamTake("agent", ev.data, mine, sel); });
+  es.addEventListener("chat", (ev) => { if (mine()) streamTake("chat", ev.data, mine, sel); });
   es.addEventListener("actor", (ev) => { if (mine()) panesTake("actor", ev.data); });
   es.addEventListener("open", () => { if (mine()) render(); });
   es.addEventListener("error", () => { if (mine() && !state.paused) setLive("Reconnecting…"); });
@@ -72,9 +73,13 @@ function streamTake(name, data, mine = () => true, sel = null) {
           const first = got.gatherers.find((g) => g.agents.length);
           if (first) { state.selected = [first.name, firstAgent(first).channel]; await loadAgent(); render(true); connect(); }
         }
+      } else if (name === "chat") {                   // what Chat shows of the actor: drawn as it comes, nothing to load
+        if (!sel || !isAt(state.selected, ...sel)) return;
+        takeChatView(sel[0], sel[1], got);
       } else {
         const [g, c, agent] = name === "actor" ? [got.gatherer, got.channel, got.agent] : [...(sel || []), got];
         if (!isAt(state.selected, g, c)) return;     // for an actor no longer shown
+        if (name === "actor" && got.chat) takeChatView(g, c, got.chat);
         await loadedSoon(Promise.all([takeAgent(agent), loadChat()]));   // takeAgent keeps the agent at once
       }
       render();

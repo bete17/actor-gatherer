@@ -131,6 +131,7 @@ PERMISSION_MODES = ("auto", "acceptEdits", "plan", "bypassPermissions", "dontAsk
 CHAT_MODES = ("terminal", "headless")          # what a message opens for a session with no terminal (`chat_mode`)
 COORDINATOR = "coordinator"                    # the role of a gatherer's gatherer agent (coordination.py)
 ROLES = (COORDINATOR,)
+SENT_KEPT = 20                                  # a session's latest messages from Chat kept in memory (`send`)
 #: What tells a command an actor runs which actor runs it, and which dashboard delivers its messages (coordination.py,
 #: `ag actors`): set in every session the dashboard starts (`actor_env`), as each harness also says (its own session's
 #: variable: Claude Code's CLAUDE_CODE_SESSION_ID, codex's CODEX_THREAD_ID).
@@ -652,6 +653,12 @@ class _Term:
         self.stopped = 0.0              # when the last thing typed was a key that stops a turn alone (STOP_KEYS); 0: it was not
         self.answering = False          # an answer's keys being typed into it (`answer`)
         self.keying = 0.0               # until when a message the dashboard pastes goes into it (`_paste`)
+        self.pasted = 0.0               # when it last pasted one: a stop key waits until the harness has taken it (`type`)
+        self.prompted = 0.0             # when it was started with its first message on its command line (`terminal`): a
+        #                                 stop key waits until the harness has begun that turn (`_unsent`)
+        self.harness: Optional[str] = None   # the session's harness and gatherer, as it was started
+        self.gatherer: Optional[str] = None
+        self.boxed: Optional[str] = None     # its message box as last seen after a stop key (`_read_terminal`)
         self.drafted = 0                # characters the reader typed into its input box and has not sent (`drafted`)
         self.kept = False               # put away (`put_away`): its end is kept
         self.drawn = -1                 # where in what it printed it last cleared its screen (CLEARED), to draw it all
@@ -685,7 +692,9 @@ class Sessions:
         self._shells: Dict[str, dict] = {}       # the shells open, by id: {id, gatherer, cwd, since}
         self.answered: Dict[str, dict] = {}      # each session's last answer typed from the page (`answer`)
         self.renames: Dict[str, str] = {}        # each session's command naming it, held for its turn's end (`rename`)
-        self.unsent: Dict[str, List[tuple]] = {}  # a codex session's messages from Chat, (text, at), kept for its thread
+        self.unsent: Dict[str, List[tuple]] = {}  # a codex session's messages from Chat, (text, at, cid), kept for its thread
+        self.sent: Dict[str, List[dict]] = {}    # each session's latest messages from Chat ({cid, text, at}), kept as each
+        #                                          came, before it was typed: Chat's view (chat_view.py) knows them at once
         self.closing = False            # the dashboard stopping: what ends now is kept
         conn = self._db()               # a process from before is gone: what it was running stopped, and kept
         try:
@@ -737,13 +746,30 @@ class Sessions:
             except Exception:  # noqa: BLE001 - a listener's trouble is not the session's
                 pass
 
+    def chat_row(self, session_id: str) -> Optional[dict]:
+        """What Chat's view (chat_view.py) takes of a session the table has: {ended, queued (its messages waiting), sent
+        (its latest messages from Chat, as each came), stopped_at (when a key that stops a turn was the last typed into
+        its terminal; None: something else was), box (since then, what its message box shows: a Box, or None)} -- None
+        for one it does not have."""
+        s = self._row(session_id)
+        if s is None:
+            return None
+        with self.lock:
+            a, t = self.agents.get(session_id), self.terms.get(session_id)
+        got = {"ended": s.get("ended") or 0, "queued": list(a.queue) if a else [], "sent": list(self.sent.get(session_id, ())),
+               "stopped_at": (t.stopped or None) if t else None, "box": None}
+        if t is not None and t.stopped:                  # what its box shows since the stop key, as its screen has it
+            got["box"] = self._box(t, s["harness"])
+        return got
+
     def list(self) -> List[dict]:
         """Every session the table has, newest first, each with `queued` (its messages waiting), `pid` (the
         dashboard's process for it), `since` (when that started), `terminal` (whether that is a terminal) and
         `fullscreen` (whether it runs Claude Code's full screen), `answer` (the last answer typed from the page,
         `answer`), `typed` (when anything was last typed into its terminal) and `stopped_at` (when what was last typed
         there was a key that stops a turn alone; None: something else was -- after its call before, its message taken
-        back is still in Claude Code's input box untouched: data.py's `taken_back`'s `since`, `took_back`)."""
+        back is still in Claude Code's input box untouched: data.py's `taken_back`'s `since`, `took_back`) and `sent` (its
+        latest messages from Chat, {cid, text, at}, as each came: `send`)."""
         with self.lock:
             out = []
             for s in stored():
@@ -752,7 +778,8 @@ class Sessions:
                             "answer": self.answered.get(s["session_id"]), "typed": t.typed if t else None,
                             "stopped_at": (t.stopped or None) if t else None,
                             "fullscreen": bool(t and t.fullscreen), "pid": t.pid if t else a.proc.pid if a else None,
-                            "since": t.since if t else a.since if a else None})
+                            "since": t.since if t else a.since if a else None,
+                            "sent": list(self.sent.get(s["session_id"], ()))})
             return out
 
     def create(self, gatherer: str, cwd: str, permission_mode: str = "auto", harness: str = harness_kit.DEFAULT,
@@ -810,7 +837,8 @@ class Sessions:
             self._changed(gatherer, session_id)
             return self._row(session_id)
 
-    def send(self, session_id: str, text: str, cols: int = 120, rows: int = 32, fullscreen: bool = False) -> dict:
+    def send(self, session_id: str, text: str, cols: int = 120, rows: int = 32, fullscreen: bool = False,
+             cid: Optional[str] = None) -> dict:
         """The message to the session: typed into its terminal, if one is open -- only into its message box, empty: refused
         (NotAtBox) while a dialog, a menu, a question or a permission it asks has the keys, or while something typed
         there is not sent (`_at_box`); else, as `chat_mode` says, its
@@ -818,15 +846,37 @@ class Sessions:
         prompt, or a turn of its agent -- now, or, while one runs, after it -- the agent started if it is not
         running. A turn of the agent's running or waiting takes it in either mode. The session as `list` has it;
         the message kept in its gatherer as sent from Chat (actions.py's `chat_sent`) -- a new codex session's once it
-        has its thread (`_rename`), the id it is started under being no channel of the gatherer's."""
-        got = self._send(session_id, text, cols, rows, fullscreen)
-        text, sid = (text or "").strip(), got.get("session_id")
+        has its thread (`_rename`), the id it is started under being no channel of the gatherer's. `cid`: the send's id,
+        as the page that sent it knows it (one made here if none): kept with it, before it is typed (`sent`), and with
+        `chat_sent` -- Chat's view tells the message it became by it."""
+        sent = {"cid": str(cid or f"chat:{uuid.uuid4().hex}")[:80], "text": (text or "").strip(), "at": time.time()}
+        if sent["text"] and not sent["text"].startswith("/"):
+            with self.lock:
+                kept = self.sent.setdefault(session_id, [])
+                kept.append(sent)
+                del kept[:-SENT_KEPT]
+            row = self._row(session_id)
+            if row is not None:                  # Chat's view has it at once
+                self._changed(row["gatherer"], session_id)
+        try:
+            got = self._send(session_id, text, cols, rows, fullscreen)
+        except Exception:
+            with self.lock:                      # not sent: not kept
+                kept = self.sent.get(session_id, [])
+                if sent in kept:
+                    kept.remove(sent)
+            raise
+        text, sid = sent["text"], got.get("session_id")
+        if sid != session_id:
+            with self.lock:
+                for x in self.sent.pop(session_id, []):
+                    self.sent.setdefault(sid, []).append(x)
         with self.lock:                          # a codex session still under the id it was started under: no channel yet
             s = self._row(sid)
             if s is not None and picks_id(s["harness"]) and s["started_as"] == sid:
-                self.unsent.setdefault(sid, []).append((text, time.time()))
+                self.unsent.setdefault(sid, []).append((text, sent["at"], sent["cid"]))
                 return got
-        actions.chat_sent(got.get("gatherer"), sid, text)
+        actions.chat_sent(got.get("gatherer"), sid, text, sent["at"], sent["cid"])
         return got
 
     def _send(self, session_id: str, text: str, cols: int, rows: int, fullscreen: bool) -> dict:
@@ -949,7 +999,7 @@ class Sessions:
                 conn.execute("COMMIT")
             finally:
                 conn.close()                             # not committed: rolled back
-            for kept in (self.agents, self.answered, self.renames, self.unsent):
+            for kept in (self.agents, self.answered, self.renames, self.unsent, self.sent):
                 kept.pop(session_id, None)
         self._changed(s["gatherer"], session_id)
 
@@ -1108,8 +1158,10 @@ class Sessions:
         for table in (self.agents, self.terms):
             if old in table:
                 table[new] = table.pop(old)
-        for text, at in self.unsent.pop(old, []) if row is not None else []:
-            actions.chat_sent(row["gatherer"], new, text, at)
+        for text, at, cid in self.unsent.pop(old, []) if row is not None else []:
+            actions.chat_sent(row["gatherer"], new, text, at, cid)
+        if old in self.sent:
+            self.sent[new] = self.sent.pop(old)
         try:
             os.replace(log_path(old), log_path(new))
         except OSError:
@@ -1250,6 +1302,8 @@ class Sessions:
                 t = self._start_terminal(row, cols, rows, fullscreen, None if tools else prompt)
                 if prompt:
                     t.typed = time.time()
+                    if not tools:
+                        t.prompted = t.typed
                 if tools:                            # typed in once its tools are there, not on its command line
                     threading.Thread(target=self._first_message, args=(session_id, t, prompt, tools), daemon=True).start()
             else:                                    # open already (opened meanwhile): the prompt typed into it
@@ -1338,6 +1392,7 @@ class Sessions:
             finally:
                 os._exit(127)
         t = _Term(pid, fd, log, fullscreen, cols, rows)
+        t.harness, t.gatherer = s["harness"], s["gatherer"]
         self.terms[sid] = t
         if resume and not s["turns"]:
             self._set(sid, turns=1)
@@ -1441,6 +1496,13 @@ class Sessions:
                         t.screen.feed(chunk)
                     except Exception:  # noqa: BLE001 - a screen that cannot be read is not looked at again
                         t.screen = None
+            if t.stopped and time.time() - t.stopped < HOLD_MAX:    # a stop key typed lately: Chat's view of it
+                box = self._box(t, t.harness or "")                 # (chat_view.py) told what its box now shows
+                if box != t.boxed:
+                    t.boxed = box
+                    with self.lock:
+                        now_id = next((k for k, v in self.terms.items() if v is t), session_id)
+                    self._changed(t.gatherer or "", now_id)
         try:
             _, status = os.waitpid(t.pid, 0)
             code = os.waitstatus_to_exitcode(status)
@@ -1523,18 +1585,57 @@ class Sessions:
     def type(self, session_id: str, data: str) -> None:
         """What was typed in the page, to the session's terminal, as typed. A key that stops a turn, typed while the
         dashboard's own keys go in -- a message it pastes (`_paste`), an answer (`answer`) -- after them: in the middle,
-        it would cut the message off from its Enter or dismiss the question half answered."""
+        it would cut the message off from its Enter or dismiss the question half answered; and while the message it
+        pasted is in the harness's message box still (`_unsent`), after the harness has taken it: before, the harness
+        has no turn to stop and lets the key go by, and the message goes on to be answered."""
         t = self.terms.get(session_id)
         if t is None:
             raise SessionError("the session has no terminal open")
-        if data in STOP_KEYS and (t.answering or t.keying > time.time()):
+        if data in STOP_KEYS and (t.answering or t.keying > time.time() or self._unsent(t)):
             threading.Thread(target=self._type_after, args=(session_id, t, data), name="ag-stop-key", daemon=True).start()
             return
         self._type_now(session_id, t, data)
 
+    def _unsent(self, t: _Term) -> bool:
+        """Whether the harness has yet to start on the message the dashboard gave it, up to HOLD_MAX after: one it pasted,
+        in the harness's message box still -- its Enter typed, the harness not on it yet -- as the screen shows (`_box`:
+        it holds something); one it started the terminal with, on its command line, while the harness starts up and
+        before the turn's first call (`_began`)."""
+        now = time.time()
+        if t.prompted and now - t.prompted < HOLD_MAX and not self._began(t):
+            return True
+        return bool(t.pasted) and now - t.pasted < HOLD_MAX and self._box(t, t.harness or "") == Box.HOLDS
+
+    def _began(self, t: _Term) -> bool:
+        """Whether the turn of the message the terminal `t` was started with has made its first call: the hook's
+        `model_call` of a turn in the session's channel since it started -- for a session of a harness that picks its own
+        id, once its first call has named it (`_find_thread`). True where that is not known (no session for it now)."""
+        with self.lock:
+            sid = next((k for k, v in self.terms.items() if v is t), None)
+        s = self._row(sid) if sid else None
+        if s is None:
+            return True
+        if picks_id(s["harness"]) and s["started_as"] == sid:
+            return False                                 # its first call has not named it yet
+        from . import data                               # here: data.py reads this module
+        conn = data._connect(s["gatherer"])
+        if conn is None:
+            return False
+        since = datetime.fromtimestamp(t.prompted, timezone.utc).isoformat()
+        try:
+            got = conn.execute(
+                f"SELECT 1 FROM events e JOIN event_types y ON y.event_type_id = e.event_type_id WHERE y.name = 'model_call' "
+                f"AND e.{data.CHANNEL} = ? AND e.inserted_at >= ? AND json_extract(e.payload_json, '$.kind') = 'turn' LIMIT 1",
+                (sid, since)).fetchone()
+        except sqlite3.Error:
+            return False
+        finally:
+            conn.close()
+        return got is not None
+
     def _type_after(self, session_id: str, t: _Term, data: str) -> None:
         end = time.time() + HOLD_MAX
-        while (t.answering or t.keying > time.time()) and time.time() < end:
+        while (t.answering or t.keying > time.time() or self._unsent(t)) and time.time() < end:
             time.sleep(0.05)
         time.sleep(KEYS_GAP)
         try:
@@ -1702,7 +1803,7 @@ class Sessions:
         while it goes in waits for its Enter (`keying`, `type`)."""
         now = time.time()
         wait = max(0.0, KEYS_GAP - (now - t.stopped)) if t.stopped else 0.0
-        t.typed, t.stopped, t.drafted = now, 0.0, 0
+        t.typed, t.stopped, t.drafted, t.pasted = now, 0.0, 0, now
         t.keying = now + wait + (CLEAR_GAP if clear else 0.0) + PASTE_ENTER + KEYS_GAP
         paste = b"\x1b[200~" + text.replace("\x1b", "").encode("utf-8") + b"\x1b[201~"
         if not clear and not wait:

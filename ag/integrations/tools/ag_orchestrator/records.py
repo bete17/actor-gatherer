@@ -76,11 +76,14 @@ def reply_end(answer_id: str, stop: Optional[str], read_id: Optional[int] = None
             "properties": _own(answer_id=answer_id, read_id=read_id)}
 
 
-def call_failed(read_id: Optional[int], status: Optional[int], error: str, reached: Optional[str] = None) -> dict:
+def call_failed(read_id: Optional[int], status: Optional[int], error: str, reached: Optional[str] = None,
+                withdrawn: Optional[bool] = None) -> dict:
     """A model call that failed: its endpoint's status (None: no answer came), and why. Hung up on by the harness (499),
-    `reached`: what of its answer the harness had in words (hook_server's `answer_reached`: "text", "tool", "nothing")."""
+    `reached`: what of its answer the harness had in words (hook_server's `answer_reached`: "text", "tool", "nothing");
+    `withdrawn`: whether the hook had ag withdraw what the call stored, as for a harness that takes its message back
+    (None: a hook that does not say)."""
     return {"type": CALL_FAILED, "id": f"failed:{read_id}" if read_id is not None else f"failed:{uuid.uuid4().hex}",
-            "payload": _own(status=status, error=error, reached=reached) | {"status": status},
+            "payload": _own(status=status, error=error, reached=reached, withdrawn=withdrawn) | {"status": status},
             "properties": _own(read_id=read_id)}
 
 

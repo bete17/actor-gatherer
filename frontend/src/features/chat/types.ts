@@ -1,6 +1,8 @@
 // What the Chat view's turn list draws from (the feed the old page hands it at each draw: ChatFeed) and what it calls of
-// the old page (ChatHost), until those parts of the page move too (ag_dashboard/DESIGN.md, A5). The turns are files.py's,
-// as /api/files gives them; the actor is the home's (data.py's), as far as the turn list reads them.
+// the old page (ChatHost), until those parts of the page move too (ag_dashboard/DESIGN.md, A5). What it shows of the
+// conversation is the server's view of it (ChatView: chat_view.py's, the stream's `chat`, ag_dashboard/CHAT_VIEW.md) --
+// the turns, the latest's state, what waits, made from one read -- and the page's own sends the view does not have yet;
+// the actor is the home's (data.py's), as far as the turn list reads it.
 import type { Home } from "../../core/api/types";
 
 /** A message of the agent's in a turn (files.py's `replies`): what it said, a run of its thinking, or a note of its
@@ -34,11 +36,12 @@ export interface Stopped {
   reason?: string | null;
 }
 
-/** A message of the user's: a turn's first, or one written while it ran (`more`). */
+/** A message of the user's: a turn's first, or one written while it ran (`more`) -- with its send's id, sent from Chat. */
 export interface UserMessage {
   text: string;
   kind?: string;
   at?: number;
+  cid?: string | null;
 }
 
 /** A message the actor sent another (files.py's `sent`: `ag actors send`, or a new actor started with it). */
@@ -72,6 +75,9 @@ export interface Turn {
   sent?: SentMessage[];
   /** a `!` command's output */
   output?: string | null;
+  /** the send it is (sent from Chat), and when its message was sent: the server's view's (chat_view.py) */
+  cid?: string | null;
+  began?: number | null;
 }
 
 /** /api/files: the actor's turns, and the one shown (`turn`, its index) -- the latest, unless one is picked. */
@@ -104,37 +110,54 @@ export interface Actor {
   } | null;
 }
 
-/** A message of the user's as the actor's own records have it (the agent's `typed`, data.py's): sent to the model at
- * `sent` (null: waiting), part of the turn it was written in (`joins`), or sent from Chat and not had yet (`chat`). */
-export interface Typed {
+/** A turn sent and not stored yet (chat_view.py's `opening`): its message, the send it is (sent from Chat), when it was
+ * sent (seconds), whether the session has it (`seen`), not had for long (`unseen`), and stopped by a key typed into its
+ * terminal before the harness recorded anything of it (`stopped`). */
+export interface Opening {
   text: string;
-  at?: number;
-  sent: number | null;
-  joins?: boolean;
-  chat?: boolean;
-  kind?: string;
-  /** a turn opening that only this page knows of yet: a message it sent (`SentHere.opens`), or one sent from Chat
-   * elsewhere (`chat`) while the actor was at no turn -- not seen by the session for long, it says so (`NotSeen`) */
-  ours?: boolean;
+  cid?: string | null;
+  began: number;
+  seen?: boolean;
+  unseen?: boolean;
+  stopped?: Stopped | null;
 }
 
-/** What the actor's records say the user wrote (the old page's heard()): stored, typed, and queued. */
-export interface Heard {
-  stored: UserMessage[];
-  typed: Typed[];
-  queued: string[];
+/** The latest turn's state (chat_view.py's `current`): a turn opening, at work, asking the user, done, stopped short
+ * (`stopped`: how), or no turn yet; the turn it is ("opening": the opening); what it does, and its calls failing. */
+export interface Current {
+  state: "opening" | "working" | "asking" | "done" | "stopped" | "idle";
+  turn: number | "opening" | null;
+  doing?: { kind: string; id?: string; text?: string } | null;
+  failing?: { at: number } | null;
+  asking?: unknown;
+  stopped?: Stopped | null;
 }
 
-/** A message sent from this page's box, not yet in the actor's records (the old page's sentHere). */
-export interface SentHere {
+/** What waits for the agent's next step (chat_view.py's `waiting`): held by its harness for its turn's end ("queued"),
+ * sent from Chat while it worked ("chat"), or in the dashboard's own queue for it ("dashboard"). */
+export interface Waits {
+  text: string;
+  cid?: string | null;
+  how: "queued" | "chat" | "dashboard";
+}
+
+/** What Chat shows of the actor's conversation, as the server made it from one read (chat_view.py's `view`). */
+export interface ChatView {
+  turns: Turn[];
+  opening: Opening | null;
+  current: Current;
+  waiting: Waits[];
+  /** the message Esc took back, before any of its answer came */
+  taken_back: { text: string; at?: number | null; cid?: string | null; since?: number | null } | null;
+  version?: unknown;
+}
+
+/** A message sent from this page's box (10-chat.js's send), by its id: shown until the view has it. */
+export interface MySend {
+  cid: string;
   text: string;
   /** when it was sent, in the page's milliseconds */
   at: number;
-  /** typed into its terminal, opening a turn -- not kept for the end of the turn under way */
-  ran?: boolean;
-  /** sent while the actor was at no turn: it opens one, drawn as that turn's message at once (Pending.tsx's `opening`),
-   * not pending -- pending is for a message that waits for the agent's next step */
-  opens?: boolean;
 }
 
 /** What the old page hands the turn list at each draw (16-files-view.js's talkFeed). */
@@ -150,18 +173,12 @@ export interface ChatFeed {
   home: Home | null;
   info: Actor;
   session: { status?: string };
-  running: boolean;
-  /** statusOf(info)'s first word: idle, running, asking, ... */
-  status: string;
+  /** the server's view of the conversation (the stream's `chat`); null until it has come for this actor */
+  view: ChatView | null;
   writable: boolean;
   held: string;
-  heard: Heard;
-  /** sent from here, not had yet */
-  mine: SentHere[];
-  /** sent from here and had since (by the count of its words, as `mine` goes): the server's copy of the same send
-   * (its `chat_sent`, typed `chat`) is not pending any more -- it says so later, when the message comes back where it
-   * was first stored, at its first time (sent again after Esc took it back) */
-  had?: SentHere[];
+  /** sent from here, and not in the view yet */
+  mine: MySend[];
   /** Esc sent for this actor lately */
   interrupting: boolean;
   /** Esc would interrupt it */

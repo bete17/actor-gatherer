@@ -9,11 +9,12 @@ import { plural } from "../../core/format";
 import { StrokeIcon } from "../../core/ui/Icon";
 import { bashOutput, Bubble, SentBubble } from "./Bubble";
 import { useChat } from "./context";
-import { joinedOf, Pending, seenKey, useGrowing, waiting } from "./Pending";
+import { Pending, seenKey, useGrowing, waiting } from "./Pending";
 import { keepTurn } from "./pull";
 import { drawn, LastCall, Reply } from "./Reply";
 import { useTurns } from "./store";
-import type { Reply as ReplyData, Turn as TurnData } from "./types";
+import type { Reply as ReplyData, Stopped, Turn as TurnData } from "./types";
+import { pickedOf, turnsOf } from "./view";
 import { Done, Finished, Status, StoppedLine, Working } from "./Working";
 
 /** The earlier messages shown before the latest of a turn's; more fold behind its +. */
@@ -29,19 +30,23 @@ export interface TurnPlace {
   folds: number;
   /** the session has opened turns since that ag has not stored: drawn after the turns */
   opened: boolean;
-  /** when the turn at work began, its message sent from here or opened by the session (store.ts's turnsBegan) */
+  /** when the turn at work began: when its message was sent (the view's `began`) */
   began: number | undefined;
   /** what the line under it says the actor does now */
   now: string;
+  /** its calls failing, retried: since when (the view's) */
+  failing: { at: number } | null;
+  /** how it stopped short: its own, or -- the latest -- as the view has it before the harness's record says */
+  stopped: Stopped | null;
 }
 
 export function Turn({ t, place }: { t: TurnData; place: TurnPlace }) {
   const { feed, host, folds } = useChat();
-  const d = feed.data,
-    last = d.turns.length - 1,
+  const turns = turnsOf(feed),
+    last = turns.length - 1,
     latest = t.n === last;
   const { live, done } = place;
-  const on = t.n === d.turn;
+  const on = t.n === pickedOf(feed, turns);
   const info = feed.info;
   // its messages, by their place in the turn (their ids keep it)
   const said: [ReplyData, number][] = (t.replies || [])
@@ -52,8 +57,7 @@ export function Turn({ t, place }: { t: TurnData; place: TurnPlace }) {
     after = lastText < 0 ? [] : said.slice(lastText + 1);
   const extra = before.length <= MINOR_SHOWN + 1 ? 0 : before.length - MINOR_SHOWN; // behind the +, or under the −
   const hidden = folds.opened.has(t.n) ? 0 : extra;
-  const starts = live ? [t.at, place.began].filter((x): x is number => !!x) : [];
-  const from = starts.length ? Math.min(...starts) : null; // when it began: sent (began), or stored
+  const from = live ? (place.began ?? null) : null; // when it began: its message sent
   // before the latest, its replies shown or folded -- folded at first under "Messages only" those before `folds`, shown
   // under "Whole"; a click on its message the other way, kept so as the turns move on (flips), until a click puts it back
   const earlier = !latest,
@@ -84,10 +88,9 @@ export function Turn({ t, place }: { t: TurnData; place: TurnPlace }) {
   // calls (files.py's `calls`, as its commands at the left list them)
   const held = said.length + (t.calls || 0);
   // what waits to reach the agent: at the latest turn's end, unless the session opened a turn since (drawn there)
-  const waits = latest && !place.opened ? waiting(feed, host) : null;
-  const joined = latest ? joinedOf(feed.heard) : [];
+  const waits = latest && !place.opened ? waiting(feed) : null;
   // the latest, drawn in the place of the turn opening it was a moment ago: growing in on from where that one was
-  const grow = useGrowing(latest ? seenKey(feed, host, t.text) : "");
+  const grow = useGrowing(latest ? seenKey(feed, t.cid, t.text) : "");
   return (
     <>
       <div
@@ -141,7 +144,7 @@ export function Turn({ t, place }: { t: TurnData; place: TurnPlace }) {
             </button>
           </span>
         </div>
-        {[...(t.more || []), ...joined].map((m, i) => (
+        {(t.more || []).map((m, i) => (
           <Bubble
             key={i}
             text={m.text}
@@ -203,13 +206,16 @@ export function Turn({ t, place }: { t: TurnData; place: TurnPlace }) {
             ) : null}
             {live ? (
               <Working
-                last={info.failing ? info.failing.at : Math.max(info.last || 0, from || 0) || null}
+                last={place.failing ? place.failing.at : Math.max(info.last || 0, from || 0) || null}
                 at={from}
                 now={place.now}
-                retrying={!!info.failing}
+                retrying={!!place.failing}
               />
             ) : (
-              <StoppedLine t={t} latest={latest} />
+              <StoppedLine
+                t={place.stopped === (t.stopped ?? null) ? t : { ...t, stopped: place.stopped }}
+                latest={latest}
+              />
             )}
             {done ? <Finished t={t} /> : null}
             {waits ? <Pending w={waits} /> : null}

@@ -61,7 +61,8 @@ CHAT_FEEDS.files = {
   load: loadFiles,
   data: () => state.files && state.selected && state.files.key === key(...state.selected) && state.files.data
     ? { items: state.files.data.turns, pending: [], earlier: false } : null,
-  signature: () => state.files ? [state.files.key, state.files.turn, state.files.sel, signature(state.files.data), sentHere.length] : null,
+  signature: () => state.files ? [state.files.key, state.files.turn, state.files.sel, signature(state.files.data),
+    signature(state.chatView), chatSends.length] : null,
 };
 async function setFilesTurn(n) {
   if (!state.files || !state.files.data) return;
@@ -358,10 +359,12 @@ function filesRender({ info, session, running, writable, held }) {
   // commands start where they would for a new turn -- the commands at their end, the conversation at its end or at the turn picked
   const afresh = !document.querySelector("#main .files .fl-grid");
   // the conversation, at the right: drawn by the new code (src/features/chat/) into a node of the actor's own, the same
-  // from draw to draw (agNext.chat.draw) -- before its first turn is stored, all there is (the first message: pending,
-  // sent from here; or sent, its turn begun; or none yet, the actor waving hello)
-  const talk = window.agNext.chat.draw(talkFeed(info, session, running, writable, held, afresh), CHAT_HOST);
-  if (!d.turns.length) return [talk, asking].filter(Boolean);
+  // from draw to draw (agNext.chat.draw) -- before its first turn, all there is (the actor waving hello). From its first
+  // message on -- the moment it is sent, its turn opening before any is stored -- beside its files and commands, so the
+  // message does not move as its turn is stored.
+  const talk = window.agNext.chat.draw(talkFeed(info, session, writable, held, afresh), CHAT_HOST);
+  const view = chatViewOf(info), opening = !d.turns.length;
+  if (opening && !(view && (view.turns.length || view.opening)) && !mySends().length) return [talk, asking].filter(Boolean);
   // its node, drawn before its first turn was stored at the frame's top, goes into the grid now: taken out first, so
   // patch() does not look for it at the top once the grid has taken it in (fill)
   if (talk.parentElement && !talk.parentElement.classList.contains("fl-right")) talk.remove();
@@ -437,7 +440,7 @@ function filesRender({ info, session, running, writable, held }) {
   if (!files.length) list.append(el("div", { class: "fv-note", text: kindHidden ? `Only ${plural(kindHidden, "file")} of the kinds switched off below.`
     : gitHidden ? `Only ${plural(gitHidden, "file")} git changed.`
     : tmpFiles ? `Only ${plural(tmpFiles, "file")} in temporary folders.`
-    : running && d.turn === d.turns.length - 1 ? "No files yet in this turn." : "The agent touched no files in this turn." }));
+    : opening || (running && d.turn === d.turns.length - 1) ? "No files yet in this turn." : "The agent touched no files in this turn." }));
   // every call of the turn, in the order made: what it did, its outcome, and the files it touched (a click opens one) --
   // those only git changed as it ran when shown (gitSwitch)
   const cmdFiles = (c) => (c.files || []).filter((p) => showGit || (c.did || {})[p] || !(c.git || {})[p]);
@@ -511,39 +514,35 @@ function filesBackground(info) {
         meta("writes to", t.output, "p"))))));
 }
 // The conversation, at the right: src/features/chat/ (ag_dashboard/DESIGN.md, A5), drawn from what talkFeed hands it,
-// calling what CHAT_HOST gives it of this page. What the user wrote, sent from here and not yet had (heard, sentHere) is
-// this page's still: the message box sends from it.
-// What the selected actor's own records say the user wrote: ag's stored messages (each turn's first, and what was written
-// while it ran), Claude Code's queue less what ag has stored since (the agent's `typed`, data.py's), and the dashboard
-// agent's queue (its session's `queued`).
-// A command the user ran that Claude Code runs itself (/context: no message of theirs is stored, only Claude Code's
-// note of it, files.py's `ran` -- not shown) counts as one of their messages too.
-function heard(info) {
-  const d = state.files && state.selected && state.files.key === key(...state.selected) && state.files.data;
-  const stored = d ? d.turns.flatMap((t) => [t, ...(t.more || []), ...(t.ran || []).map((name) => ({ text: name, at: t.at }))]) : [];
-  const typed = ((state.agent && state.selected && state.agent.channel === state.selected[1] && state.agent.typed) || [])
-    .filter((q) => !stored.some((m) => m.at >= (q.at || 0) - 1 && sameWords(m.text, q.text)));
-  return { stored, typed, queued: (info && info.session && info.session.queued) || [] };
+// calling what CHAT_HOST gives it of this page. What it shows is the server's view of the conversation
+// (ag_dashboard/CHAT_VIEW.md: the stream's `chat`, chat_view.py's), made from one read -- the turns, the latest's state,
+// what waits, the message Esc took back -- by the actor's key (`state.chatView`); and the messages sent from this page's
+// box, each by its id (`cid`), until the view has it, a moment later: the dashboard keeps each from the moment it is sent.
+state.chatView = null;                                // {key, view}
+const chatSends = [];                                 // {key, cid, text, at (the page's ms), ran}
+function takeChatView(g, c, view) {
+  if (!view || view.error || !view.current) view = null;   // one the server could not make: none
+  const k = key(g, c), has = window.agNext.chat.cidsOf(view);
+  state.chatView = { key: k, view };
+  for (let i = chatSends.length - 1; i >= 0; i--) if (chatSends[i].key === k && has.has(chatSends[i].cid)) chatSends.splice(i, 1);
 }
+// the view of an actor -- the selected one's; null before it has come
+const chatViewOf = (a) => !!a && !!state.selected && state.selected[1] === a.channel && !!state.chatView
+  && state.chatView.key === key(...state.selected) ? state.chatView.view : null;
+const mySends = () => { const k = state.selected && key(...state.selected); return chatSends.filter((m) => m.key === k); };
+const AT_WORK = ["opening", "working", "asking"];
 // A message as the user typed it, to match what was sent with what is stored (the server gives the user's words as
 // typed: harness_kit's): "!echo hi" the same as "! echo hi".
 const typedAs = (text) => bwStrip(String(text ?? "")).trim().replace(/^!\s*/, "! ");
 // whether two say the same: their start, as a stored message is clipped
 const sameWords = (a, b) => typedAs(a).slice(0, 200) === typedAs(b).slice(0, 200);
-// how many messages of these words the actor has had -- not counting one sent from Chat it has not had yet (`chat`: its
-// `chat_sent`, the dashboard's own record of sending it)
-const heardCount = (h, text) => [...h.stored, ...h.typed.filter((q) => !q.chat)].filter((m) => sameWords(m.text, text)).length
-  + h.queued.filter((q) => sameWords(q, text)).length;
-// Messages sent from this page's box, each {key, text, base, at}: shown pending the moment it is sent, until the
-// actor's records hold one more message of its words than when it was sent (`base`) -- from then on, as they say.
-// One not seen for UNSEEN_MS says so.
-const sentHere = [], UNSEEN_MS = 15000;
 state.chatSend = async () => false;                    // the message box's send, as the latest draw made it (chatCard)
 const sendFailed = new Map();                         // per actor (its draft's key): why its last message was not sent
 // Whether the message Claude Code took back is in its input box untouched, as sessions.py's `took_back` reads it: what was
 // last typed into its terminal, the dashboard's, is the key that stopped the turn, after the call before (`since`).
+const takenBack = (info) => { const v = chatViewOf(info); return (v && v.taken_back) || (info && info.taken_back) || null; };
 const untouched = (info) => {
-  const tb = info && info.taken_back, s = info && info.session;
+  const tb = takenBack(info), s = info && info.session;
   return !!tb && !!s && !!s.stopped_at && s.stopped_at > (tb.since || 0);
 };
 // Claude Code put the message it was stopped on (Esc before any of its answer came: data.py's `taken_back`) back in its
@@ -563,7 +562,7 @@ function markRefill(draft, mark) {
   try { sessionStorage.setItem(REFILLED_KEY, JSON.stringify(m)); } catch (e) { if (mark) refilledHere[draft] = mark; else delete refilledHere[draft]; }
 }
 function refill(info, draft) {
-  const tb = info && info.taken_back, mark = refills()[draft], box = document.getElementById("composer-text");
+  const tb = takenBack(info), mark = refills()[draft], box = document.getElementById("composer-text");
   const mine = box && box.dataset.draft === draft ? box : null;
   if (tb && untouched(info)) {
     if (mark && mark.at === tb.at) return;
@@ -586,9 +585,9 @@ state.interrupting = null;
 // key waits for the message's Enter: sessions.py's `type`) -- not into a terminal the message opened, which may ask
 // first whether to trust the folder, where Esc is "No".
 const canInterrupt = (info) => !!info && !!info.session && !!info.session.terminal && info.session.status !== "starting"
-  && (["running", "asking"].includes(info.status) || opened(info) || sentPending(info));   // not a build of its context, idle
-const sentPending = (info) => !!state.selected && state.selected[1] === info.channel
-  && sentHere.some((m) => m.ran && m.key === key(...state.selected) && Date.now() - m.at < UNSEEN_MS);
+  && (["running", "asking"].includes(info.status) || viewAtWork(info) || sentPending(info));   // not a build of its context, idle
+const viewAtWork = (a) => { const v = chatViewOf(a); return !!v && AT_WORK.includes(v.current.state) && !(v.opening && v.opening.unseen); };
+const sentPending = (info) => !!state.selected && state.selected[1] === info.channel && mySends().some((m) => m.ran);
 function interrupt(info) {
   const k = state.selected && key(...state.selected);
   if (!canInterrupt(info) || (state.interrupting && state.interrupting.key === k && Date.now() - state.interrupting.at < 1000)) return false;
@@ -596,56 +595,25 @@ function interrupt(info) {
   post("/api/terminal/input", { session_id: info.session.session_id, data: "\u001b" })
     .catch((err) => { state.interrupting = null; setLive(`Not interrupted: ${err.message}`); });
   keepingPlace(renderMain);
-  // a turn this page opened and the session has not had: looked at again once Esc has had its time (sentHereNow's `gone`)
-  if (sentHere.some((m) => m.key === k && m.opens)) setTimeout(() => keepingPlace(renderMain), ESC_GONE_MS + 100);
   return true;
 }
 const INTERRUPTING_MS = 10000;                      // "Interrupting…" shown at most this long, if the turn goes on
 const isInterrupting = () => !!state.interrupting && !!state.selected && state.interrupting.key === key(...state.selected)
   && Date.now() - state.interrupting.at < INTERRUPTING_MS;
-// What waits to reach the agent, at the latest turn's end, faded (pendingTalk): src/features/chat/Pending.tsx now, from
-// heard() and sentHereNow().
-// What was sent from here to the selected actor and the session has not recorded yet (`h`: heard(info)): those it has, dropped
-// -- and kept a minute in hadHere, so the server's own copy of the same send (its `chat_sent`, typed `chat`) is not shown
-// pending after it (Pending.tsx's `had`): the server tells a message had by when ag stored it, and a message sent again
-// after Esc took it back is kept where it was first stored, at its first time -- "not had" until Claude Code's record says.
-const hadHere = [], HAD_MS = 60000;
-// A message sent from here to open a turn (`opens`) that Esc took back before ag stored it -- the server's `taken_back`
-// says it; or, Esc sent after it, the actor idle and nothing of it heard ESC_GONE_MS on (it never reached ag) -- is gone:
-// the turn it opened is not drawn on.
-const ESC_GONE_MS = 2500;
-function sentHereNow(h, info) {
-  const k = state.selected && key(...state.selected), now = Date.now();
-  const tb = info && info.taken_back, esc = state.interrupting && state.interrupting.key === k ? state.interrupting.at : null;
-  const gone = (m) => m.opens && ((tb && sameWords(tb.text, m.text) && (tb.at || 0) >= m.at / 1000 - 1)
-    || (esc !== null && esc > m.at && now - esc > ESC_GONE_MS && !!info && !["running", "asking"].includes(info.status)));
-  for (let i = sentHere.length - 1; i >= 0; i--) {
-    if (sentHere[i].key !== k) continue;
-    if (heardCount(h, sentHere[i].text) > sentHere[i].base) hadHere.push(...sentHere.splice(i, 1));
-    else if (gone(sentHere[i])) sentHere.splice(i, 1);
-  }
-  for (let i = hadHere.length - 1; i >= 0; i--) if (now - hadHere[i].at > HAD_MS) hadHere.splice(i, 1);
-  return sentHere.filter((m) => m.key === k);
-}
-const hadNow = () => { const k = state.selected && key(...state.selected); return hadHere.filter((m) => m.key === k); };
-// The turns Claude Code has started and ag has not stored yet, each by its first message as Claude Code recorded it when
-// it went to the model (the agent's `typed`, data.py's: sent, not as part of the turn it was written in; data.py's
-// _unstored leaves out those ag has stored) -- for an actor, the selected one's (opened()); the conversation draws each
-// (src/features/chat/Pending.tsx's openings).
+// A turn its session has opened that ag has not stored yet -- the harness has its message (the view's opening, `seen`):
+// the actor runs. For an actor, the selected one's.
 function opened(a) {
-  return !!a && !!state.selected && state.selected[1] === a.channel && !!state.agent && state.agent.channel === a.channel
-    && (state.agent.typed || []).some((q) => q.sent !== null && !q.joins);
+  const v = chatViewOf(a);
+  return !!v && !!v.opening && !!v.opening.seen;
 }
 const talkToEnd = () => { const n = document.querySelector("#main .fl-talk"); if (n) n.scrollTop = n.scrollHeight; };
-// What the conversation is drawn from (src/features/chat/types.ts's ChatFeed): the actor's turns and what it was
-// written, and how this page shows it now. Whether Esc would interrupt it, before sentHereNow drops what the session has
-// had since: as the line under its turn said it.
-function talkFeed(info, session, running, writable, held, afresh) {
-  const h = heard(info), interrupts = canInterrupt(info);
+// What the conversation is drawn from (src/features/chat/types.ts's ChatFeed): the server's view of it, the messages sent
+// from here it does not have yet, and how this page shows it now.
+function talkFeed(info, session, writable, held, afresh) {
   return { key: key(...state.selected), gatherer: state.selected[0], files: state.files, data: state.files.data,
-    picked: state.files.turn, home: state.home, info, session, running, status: turnStatus(info)[0], writable, held,
-    canInterrupt: interrupts, interrupting: isInterrupting(), heard: h, mine: sentHereNow(h, info), had: hadNow(), sideFolded, earlierTurns,
-    terminalView: CHAT_VIEWS.has("terminal"), afresh };
+    picked: state.files.turn, home: state.home, info, session, view: chatViewOf(info), writable, held,
+    canInterrupt: canInterrupt(info), interrupting: isInterrupting(), mine: mySends().map(({ cid, text, at }) => ({ cid, text, at })),
+    sideFolded, earlierTurns, terminalView: CHAT_VIEWS.has("terminal"), afresh };
 }
 // What the conversation calls of this page (src/features/chat/types.ts's ChatHost), until those parts move too: the actor's
 // stage, a call as the commands show it, an actor's face, a Browser's message, a message's words as matched, the icons;

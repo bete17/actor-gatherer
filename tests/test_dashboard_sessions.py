@@ -14,6 +14,7 @@ import time
 import unittest
 import unittest.mock
 import urllib.error
+from datetime import datetime, timezone
 import urllib.parse
 import urllib.request
 
@@ -170,6 +171,32 @@ class AgentTest(SessionsBase):
         self.until(lambda: self.held()[-1:] == [["hold", "g", sid, "--pid", str(self.s.agents[sid].proc.pid), "--yields"]])
         self.assertEqual((self.session(sid)["status"], self.session(sid)["last_error"]), ("idle", None))   # kept, giving way
         self.assertTrue(os.path.exists(sessions.log_path(sid)))
+
+    def test_a_send_is_kept_with_its_id_before_it_is_typed_and_recorded_with_it(self):
+        sid = self.s.create("g", self.work)["session_id"]
+        rang = []
+        self.s.on_change = lambda g, c: rang.append((g, c))
+        with unittest.mock.patch.object(sessions.actions, "chat_sent") as kept, \
+                unittest.mock.patch.object(self.s, "_send", wraps=self.s._send) as typed:
+            def seen(*a, **k):
+                self.assertEqual([x["text"] for x in self.s.chat_row(sid)["sent"]], ["hello"])   # kept before
+                return {"session_id": sid, "gatherer": "g"}
+            typed.side_effect = seen
+            self.s.send(sid, "hello", cid="page-1")
+        self.assertIn(("g", sid), rang)                                     # Chat's view has it at once
+        [x] = self.s.chat_row(sid)["sent"]
+        self.assertEqual((x["cid"], x["text"]), ("page-1", "hello"))
+        self.assertEqual(kept.call_args.args, ("g", sid, "hello", x["at"], "page-1"))
+        self.assertEqual(self.session(sid)["sent"], [x])                    # in the home's row of it too
+
+    def test_a_send_that_fails_is_not_kept(self):
+        sid = self.s.create("g", self.work)["session_id"]
+        with unittest.mock.patch.object(self.s, "_send", side_effect=sessions.SessionError("no")), \
+                unittest.mock.patch.object(sessions.actions, "chat_sent") as kept:
+            with self.assertRaises(sessions.SessionError):
+                self.s.send(sid, "hello")
+        self.assertEqual(self.s.chat_row(sid)["sent"], [])
+        kept.assert_not_called()
 
     def test_an_idle_agent_closed_from_the_page_ends_and_the_next_message_resumes_it(self):
         sid = self.s.create("g", self.work)["session_id"]
@@ -438,6 +465,31 @@ class TerminalTest(SessionsBase):
         self.s.type(sid, "x")
         self.assertIsNone(self.session(sid)["stopped_at"])
 
+    def test_a_stop_key_after_a_message_waits_until_the_harness_has_taken_it(self):
+        """Esc from the page just after a message from Chat: while its message box holds the message still (the harness
+        not started on it: it would let the key go by), the key waits; once the box is empty, it goes in. Chat's view
+        is told the box after it (`chat_row`'s `stopped_at`, `box`)."""
+        sid = self.s.create("g", self.work)["session_id"]
+        self.started(sid)
+        self.s.send(sid, "hello")
+        boxes = iter([Box.HOLDS] * 6)
+        with unittest.mock.patch.object(self.s, "_box", side_effect=lambda t, h: next(boxes, Box.EMPTY)):
+            self.s.type(sid, "\x1b")
+            self.until(lambda: "[got ESC]" in self.screen(sid))
+            self.assertEqual("".join(self.chunks()), "\x1b[200~hello\x1b[201~\r\x1b")
+            self.assertEqual(next(boxes, "spent"), "spent")                 # it waited on every read of the box
+            row = self.s.chat_row(sid)
+        self.assertEqual((row["box"], row["stopped_at"] is not None), (Box.EMPTY, True))
+
+    def test_a_stop_key_waits_for_the_box_no_longer_than_its_hold(self):
+        sid = self.s.create("g", self.work)["session_id"]
+        self.started(sid)
+        self.s.send(sid, "hello")
+        with unittest.mock.patch.object(self.s, "_box", return_value=Box.HOLDS), \
+                unittest.mock.patch.object(sessions, "HOLD_MAX", 0.6):
+            self.s.type(sid, "\x1b")
+            self.until(lambda: "[got ESC]" in self.screen(sid), timeout=3)
+
     def test_a_message_pasted_just_after_an_esc_is_kept_apart_from_it(self):
         """Not read with the paste's opening as one key (Alt+...)."""
         sid = self.s.create("g", self.work)["session_id"]
@@ -529,6 +581,50 @@ class ChatTerminalTest(SessionsBase):
             self.assertEqual(sessions.chat_mode(), "terminal", text)
         with unittest.mock.patch.object(sessions, "TERMINALS", False):  # no pseudo-terminals here
             self.assertEqual(sessions.chat_mode(), "headless")
+
+    def test_a_stop_key_after_the_message_a_terminal_starts_with_waits_for_its_turn_s_first_call(self):
+        """Esc from the page just after a message that started the terminal (its first prompt, on the command line):
+        while the harness starts up, it lets the key go by -- the key waits until the turn's first call (`_began`)."""
+        sid = self.s.create("g", self.work)["session_id"]
+        began = []
+        with unittest.mock.patch.object(self.s, "_began", side_effect=lambda t: len(began) > 0):
+            self.s.send(sid, "hello")
+            self.until(lambda: "fake terminal" in self.screen(sid))
+            self.s.type(sid, "\x1b")
+            time.sleep(0.3)
+            self.assertNotIn("[got ESC]", self.screen(sid))              # held: no call yet
+            began.append(True)
+            self.until(lambda: "[got ESC]" in self.screen(sid))
+
+    def test_its_turn_has_begun_once_its_first_call_is_recorded(self):
+        sid = self.s.create("g", self.work)["session_id"]
+        self.s.send(sid, "hello")
+        self.until(lambda: "fake terminal" in self.screen(sid))
+        t = self.s.terms[sid]
+        db = os.path.join(self.tmp.name, "calls.db")
+        conn = sqlite3.connect(db)
+        conn.executescript("CREATE TABLE event_types (event_type_id INTEGER PRIMARY KEY, name TEXT);"
+                           "CREATE TABLE events (row_id INTEGER PRIMARY KEY, event_type_id INT, payload_json TEXT, "
+                           "p_channel TEXT, inserted_at TEXT); INSERT INTO event_types VALUES (1, 'model_call');")
+        conn.commit()
+
+        def called(kind, at):
+            conn.execute("INSERT INTO events (event_type_id, payload_json, p_channel, inserted_at) VALUES (1, ?, ?, ?)",
+                         (json.dumps({"kind": kind}), sid, datetime.fromtimestamp(at, timezone.utc).isoformat()))
+            conn.commit()
+
+        def opened(_):
+            got = sqlite3.connect(db)
+            got.row_factory = sqlite3.Row
+            return got
+        with unittest.mock.patch.object(data, "_connect", side_effect=opened):
+            self.assertFalse(self.s._began(t))                           # no call yet
+            called("turn", t.prompted - 5)                               # one of before it started
+            called("other", t.prompted + 0.5)                            # a side call is no turn's
+            self.assertFalse(self.s._began(t))
+            called("turn", t.prompted + 0.9)
+            self.assertTrue(self.s._began(t))
+        conn.close()
 
     def test_a_message_opens_its_terminal_with_the_message_as_its_first_prompt(self):
         sid = self.s.create("g", self.work)["session_id"]

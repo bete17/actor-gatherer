@@ -8,11 +8,11 @@ import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { ChatContext } from "./context";
 import { FirstTurns } from "./Hello";
-import { opening } from "./Pending";
 import { drawn, listenForPulls } from "./pull";
-import { TURNS_SHOWN, turnsBegan, useTurns } from "./store";
+import { TURNS_SHOWN, useTurns } from "./store";
 import { Turns } from "./Turns";
 import type { ChatFeed, ChatHost } from "./types";
+import { AT_WORK, currentOf, openingOf, pickedOf, turnsOf } from "./view";
 
 const talks = new Map<string, { node: HTMLDivElement; root: Root }>();
 
@@ -26,33 +26,27 @@ export function drawTurns(feed: ChatFeed, host: ChatHost): HTMLDivElement {
     talks.set(feed.key, talk);
   }
   useTurns.getState().forFiles(feed.files);
-  const turns = feed.data.turns,
-    opens = opening(feed, host); // the turns opening: the session's, and what was just sent to open one
-  // the latest turn no longer at work, and no message sent from here to open one still on its way: the Esc sent for it
-  // is over too (one sent before the session had the message stops the turn it opens)
+  const turns = turnsOf(feed),
+    opening = openingOf(feed),
+    cur = currentOf(feed);
+  // the latest turn no longer at work, as the view has it (opening, at work or asking: an Esc sent stops it): the Esc
+  // sent for it is over too
   let interrupting = feed.interrupting;
-  const starting = feed.mine.some((m) => m.ran);
-  if (turns.length && interrupting && !(feed.running && !opens.length) && !starting) {
+  if (interrupting && cur && !AT_WORK.has(cur.state)) {
     host.interruptOver();
     interrupting = false;
-  }
-  // when each turn the session opened began, by the actor and its message's words: the turn ag stores from it counts
-  // from then
-  for (const q of opens) {
-    if (turnsBegan.size > 50) turnsBegan.clear();
-    turnsBegan.set(feed.key + "\u0000" + host.typedAs(q.text).slice(0, 200), q.sent!);
   }
   if (turns.length) {
     if (feed.afresh) useTurns.getState().setShown(null); // its view opened again: the turn shown brought into view again
     // the first turn drawn: the latest few, at first; then where the reader pulled it to, or the turn they picked. Kept
     // as the conversation grows: a new turn is drawn at the end, none taken from the top.
     const first = useTurns.getState().first ?? turns.length - TURNS_SHOWN;
-    useTurns.getState().setFirst(Math.max(0, Math.min(feed.data.turn ?? 0, first)));
+    useTurns.getState().setFirst(Math.max(0, Math.min(pickedOf(feed, turns) ?? 0, first)));
   }
   const node = talk.node;
   // its box as the old page's: the turns', kept where the reader left it and following its end; or, before them, the
   // turns the session opened, or the actor's hello
-  node.className = turns.length || opens.length ? "fl-talk" : "fl-talk hi";
+  node.className = turns.length || opening ? "fl-talk" : "fl-talk hi";
   if (turns.length) Object.assign(node.dataset, { keep: "files-talk", follow: "1" });
   else for (const k of ["keep", "follow"]) delete node.dataset[k];
   node.dataset.sig = encodeURIComponent(feed.key);

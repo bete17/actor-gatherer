@@ -15,7 +15,7 @@ from ag_dashboard import data  # noqa: E402
 import page_source  # noqa: E402
 
 START = "// Whether the message Claude Code took back is in its input box untouched"
-END = "// What waits to reach the agent, at the latest turn's end"
+END = "// A turn its session has opened that ag has not stored yet"
 # what the section uses of the page, stood in for; each case runs on a fresh page: [steps], each [name, ...arguments]
 RUN = r"""
 const store = {};
@@ -29,11 +29,12 @@ const fitBox = () => {};
 const state = { selected: ["g", "s"] };
 const key = (g, c) => `${g}\u0000${c}`;
 let openedNow = false;
-const opened = () => openedNow;
+const AT_WORK = ["opening", "working", "asking"];
+const chatViewOf = () => (openedNow ? { current: { state: "opening" }, opening: { seen: true } } : null);   // its message sent, not stored
+const mySends = () => [];
 const posted = [];
 const post = (url, body) => { posted.push([url, body]); return Promise.resolve({}); };
 const setLive = () => {}, keepingPlace = () => {}, renderMain = () => {};
-const sentHere = [], ESC_GONE_MS = 2500;      // the messages sent from here (none), and how long an Esc has to take one back
 %s
 const api = {
   canInterrupt: (info) => canInterrupt(info),

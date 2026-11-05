@@ -108,18 +108,32 @@ class RecordsTest(unittest.TestCase):
         self.assertEqual((a["status"], a["stopped"]["kind"], a["failing"]), (data.IDLE, "interrupted", None))
         self.assertTrue(sessions.took_back("g", "s", time.time()))          # its message back in Claude Code's box
 
-    def hang_up(self, messages, reached=None):
-        """A call stored, then hung up on (Esc): reported so by the hook server -- with what of the answer had reached the
-        harness in words, as one that says does (`reached`) -- and its events withdrawn, as the hook does on any Esc. Its
-        read."""
+    def hang_up(self, messages, reached=None, failed=True):
+        """A call stored, then hung up on (Esc): its events withdrawn, as the hook does on any Esc, then reported so by the
+        hook server -- with what of the answer had reached the harness in words, as one that says does (`reached`) --
+        in that order, as Claude's hook does (`failed`: not reported yet). Its read."""
         got, = self.ask({"op": "rewrite", "gatherer": "g", "properties": {"channel": "s"}, "cwd": "/w",
                          "events": ADAPTOR.to_events(messages)})
         self.record(records.model_call("turn", "claude", "2.1.310", got["read_id"]))
-        self.record(records.call_failed(got["read_id"], data.HUNG_UP, "the harness hung up before the answer was through",
-                                        reached))
         self.ask({"op": "withdraw", "gatherer": "g", "properties": {"channel": "s"}, "rows": got["inserted"],
                   "read_id": got["read_id"]})
+        if failed:
+            self.fail_call(got["read_id"], reached)
         return got["read_id"]
+
+    def fail_call(self, read_id, reached=None):
+        self.record(records.call_failed(read_id, data.HUNG_UP, "the harness hung up before the answer was through", reached))
+
+    def test_a_withdrawal_takes_nothing_back_until_the_hang_up_is_recorded(self):
+        """The hook withdraws a call's events, then records how it failed: what of the answer reached the harness tells
+        a message taken back (none) from a turn stopped (its words came). Until then, the message is as it was."""
+        self.record(records.session_file("claude", "/c/s.jsonl"))
+        read = self.hang_up([user("count the rows")], failed=False)
+        self.assertEqual([t["text"] for t in files.files("g", "s")["turns"]], ["count the rows"])
+        self.assertIsNone(self.agent()["taken_back"])
+        self.fail_call(read, "nothing")
+        self.assertEqual(files.files("g", "s")["turns"], [])
+        self.assertEqual(self.agent()["taken_back"]["text"], "count the rows")
 
     def test_a_message_stopped_before_its_answer_is_taken_back(self):
         """Esc before any of the answer came: Claude Code puts the user's message back in its input box, recording nothing

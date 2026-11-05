@@ -172,16 +172,17 @@ def keep_stored(request, gatherer: str, properties: Dict[str, Any], rows: List[i
         state[STORED] = (gatherer, dict(properties), list(rows))
 
 
-async def report_withdrawn(ag_clients, request) -> None:
+async def report_withdrawn(ag_clients, request) -> bool:
     """For a proxy hook whose harness took back what it sent when it hung up on the call (`failed` with HUNG_UP):
     the events the call stored (`keep_stored`) withdrawn -- in no read until the harness sends one again. With the
-    call's properties, so the server takes it in the channel's order. Nothing when none were stored."""
+    call's properties, so the server takes it in the channel's order. Nothing when none were stored. Whether any were."""
     state = getattr(request, "state", None) or {}
     kept = state.get(STORED)
     if kept is None:
-        return
+        return False
     gatherer, properties, rows = kept
     body = {"gatherer": gatherer, "properties": properties, "rows": rows}
     if state.get(READ):
         body["read_id"] = state[READ][1]
     await ag_clients.client(gatherer).request("withdraw", body)
+    return bool(rows)

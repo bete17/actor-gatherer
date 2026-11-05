@@ -314,14 +314,16 @@ class ClaudeContextManager(ProxyHook):
     def answer_items(self, output_items: list) -> list:
         return [{"role": "assistant", "content": output_items}]
 
-    async def failed(self, request, status: Optional[int], error: str) -> None:
+    async def failed(self, request, status: Optional[int], error: str, withdrawn: Optional[bool] = None) -> None:
         """ProxyHook's (`call_failed` recorded), and for a call Claude Code hung up on (HUNG_UP: the user pressed Esc)
         before the answer was through, the events it stored withdrawn too. Before any of the answer, Claude Code puts
         the user's message back in its input box and never sends it again; after, it sends it again with its next call,
-        and storing it again keeps it (the server's `withdraw`)."""
-        await super().failed(request, status, error)
+        and storing it again keeps it (the server's `withdraw`). Withdrawn first: a reader that finds the hang-up finds
+        what it withdrew with it (the dashboard tells a message taken back from a turn stopped by the two together),
+        and the hang-up says it withdrew (`withdrawn`)."""
         if status == HUNG_UP:
-            await report_withdrawn(self.ag_clients, request)
+            withdrawn = await report_withdrawn(self.ag_clients, request)
+        await super().failed(request, status, error, withdrawn)
 
     async def side_answered(self, request, status: int, answer) -> bool:
         """A recap's answer, kept as its session's recap (`recap`): the text of its answer, if any."""
