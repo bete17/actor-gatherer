@@ -50,8 +50,8 @@ function bwFor(k) {
     const url = b.addr.value.trim();
     if (url) bwPost(b, "nav", { url }).then(() => b.stage.focus()).catch(bwSay(b));
   });
-  b.pickBtn = btn(ICONS.pointer, "Pick an element to point the agent at (Esc to stop)", () => bwMode(b, b.mode === "pick" ? null : "pick"), { "aria-pressed": "false" });
-  b.areaBtn = btn(ICONS.area, "Pick an area: drag a box over the page (Esc to stop)", () => bwMode(b, b.mode === "area" ? null : "area"), { "aria-pressed": "false" });
+  b.pickBtn = btn(ICONS.pointer, "Pick an element to point the agent at (Esc to stop)", () => bwMode(b, bwModeOn(b) === "pick" ? null : "pick"), { "aria-pressed": "false" });
+  b.areaBtn = btn(ICONS.area, "Pick an area: drag a box over the page (Esc to stop)", () => bwMode(b, bwModeOn(b) === "area" ? null : "area"), { "aria-pressed": "false" });
   b.mine = el("span", { class: "mine", hidden: "", text: "Your Chrome",
     title: "This page runs in your own Chrome (config.toml's [dashboard] browser_profile = \"mine\"): your logins and history, a tab hidden from its tab strip" });
   b.find = bwFindBar(b);
@@ -70,7 +70,7 @@ function bwFor(k) {
   b.dragBox = el("div", { class: "drag", hidden: "" });
   b.hint = el("div", { class: "hint", hidden: "" });
   b.cover = el("div", { class: "cover" }, el("div", { text: "Opening the browser…" }));
-  b.dialog = el("div", { class: "dialog", hidden: "" });
+  b.dialog = bwShield(el("div", { class: "dialog", hidden: "" }));   // (its input and buttons its own, not the page's)
   b.tip = el("div", { class: "tip", role: "tooltip", hidden: "" });
   b.chooser = bwShield(el("div", { class: "dialog chooser", hidden: "" }));
   b.dl = bwShield(el("div", { class: "dl", hidden: "" }));
@@ -101,15 +101,37 @@ function bwFor(k) {
   return b;
 }
 const bwSay = (b) => (e) => setLive(`Browser: ${e.message}`);
+// In the ag app (desktop/DESIGN.md), the tab's own native page is placed over the view: the stream sends no screen,
+// and the view says which page it shows (its stage's data-key and data-target, read by the app's preload).
+const BW_NATIVE = !!window.agApp;
+function bwNative(b) {
+  if (!BW_NATIVE) return;
+  const st = b.state || {}, tab = st.tabs?.[st.active];
+  b.stage.dataset.key = b.key;
+  b.stage.dataset.target = tab?.target || "";
+  b.framed = !!tab;                                  // the page shows over the view: nothing to wait for under it
+  // Pick and Area run in the page (browser.py's set_mode): the buttons say which is on; a pick made, the message box
+  // has the keys again (the native page had them)
+  b.pickBtn.setAttribute("aria-pressed", String(st.picking === "pick"));
+  b.areaBtn.setAttribute("aria-pressed", String(st.picking === "area"));
+  const picks = (st.picks || []).length;
+  if (b.picksSeen !== undefined && picks > b.picksSeen) {
+    window.agApp.focusDashboard?.();
+    document.getElementById("composer-text")?.focus();
+  }
+  b.picksSeen = picks;
+}
 // The Browser's stream: its state and screen, while its view is in the page; closed once it is not (bwSweep).
 function bwListen(b) {
   if (b.es || SNAPSHOT) return;
-  const q = new URLSearchParams({ page: BW_PAGE, ...(typeof VideoDecoder === "function" ? { video: "1" } : {}),
+  const q = new URLSearchParams({ page: BW_PAGE,
+                                  ...(BW_NATIVE ? { native: "1" } : typeof VideoDecoder === "function" ? { video: "1" } : {}),
                                   ...(document.hidden ? { hidden: "1" } : {}) });
   const es = b.es = window.agNext.stream(`/browser/w/${b.key}/stream?${q}`);
   es.addEventListener("state", (ev) => {
     const was = bwSignature();
     b.state = JSON.parse(ev.data);
+    bwNative(b);
     bwDraw(b);
     if (bwSignature() !== was) keepingPlace(renderMain);    // its picks: the chips above the message box
   });
@@ -377,7 +399,9 @@ if (!SNAPSHOT) document.addEventListener("pointerdown", (ev) => {
   for (const b of bwAll.values()) if (b.feedOpen && !b.feed.root.contains(ev.target)) bwFeedOpen(b, false);
 }, true);
 // Pick (an element) and Area (a box): what the pointer does on the screen meanwhile; Esc, or the button again, stops it.
+const bwModeOn = (b) => (BW_NATIVE ? b.state?.picking || null : b.mode);   // the Pick or Area on: the page's, in the app
 function bwMode(b, mode) {
+  if (BW_NATIVE) return void bwPost(b, "mode", { mode }).catch(bwSay(b));   // in the app's page itself (bwNative)
   b.mode = mode;
   b.pickBtn.setAttribute("aria-pressed", String(mode === "pick"));
   b.areaBtn.setAttribute("aria-pressed", String(mode === "area"));
@@ -596,7 +620,8 @@ function bwUiDraw(b) {
   if (p && p.n !== b.popSeen) {
     b.popSeen = p.n;
     if (p.k === "suggest" && !p.options.length) { if (b.pop && b.pop.classList.contains("suggest")) bwPopClose(b); }   // gone
-    else if (Date.now() - b.userAt < BW_USER_WAIT) bwWhenUp(b, () => bwPopOpen(b, p));
+    else if (BW_NATIVE ? p.k === "find" : Date.now() - b.userAt < BW_USER_WAIT) bwWhenUp(b, () => bwPopOpen(b, p));   // (in
+    // the app only the user's own Cmd+F in the page asks: browser.py's CUES_JS)
   }
   if (!p && b.pop) bwPopClose(b);                  // the page it was on went
   // the page's file chooser: the user's own, at once if they just acted, else from the bar
@@ -614,6 +639,10 @@ function bwUiDraw(b) {
   const d = (st.downloads || []).at(-1);
   if (b.dlSeen === undefined) b.dlSeen = d ? d.i : 0;
   b.dl.hidden = !d || d.i <= b.dlSeen;
+  if (BW_NATIVE && !b.dl.hidden && b.dlFor !== d.i) {        // in the app it sits over the page's still picture: gone
+    b.dlFor = d.i;                                           // by itself after a while, the page live again
+    setTimeout(() => { if (b.dlSeen < d.i) { b.dlSeen = d.i; b.dl.hidden = true; } }, BW_DL_SHOWN);
+  }
   if (d && !b.dl.hidden && b.dl.dataset.i !== String(d.i)) {
     b.dl.dataset.i = String(d.i);
     b.dl.replaceChildren(el("span", { class: "nm", title: d.name, text: `Downloaded ${d.name}` }),
@@ -799,7 +828,9 @@ function bwFindBar(b) {
     btn("M4 6l4 4 4-4", "The next (Enter)", () => run(false, true)),
     btn("M4.5 4.5l7 7M11.5 4.5l-7 7", "Close (Esc)", () => bwFindClose(b)));
 }
+const BW_DL_SHOWN = 8000;    // ms a download done is said in the app, over the page's picture
 function bwFindOpen(b) {
+  if (BW_NATIVE) window.agApp.focusDashboard?.();          // (the keys were the native page's)
   b.find.hidden = false;
   b.findInput.focus();
   b.findInput.select();
@@ -808,6 +839,7 @@ function bwFindOpen(b) {
 function bwFindClose(b) {
   b.find.hidden = true;
   b.findCount.textContent = "";
+  if (BW_NATIVE) bwPost(b, "find", { q: "" }).catch(() => {});   // the native page's own find ended, its marks gone
   b.stage.focus({ preventScroll: true });
 }
 // The chips of what the user picked, above the message box: each going with the next message, or taken off.
