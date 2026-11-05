@@ -2,13 +2,14 @@
 `environment_update` events (defined here, as the policy that takes them defines its own).
 
 Only files the conversation names are looked at: before each poll the manager
-gives the poller what the conversation's raw part says (`Poller.watch`: the
-events the channels were last sent verbatim, and those since), and the poller
+gives the poller what the call's conversation's raw part says (`Poller.watch`:
+the events it was last sent verbatim, and its events since), and the poller
 takes from it every path-like name of an existing file under its directory --
 absolute, or relative to the directory -- and compares those files'
-modification times with the moment of the last poll. Nothing else is read: a
-working directory of any size (a home directory) costs what the conversation
-names. A change to a file the conversation never named is not reported; a
+modification times with the moment that conversation last polled. Nothing else
+is read: a working directory of any size (a home directory), or a gatherer of
+any size, costs what one conversation names. A change two conversations find is
+stored once (its id is the file and the moment it changed). A change to a file the conversation never named is not reported; a
 policy has nothing to match it against anyway (proactive_context_manager
 shows an update only where the verbatim history refers to its file). Left
 out: files under hidden directories (`.git` and the like), `__pycache__` and
