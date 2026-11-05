@@ -103,6 +103,7 @@ EXPECT_WAIT = 2.0           # the most seconds a check's calls to Chrome are wai
                             # them: a page still opening another (its site slow to answer), or busy, answers none
 SINCE_TOLD = 6              # the most of what the user did lately told the agent with an action
 OPENED_BY_CLICK = 3.0       # seconds after a click in a Browser a tab that names no opener is taken as one it opened
+APP_OPENED_WAIT = 3.0       # the same in the ag app, which opens each itself (its opener kept): only if it never says
 OPENED_WAIT = 0.6           # seconds a tab a page opens is waited for, before the dashboard opens it itself: a tab
                             # hidden from the user's tab strip opens none (Chrome says it would, then doesn't)
 VIEWPORT = (1280, 800, 1.0)  # the tab's size when no page has said its view's: (width, height, device pixel ratio)
@@ -304,9 +305,9 @@ def ua_metadata(cdp: "Cdp") -> Optional[dict]:
 
 
 def available() -> bool:
-    """Whether a Browser can be started here: a Chrome -- the dashboard's own, or the user's (`mode`) -- on Unix (its
-    own is handed its pipe by a shell)."""
-    return os.name == "posix" and (mode() == "mine" or executable() is not None)
+    """Whether a Browser can be started here: a Chrome -- the ag app's (desktop/DESIGN.md), the dashboard's own, or the
+    user's (`mode`) -- on Unix (its own is handed its pipe by a shell)."""
+    return os.name == "posix" and (mode() in ("app", "mine") or executable() is not None)
 
 
 def profile_dir() -> str:
@@ -640,6 +641,51 @@ class Unanswered(BrowserError):
     """Chrome did not answer a call in time."""
 
 
+class AppCdp(Cdp):
+    """The ag app's Chromium (desktop/DESIGN.md, "The app link"): the app connected to the dashboard (api/desktop.py's
+    socket) and plays the browser's part over it -- its targets are its native pages, each session one page's own
+    in-app connection. Messages come in by `got` (from the socket's task) and go out by `send` (to it, from any thread);
+    the app opens no port. Stopping it closes the socket: the app closes its pages, to open them again when it connects
+    next."""
+
+    mode = "app"
+
+    def __init__(self, send: Callable[[str], None], close: Callable[[], None], on_event: Callable, on_exit: Callable):
+        super().__init__(on_event, on_exit)
+        self.send, self.close = send, close
+        self.inbox: "queue.Queue" = queue.Queue()
+        self._start()
+
+    def got(self, text: Optional[str]) -> None:
+        """A message from the app; None: the socket closed."""
+        self.inbox.put(text)
+
+    def notify(self, method: str, params: dict) -> None:
+        """A message of ag's own to the app, not the protocol's (no id, no answer): App.hold, its user's input held off
+        a page while the agent acts; App.esc, whether the user's Esc on a page is ag's (to stop the agent, or a Pick)."""
+        try:
+            self._write({"method": method, "params": params})
+        except BrowserError:
+            pass
+
+    def _send(self, data: bytes) -> None:
+        self.send(data.decode("utf-8"))
+
+    def _read(self) -> None:
+        while True:
+            text = self.inbox.get()
+            if text is None:
+                return
+            self._got(text.encode("utf-8"))
+
+    def stop(self) -> None:
+        self.inbox.put(None)
+        try:
+            self.close()
+        except Exception:  # noqa: BLE001 - the socket gone already
+            pass
+
+
 class CdpError(BrowserError):
     def __init__(self, method: str, text: str):
         super().__init__(f"{method}: {text}")
@@ -674,6 +720,33 @@ def cookie_param(c: dict) -> dict:
 
 MINE_OFF = ("Your Chrome is not open to the dashboard: open chrome://inspect/#remote-debugging in it and turn remote "
             "debugging on (Chrome 144 or later), then try again")
+PAUSED = ("This Browser is paused while the ag app is closed: its pages live in the app, and come back when it opens. "
+          "Ask the user to open the ag app")
+
+
+def app_marker() -> str:
+    """The home's mark that its Browsers live in the ag app (desktop/DESIGN.md, "Which Browsers live in the app"): made
+    when the app first connects; its Browsers are paused, not moved, while the app is closed."""
+    return os.path.join(home.HOME, "dashboard", "desktop-browsers")
+
+
+def app_token() -> str:
+    """What the ag app proves itself with when it connects (api/desktop.py): a secret in the home, readable by its user
+    alone, made on first use -- which no web page can read."""
+    path = os.path.join(home.HOME, "dashboard", "desktop-token")
+    try:
+        with open(path) as fh:
+            token = fh.read().strip()
+        if token:
+            return token
+    except OSError:
+        pass
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    token = secrets.token_urlsafe(32)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        fh.write(token)
+    return token
 
 
 def _chrome_env() -> Dict[str, str]:
@@ -698,14 +771,17 @@ def video_on() -> bool:
 
 
 def mode() -> str:
-    """Which Chrome the Browsers run in: "mine", the user's own (the home's config.toml's `[dashboard] browser_profile
-    = "mine"`: their logins and history), else "own", the dashboard's, its profile the home's. The file read again only
-    once it changed."""
+    """Which Chrome the Browsers run in: "app", the ag app's native pages, once the app has connected to this home
+    (`app_marker`); "mine", the user's own (the home's config.toml's `[dashboard] browser_profile = "mine"`: their
+    logins and history); else "own", the dashboard's, its profile the home's. The file read again only once it
+    changed."""
     path = os.path.join(home.HOME, "config.toml")
     try:
         at = (path, os.stat(path).st_mtime_ns)
     except OSError:
         at = (path, None)
+    if os.path.exists(app_marker()):
+        return "app"
     if _mode_seen["at"] != at:
         _mode_seen.update(at=at, mode="mine" if _config().get("browser_profile") == "mine" else "own")
     return str(_mode_seen["mode"])
@@ -738,6 +814,7 @@ class Chrome:
         self.used = time.time()
         self.closed = False
         self.status = ""                                 # "allow": waiting on the user to allow the dashboard in Chrome
+        self.app: Optional[AppCdp] = None                # the ag app's link, while it is connected (`attach_app`)
         self.chores: "queue.Queue" = queue.Queue()       # what an event asks done that must wait on Chrome: not on its reader
         threading.Thread(target=self._chores, name="ag-browser-chores", daemon=True).start()
         threading.Thread(target=self._idle, name="ag-browser-idle", daemon=True).start()
@@ -746,6 +823,16 @@ class Chrome:
         with self.lock:
             self.used = time.time()
             want = mode()
+            if want == "app":                            # the app's pages, or none: paused, never moved elsewhere
+                app = self.app if self.app is not None and self.app.alive else None
+                if self.conn is not app:
+                    old, self.conn = self.conn, app
+                    if old is not None:
+                        old.stop()
+                        self.browsers.chrome_gone()
+                if app is None:
+                    raise BrowserError(PAUSED, 409)
+                return app
             if self.conn is not None and self.conn.alive and self.conn.mode == want:
                 return self.conn
             if self.closed:
@@ -794,9 +881,26 @@ class Chrome:
             self.status = ""
             self.browsers.publish()
 
+    def attach_app(self, send: Callable[[str], None], close: Callable[[], None]) -> AppCdp:
+        """The ag app connected (api/desktop.py), `send` and `close` its socket's: its link. The home is marked as the
+        app's (`app_marker`), and the Browsers being watched open their pages in it now, not on their next use."""
+        conn = AppCdp(send, close, self._event, self._exited)
+        os.makedirs(os.path.dirname(app_marker()), exist_ok=True)
+        with open(app_marker(), "a"):
+            pass
+        with self.lock:
+            old, self.app = self.app, conn
+        if old is not None and old is not conn:
+            old.stop()
+        self.browsers.revive()
+        return conn
+
     def new_target(self, cdp: Cdp) -> str:
-        """A new tab for a Browser: in its own Chrome, a page; in the user's, one hidden from their tab strip (Chrome
-        renders it all the same), else in a window of its own, minimized, out of their way."""
+        """A new tab for a Browser: in the ag app, a native page of its own; in its own Chrome, a page; in the user's,
+        one hidden from their tab strip (Chrome renders it all the same), else in a window of its own, minimized, out
+        of their way."""
+        if cdp.mode == "app":
+            return cdp.call("Target.createTarget", {"url": "about:blank"})["targetId"]
         if cdp.mode != "mine":                           # a window of its own: sized to its view, for its video
             return cdp.call("Target.createTarget", {"url": "about:blank", "newWindow": True})["targetId"]
         try:
@@ -843,8 +947,12 @@ class Chrome:
             current = self.conn is conn
             if current:
                 self.conn = None
+            if self.app is conn:
+                self.app = None
         if current:
             self.browsers.chrome_gone()
+            if conn.mode == "app":                       # the app quit: the pages watched say they are paused
+                self.browsers.revive()
 
     def _idle(self) -> None:
         while not self.closed:
@@ -864,6 +972,8 @@ class Chrome:
             self.closed = True
             conn, self.conn = self.conn, None
         self.chores.put(None)
+        if self.app is not None and self.app is not conn:
+            self.app.stop()
         if conn is not None:
             if conn.mode == "mine":                      # the user's Chrome runs on: the dashboard's tabs closed in it
                 for b in list(self.browsers.open.values()):
@@ -890,6 +1000,8 @@ class Tab:
         self.popup: Optional[dict] = None               # the list, picker, menu or find bar asked for last: {n, k}
         self.chooser: Optional[dict] = None             # its file chooser, open: {n, mode, accept, node}
         self.ui_ctx: Optional[int] = None               # UI_JS's world in its main frame (Runtime's context id)
+        self.cue_ctx: Optional[int] = None              # CUES_JS's (the ag app's native page: `Browser._draw_cues`)
+        self.cues_sent = ""                             # what it was told to draw last
         self.windowed = False                           # a popup window a page opened (`popup_window`): no video for it
 
 
@@ -899,9 +1011,10 @@ class Viewer:
     the page can decode video (`video`), every video chunk since the last key frame, in order (a chunk can't be
     dropped: the next is drawn on it; a page too far behind, KEEP_CHUNKS, waits for a new key frame)."""
 
-    def __init__(self, video: bool = False, page: str = "", visible: bool = True):
+    def __init__(self, video: bool = False, page: str = "", visible: bool = True, native: bool = False):
         self.cond = threading.Condition()
         self.page, self.visible = page, visible          # which page it is; whether it is shown (its tab, in front)
+        self.native = native                             # the ag app's page: the tab is shown natively, no frames sent
         self.state: Optional[dict] = None
         self.frame: Optional[dict] = None
         self.video = video
@@ -1019,6 +1132,9 @@ class Browser:
         self.next: Optional[dict] = None                 # what it is about to do, shown first (`Browsers._lead_in`)
         self.playing = 0                                 # its `steps` calls under way
         self.halt = threading.Event()                    # set: the user stopped it (Esc), until their next message
+        self.picking: Optional[str] = None               # in the ag app, the user's Pick or Area under way (`set_mode`)
+        self.held: Optional[str] = None                  # in the ag app, the page their input is held off (`_hold`)
+        self.esc_sent: Tuple[str, bool] = ("", False)    # in the ag app, whose Esc is ag's, as last told it
         self.user_at = 0.0                               # when the user last pressed, typed or chose in it
         self.clicked = 0.0                               # when the user or the agent last clicked in it
         self.behind = False                              # whether that click opens a link behind: Cmd/Ctrl, middle
@@ -1094,13 +1210,18 @@ class Browser:
                 self.active = len(self.tabs) - 1
         hints = (("Emulation.setUserAgentOverride", {"userAgent": cdp.ua, "userAgentMetadata": cdp.ua_meta}),) \
             if cdp.ua and cdp.ua_meta else ()   # its client hints' detail, as ordinary Chrome's: `ua_metadata`
+        native = (("Runtime.addBinding", {"name": CUES_BINDING, "executionContextName": CUES_WORLD}),   # the
+                  ("Page.addScriptToEvaluateOnNewDocument", {"source": CUES_JS, "worldName": CUES_WORLD,  # dashboard's
+                                                              "runImmediately": True})) \
+            if cdp.mode == "app" else ()                 # marks, drawn in the ag app's page itself: `_draw_cues`
+        windowless = () if cdp.mode == "app" else (   # a native page in the ag app shows its own choosers, passkey
+            ("Page.setInterceptFileChooserDialog", {"enabled": True}),   # prompts, lists and pointer: the user's own,
+            ("WebAuthn.enable", {"enableUI": False}),                    # `chooser`; passkeys: PASSKEYS; UI_JS
+            ("Runtime.addBinding", {"name": UI_BINDING, "executionContextName": UI_WORLD}),
+            ("Page.addScriptToEvaluateOnNewDocument", {"source": UI_JS, "worldName": UI_WORLD, "runImmediately": True}))
         for method, params in (*hints, ("Page.enable", {}), ("Runtime.enable", {}), ("Log.enable", {}), ("DOM.enable", {}),
                                ("Overlay.enable", {}), ("Emulation.setFocusEmulationEnabled", {"enabled": True}),
-                               ("Page.setInterceptFileChooserDialog", {"enabled": True}),   # the user's own: `chooser`
-                               ("WebAuthn.enable", {"enableUI": False}),   # passkeys: PASSKEYS
-                               ("Runtime.addBinding", {"name": UI_BINDING, "executionContextName": UI_WORLD}),
-                               ("Page.addScriptToEvaluateOnNewDocument", {"source": UI_JS, "worldName": UI_WORLD,
-                                                                          "runImmediately": True})):
+                               *windowless, *native):
             try:
                 cdp.call(method, params, session)
             except CdpError:
@@ -1147,6 +1268,8 @@ class Browser:
     # anyway), and none is made: a request to make one waits the same.
 
     def _size(self, cdp: Cdp, tab: Tab) -> None:
+        if cdp.mode == "app":                            # a native page: the size of the pane it is placed in
+            return
         w, h, dpr = self.viewport
         try:
             cdp.call("Emulation.setDeviceMetricsOverride", {"width": w, "height": h, "deviceScaleFactor": dpr,
@@ -1159,6 +1282,8 @@ class Browser:
         answer, a page loading, the page settling) are not to hold up the other's input or action."""
         if self.acts_by == threading.get_ident():
             self.acts_by = None
+            if self.held is not None:
+                self._hold(False)
             self.acts.release()
 
     def tab(self, index: Optional[int] = None) -> Tab:
@@ -1182,6 +1307,11 @@ class Browser:
     def event(self, method: str, params: dict, session: Optional[str]) -> None:
         if method == "Page.screencastFrame":
             return self._frame(params, session)
+        if method == "App.escape":                       # the user's Esc on the ag app's page, ours (`_draw_cues`)
+            return self.chrome.later(self._escape)
+        if method == "App.findBar":                      # "Find in page..." in the app's own menu on its page
+            tab = self._tab_of(target=params.get("targetId"))
+            return self._find_bar(tab) if tab is not None else None
         if method == "Runtime.bindingCalled" and session is not None and session == self.video.session:
             if params.get("name") == browser_video.BINDING:
                 self._chunk(self.video.got(str(params.get("payload") or "")))
@@ -1237,12 +1367,20 @@ class Browser:
             self._publish()
         elif method == "Runtime.bindingCalled" and params.get("name") == UI_BINDING:
             self._ui(tab, params)
+        elif method == "Runtime.bindingCalled" and params.get("name") == CUES_BINDING:
+            self._cue_said(tab, params)
         elif method == "Runtime.executionContextCreated":
             c = params.get("context") or {}
             if c.get("name") == UI_WORLD and (c.get("auxData") or {}).get("frameId") == tab.target:
                 tab.ui_ctx = c.get("id")
+            if c.get("name") == CUES_WORLD and (c.get("auxData") or {}).get("frameId") == tab.target:
+                tab.cue_ctx, tab.cues_sent = c.get("id"), ""
+                self.chrome.later(self._draw_cues)       # a new page: its marks as they are now
         elif method == "Runtime.executionContextsCleared":
-            tab.ui_ctx = None
+            tab.ui_ctx = tab.cue_ctx = None
+        elif method == "Overlay.inspectNodeRequested":   # the user's Pick, clicked (`set_mode`)
+            node = params.get("backendNodeId")
+            self.chrome.later(lambda: self._picked(node=node))
         elif method == "Page.fileChooserOpened":
             self.chrome.later(lambda: self._chooser(tab, params))
         elif method == "Runtime.consoleAPICalled":
@@ -1343,10 +1481,11 @@ class Browser:
 
     # -- what the page sees
 
-    def join(self, video: bool = False, page: str = "", visible: bool = True) -> Viewer:
+    def join(self, video: bool = False, page: str = "", visible: bool = True, native: bool = False) -> Viewer:
         """A page showing it (until `leave`): `video`, the page can decode video (browser_video.py); `page`, its id,
-        `visible`, whether it is shown (`watch`)."""
-        v = Viewer(video, page, visible)
+        `visible`, whether it is shown (`watch`); `native`, the ag app's page, which shows the tab's own native page
+        over its view and wants no frames."""
+        v = Viewer(video, page, visible, native)
         with self.lock:
             self.viewers.append(v)
             frame = self.frame
@@ -1380,9 +1519,10 @@ class Browser:
         if cdp is None or not cdp.alive:
             return
         with self.lock:
-            shown = self.tabs[self.active] if self.viewers and self.tabs else None
-            some_video = any(v.video for v in self.viewers)
-            all_video = bool(self.viewers) and all(v.video for v in self.viewers)
+            framed = [v for v in self.viewers if not v.native]   # the ag app's pages show the tab itself
+            shown = self.tabs[self.active] if framed and self.tabs else None
+            some_video = any(v.video for v in framed)
+            all_video = bool(framed) and all(v.video for v in framed)
             w, h, dpr = self.viewport
         if shown is not None and some_video and cdp.mode == "own" and video_on() and self.video.usable(shown):
             self.video.follow(cdp, shown, (w, h, dpr))
@@ -1451,11 +1591,12 @@ class Browser:
             acting = {"label": self.doing, "box": self.acting.get("box"), "tool": self.doing_tool, "cue": self.doing_cue} \
                 if self.acting and not self.acting_until and self.doing else None   # while it acts (`shown`: after)
             tab = self.tabs[self.active] if self.tabs else None
-            return {"tabs": [{"title": t.title, "url": t.url, "loading": t.loading} for t in self.tabs],
+            return {"tabs": [{"title": t.title, "url": t.url, "loading": t.loading, "target": t.target} for t in self.tabs],
                     "active": self.active, "picks": [{"id": p["id"], "label": p["label"]} for p in self.picks],
                     "acting": acting, "dialog": tab.dialog if tab else None, "error": self.error,
                     "actions": [{k: a[k] for k in ("i", "at", "ok", "text", "box", "detail")} for a in self.shown],
                     "next": self.next, "playing": bool(self.playing), "halted": self.halt.is_set(),
+                    "picking": self.picking,
                     "reading": self.doing if self.doing_tool in READS else "",
                     "running": self.chrome.running(), "viewport": list(self.viewport[:2]),
                     "chrome": self.chrome.which(), "allow": self.chrome.status == "allow", "video": self.video.ok,
@@ -1472,6 +1613,7 @@ class Browser:
             s = self.state()
             for v in viewers:
                 v.give(state=s)
+            self._draw_cues(s)
 
     def _save(self) -> None:
         """Its tabs' pages kept, for after the Chrome stopped: at most every second."""
@@ -1574,6 +1716,10 @@ class Browser:
         before (`back`), selected and scrolled to: {count, index} (index -1: not found, or not one it can place)."""
         cdp = self.live()
         tab = self.tab()
+        if cdp.mode == "app":                            # the native page's own find (Chrome's): none, ends it
+            got = cdp.call("App.find", {"targetId": tab.target, "q": str(q)[:500], "back": bool(back),
+                                        "again": bool(again)})
+            return {"count": int(got.get("count") or 0), "index": int(got.get("index", -1))}
         if tab.ui_ctx is None:
             raise BrowserError("the page is not ready yet", 409)
         args = ", ".join(json.dumps(a) for a in (str(q)[:500], bool(back), bool(again)))
@@ -1903,7 +2049,7 @@ class Browser:
 
         def unless_opened():
             try:
-                time.sleep(OPENED_WAIT)
+                time.sleep(OPENED_WAIT if self.chrome.which() != "app" else APP_OPENED_WAIT)
                 with self.lock:
                     if not any(e is asked for e in self.pending):
                         return                           # Chrome opened it: adopted
@@ -1957,10 +2103,14 @@ class Browser:
         return cdp.call("DOM.resolveNode", {"backendNodeId": node}, tab.session)["object"].get("objectId")
 
     def _node_at(self, cdp: Cdp, tab: Tab, x: float, y: float) -> Optional[int]:
+        """The element at (x, y): even one the pointer passes through (pointer-events: none), as Pick takes one -- but
+        in the ag app, only for what the user clicked (their Pick is Chrome's inspector's), which such an element never
+        is; and CUES_JS's marks over the page are such elements."""
         try:
             cdp.call("DOM.getDocument", {"depth": 0}, tab.session)
             return cdp.call("DOM.getNodeForLocation", {"x": int(x), "y": int(y), "includeUserAgentShadowDOM": False,
-                                                       "ignorePointerEventsNone": True}, tab.session).get("backendNodeId")
+                                                       "ignorePointerEventsNone": cdp.mode != "app"},
+                            tab.session).get("backendNodeId")
         except CdpError:
             return None
 
@@ -2069,7 +2219,8 @@ class Browser:
         except CdpError:
             pass
 
-    def pick(self, x: Optional[float] = None, y: Optional[float] = None, box: Optional[list] = None) -> dict:
+    def pick(self, x: Optional[float] = None, y: Optional[float] = None, box: Optional[list] = None,
+             node: Optional[int] = None) -> dict:
         cdp = self.live()
         tab = self.tab()
         self.chrome.touch()
@@ -2085,7 +2236,8 @@ class Browser:
             pick = {"kind": "area", "box": [round(bx), round(by), round(bw), round(bh)], "text": text, "image": image,
                     "label": f"an area {round(bw)}×{round(bh)}", "url": tab.url}
         else:
-            node = self._node_at(cdp, tab, float(x or 0), float(y or 0))
+            if node is None:                             # (the ag app's Pick: the node Chrome's inspector chose)
+                node = self._node_at(cdp, tab, float(x or 0), float(y or 0))
             if node is None:
                 raise BrowserError("nothing there to pick")
             obj = cdp.call("DOM.resolveNode", {"backendNodeId": node}, tab.session)["object"]["objectId"]
@@ -2174,6 +2326,145 @@ class Browser:
         self.halt.set()
         self.note("pressed Esc to stop you")
         self._publish()
+
+    # -- the ag app's native page (desktop/DESIGN.md, "What the dashboard draws over the page", "Your input"): the
+    # dashboard can't draw over it, and the user's input goes to it, not through `input`
+
+    def _draw_cues(self, s: Optional[dict] = None) -> None:
+        """What the dashboard draws over the screen elsewhere -- what the agent is about to do, does, and did last; the
+        user's Pick or Area -- told to the page's CUES_JS to draw, when it changed; and the app told whether the
+        user's Esc on the page is ag's (`_escape`): while the agent acts or is about to, and during a Pick or Area."""
+        cdp = self.chrome.conn
+        if cdp is None or cdp.mode != "app" or not cdp.alive:
+            return
+        with self.lock:
+            tab = self.tabs[self.active] if self.tabs else None
+        if tab is None:
+            return
+        s = s if s is not None else self.state()
+        nx, a = s.get("next"), s.get("acting")
+        c = nx or a or {}
+        cue = c.get("cue") or {}
+        last = (s.get("actions") or [None])[-1]
+        esc = bool(s.get("picking")) or (not s.get("halted") and bool(nx or a or s.get("playing")))
+        sent = self.esc_sent
+        if sent != (tab.target, esc):
+            self.esc_sent = (tab.target, esc)
+            if sent[1] and sent[0] != tab.target:
+                cdp.notify("App.esc", {"targetId": sent[0], "on": False})
+            cdp.notify("App.esc", {"targetId": tab.target, "on": esc})
+        if tab.cue_ctx is None:
+            return
+        js = json.dumps({"next": {"box": nx["box"], "tool": nx.get("tool")} if nx and nx.get("box") else None,
+                         "acting": {"box": a["box"], "tool": a.get("tool")} if a and a.get("box") else None,
+                         "last": {"i": last["i"], "ok": last["ok"], "box": last.get("box")} if last else None,
+                         "key": cue.get("key") if c.get("tool") == "press" else None,
+                         "scroll": cue.get("direction") if c.get("tool") == "scroll" else None,
+                         "mode": s.get("picking")})
+        if js == tab.cues_sent:
+            return
+        tab.cues_sent = js
+        cdp.post("Runtime.evaluate", {"expression": f"window.__agCues && window.__agCues.draw({js})",
+                                      "contextId": tab.cue_ctx}, tab.session)
+
+    def set_mode(self, mode: Optional[str]) -> None:
+        """The user's Pick begun -- Chrome's own inspector: the element under the pointer outlined, the page given no
+        input, a click picks (`_picked`) -- or their Area (CUES_JS: the box they drag, `_cue_said`), or either ended
+        (None). Where the dashboard draws the screen, its view does these itself (`pick`)."""
+        mode = mode if mode in ("pick", "area") else None
+        cdp = self.live()
+        tab = self.tab()
+        with self.lock:
+            self.picking = mode
+        try:
+            cdp.call("Overlay.setInspectMode", {"mode": "searchForNode" if mode == "pick" else "none",
+                                                "highlightConfig": HIGHLIGHT}, tab.session)
+        except CdpError:
+            pass
+        self._publish()
+
+    def _picked(self, node: Optional[int] = None, box: Optional[list] = None) -> None:
+        """The user's Pick or Area done: the pick made (`pick`), the mode ended either way."""
+        try:
+            if node is not None:
+                self.pick(node=int(node))
+            elif box is not None:
+                self.pick(box=box)
+        except BrowserError:
+            pass
+        finally:
+            try:
+                self.set_mode(None)
+            except BrowserError:
+                pass
+
+    def _escape(self) -> None:
+        """The user's Esc on the page, which the app gave ag (`_draw_cues`): their Pick or Area ended, else the agent
+        stopped (`stop`)."""
+        if self.picking:
+            try:
+                self.set_mode(None)
+            except BrowserError:
+                pass
+            return
+        s = self.state()
+        if not s.get("halted") and (s.get("next") or s.get("acting") or s.get("playing")):
+            self.stop()
+
+    def _cue_said(self, tab: Tab, params: dict) -> None:
+        """What CUES_JS told: the Area the user drew; or what they did in the page, for the agent (`note`), as `input`
+        notes it from the view's -- unless the agent's action is under way, whose own clicks and typing come here too
+        (told before its tool answers)."""
+        try:
+            x = json.loads(params.get("payload") or "{}")
+        except ValueError:
+            return
+        t = x.get("t") if isinstance(x, dict) else None
+        if t == "area":
+            box = x.get("box")
+            if self.picking == "area" and isinstance(box, list) and len(box) == 4:
+                self.chrome.later(lambda: self._picked(box=[float(v) for v in box]))
+            return
+        if t == "find":                                  # the user's Cmd+F: the view's find bar (`find`)
+            return self._find_bar(tab)
+        with self.lock:                                  # the agent's own click or typing is told while its action
+            agents = self.acting is not None and self.acting_until == 0   # is under way (not in its ACTING_KEEP after)
+        if t not in ("click", "typed") or agents:
+            return
+        now = time.time()
+        self.user_at = now
+        if t == "click":
+            mods = _for_chrome(int(x.get("mods") or 0))
+            with self.lock:
+                self.clicked, self.behind = now, bool(mods & 6)
+            at = (float(x.get("x") or 0), float(x.get("y") or 0))
+            self.chrome.later(lambda: self._note_click(tab, *at))
+        else:
+            self.chrome.later(lambda: self._note_typing(tab))
+
+    def _find_bar(self, tab: Tab) -> None:
+        """The view's find bar opened, as for a page's own Cmd+F (`_ui`)."""
+        with self.lock:
+            self.ui_n += 1
+            tab.popup = {"n": self.ui_n, "k": "find", "ctx": None}
+        self._publish()
+
+    def _hold(self, on: bool) -> None:
+        """While the agent's action is checked and done (`acts`), the user's input held off the page: in the ag app it
+        goes to the page itself, not through `input` (which `_users` holds), so the app holds it there."""
+        cdp = self.chrome.conn
+        if cdp is None or cdp.mode != "app":
+            self.held = None
+            return
+        if on:
+            with self.lock:
+                tab = self.tabs[self.active] if self.tabs else None
+            if tab is not None:
+                self.held = tab.target
+                cdp.notify("App.hold", {"targetId": tab.target, "on": True})
+        elif self.held is not None:
+            cdp.notify("App.hold", {"targetId": self.held, "on": False})
+            self.held = None
 
     def watch(self, page: str, visible: bool) -> None:
         """Whether the page `page` shows its view now (its tab in front, or not)."""
@@ -2832,6 +3123,147 @@ UI_JS = r"""(() => {
     },
   };
 })()"""
+
+
+# The ag app's native pages (desktop/DESIGN.md, "What the dashboard draws over the page"): the dashboard can't draw over
+# a native page, so what it draws over the screen elsewhere is drawn in the page itself -- by CUES_JS, in a world of its
+# own (the page's scripts neither see nor change its variables), its marks in a closed shadow root they can't reach into,
+# never taking a pointer event but while the user drags an Area. It tells ag, by its binding, what the user does in the
+# page (clicks, typing: for the agent, as `log` tells it from the view's input) and the Area they drew.
+CUES_WORLD = "ag-cues"
+CUES_BINDING = "__agCue"
+CUES_JS = r"""(() => {
+  if (window.__agCues) return;
+  const say = (o) => { try { window.__agCue(JSON.stringify(o)); } catch (e) { /* the binding gone: a page going away */ } };
+  const CSS = `:host { all: initial; }
+    [hidden] { display: none !important; }
+    .o { position: fixed; --a: #E8590C; border: 2px solid var(--a); border-radius: 4px; box-sizing: border-box;
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--a) 22%, transparent); transition: all .15s ease-out; }
+    .o.no { --a: #D97706; border-style: dashed; }
+    .o.done, .o.no { animation: f .5s ease-out, fd 3s ease-in forwards; }
+    .o.next { border-style: dashed; animation: n 1s ease-in-out infinite alternate; }
+    @keyframes n { from { box-shadow: 0 0 0 2px color-mix(in srgb, var(--a) 14%, transparent); }
+      to { box-shadow: 0 0 0 6px color-mix(in srgb, var(--a) 26%, transparent); } }
+    @keyframes f { from { background: color-mix(in srgb, var(--a) 24%, transparent);
+      box-shadow: 0 0 0 9px color-mix(in srgb, var(--a) 30%, transparent); }
+      to { background: transparent; box-shadow: 0 0 0 3px color-mix(in srgb, var(--a) 22%, transparent); } }
+    @keyframes fd { 0%, 50% { opacity: 1; } 100% { opacity: 0; } }
+    .p { position: fixed; left: 0; top: 0; width: 0; height: 0; transition: transform .35s cubic-bezier(.25, .8, .25, 1); }
+    .p svg { position: absolute; left: -3px; top: -2px; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .35)); }
+    .p .r { position: absolute; left: -14px; top: -14px; width: 28px; height: 28px; border-radius: 50%;
+      border: 2px solid #E8590C; box-sizing: border-box; opacity: 0; }
+    .p.press .r { animation: r .55s ease-out; }
+    @keyframes r { from { opacity: .9; transform: scale(.3); } to { opacity: 0; transform: scale(1.5); } }
+    .k { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); padding: 6px 14px; border-radius: 8px;
+      border: 1.5px solid #E8590C; border-bottom-width: 3px; background: #fff; color: #18181b;
+      font: 600 15px/1.2 system-ui, -apple-system, sans-serif; box-shadow: 0 4px 14px rgba(0, 0, 0, .2); }
+    .s { position: fixed; width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center;
+      background: #E8590C; color: #fff; font: 700 20px/1 system-ui, sans-serif; box-shadow: 0 4px 14px rgba(0, 0, 0, .25); }
+    .s[data-dir=down] { left: calc(50% - 19px); bottom: 16px; } .s[data-dir=down]::before { content: "\\2193"; }
+    .s[data-dir=up] { left: calc(50% - 19px); top: 16px; } .s[data-dir=up]::before { content: "\\2191"; }
+    .s[data-dir=left] { left: 16px; top: calc(50% - 19px); } .s[data-dir=left]::before { content: "\\2190"; }
+    .s[data-dir=right] { right: 16px; top: calc(50% - 19px); } .s[data-dir=right]::before { content: "\\2192"; }
+    .h { position: fixed; left: 50%; top: 8px; transform: translateX(-50%); padding: 4px 12px; border-radius: 999px;
+      background: #2563EB; color: #fff; font: 12px/1.4 system-ui, -apple-system, sans-serif; white-space: nowrap; }
+    .c { position: fixed; inset: 0; cursor: crosshair; pointer-events: auto; }
+    .d { position: fixed; border: 1.5px dashed #2563EB; background: color-mix(in srgb, #2563EB 10%, transparent); }
+    @media (prefers-reduced-motion: reduce) { .o.done, .o.no { animation: fd 3s ease-in forwards; }
+      .o.next, .p.press .r { animation: none; } .p { transition: none; } }`;
+  const POINTER = '<svg width="20" height="20" viewBox="0 0 20 20"><path d="M3 2 L3 16 L7 12.2 L9.6 18 L12.2 16.8 L9.7 11.2 L15 11 Z" ' +
+    'fill="#E8590C" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"/></svg><span class="r"></span>';
+  let host, o, p, k, s, h, c, d, kind = "", pressed = "", seen = null, idle = 0, mode = null, drag = null, typed = 0;
+  function ensure() {                     // made on first use; put back if the page replaced what held it
+    if (host && host.isConnected) return true;
+    const at = document.documentElement;
+    if (!at) return false;
+    host = document.createElement("ag-cues");
+    host.style.cssText = "all: initial; position: fixed; inset: 0; z-index: 2147483647; pointer-events: none; display: block;";
+    const root = host.attachShadow({ mode: "closed" });
+    root.innerHTML = `<style>${CSS}</style><div class="o" hidden></div><div class="p" hidden>${POINTER}</div>` +
+      '<kbd class="k" hidden></kbd><div class="s" hidden></div><div class="c" hidden></div><div class="d" hidden></div>' +
+      '<div class="h" hidden></div>';
+    [o, p, k, s, c, d, h] = [".o", ".p", ".k", ".s", ".c", ".d", ".h"].map((q) => root.querySelector(q));
+    c.addEventListener("pointerdown", (ev) => { ev.preventDefault(); drag = { x: ev.clientX, y: ev.clientY }; c.setPointerCapture(ev.pointerId); });
+    c.addEventListener("pointermove", (ev) => {
+      if (!drag) return;
+      d.hidden = false;
+      Object.assign(d.style, { left: `${Math.min(drag.x, ev.clientX)}px`, top: `${Math.min(drag.y, ev.clientY)}px`,
+        width: `${Math.abs(ev.clientX - drag.x)}px`, height: `${Math.abs(ev.clientY - drag.y)}px` });
+    });
+    c.addEventListener("pointerup", (ev) => {
+      if (!drag) return;
+      const box = [Math.min(drag.x, ev.clientX), Math.min(drag.y, ev.clientY), Math.abs(ev.clientX - drag.x), Math.abs(ev.clientY - drag.y)];
+      drag = null;
+      d.hidden = true;
+      if (box[2] >= 4 && box[3] >= 4) say({ t: "area", box });
+    });
+    at.appendChild(host);
+    return true;
+  }
+  function outline(box, k2) {
+    if (!box) { o.hidden = true; o.className = "o"; kind = ""; return; }
+    Object.assign(o.style, { left: `${box[0] - 3}px`, top: `${box[1] - 3}px`, width: `${box[2] + 6}px`, height: `${box[3] + 6}px` });
+    if (kind !== k2 || k2 === "done" || k2 === "no") { o.className = "o"; void o.offsetWidth; o.className = `o ${k2}`; }
+    o.hidden = false;
+    kind = k2;
+  }
+  function point(box) {                   // the agent's pointer, gliding to where it acts: first from the bottom middle
+    clearTimeout(idle);
+    idle = 0;
+    if (p.hidden) {
+      p.style.transition = "none";
+      p.style.transform = `translate(${innerWidth / 2}px, ${innerHeight - 30}px)`;
+      p.hidden = false;
+      void p.offsetWidth;
+      p.style.transition = "";
+    }
+    p.style.transform = `translate(${box[0] + box[2] / 2}px, ${box[1] + box[3] / 2}px)`;
+  }
+  function draw(x) {                      // ag's: what the agent is about to do, does, did last; the user's Pick or Area
+    if (!ensure()) return;
+    const a = x.next || x.acting;
+    if (a && a.box) {
+      outline(a.box, x.next ? "next" : "doing");
+      point(a.box);
+      if (!x.next && a.tool === "click" && pressed !== a.box.join()) {
+        pressed = a.box.join();
+        p.classList.remove("press"); void p.offsetWidth; p.classList.add("press");
+      }
+    } else if (kind === "doing" || kind === "next") outline(null);
+    if (x.last && seen !== null && x.last.i > seen && x.last.box && !a) outline(x.last.box, x.last.ok ? "done" : "no");
+    if (x.last) seen = Math.max(seen === null ? -1 : seen, x.last.i);
+    else if (seen === null) seen = -1;
+    k.hidden = !x.key; if (x.key) k.textContent = x.key;
+    s.hidden = !x.scroll; if (x.scroll) s.dataset.dir = x.scroll;
+    if (!a && !p.hidden && !idle) idle = setTimeout(() => { p.hidden = true; idle = 0; }, 2500);
+    if (x.mode !== mode) {
+      mode = x.mode || null;
+      c.hidden = mode !== "area";
+      d.hidden = true;
+      drag = null;
+      h.hidden = !mode;
+      h.textContent = mode === "pick" ? "Click the element to point the agent at · Esc to stop"
+        : mode === "area" ? "Drag a box over the area · Esc to stop" : "";
+    }
+  }
+  // What the user does in the page, for the agent ("clicked button Pay", "typed into textbox Email"): never what was
+  // typed. The agent's own clicks come here too: ag leaves out what comes while it acts.
+  addEventListener("click", (ev) => {
+    if (ev.isTrusted && ev.button === 0 && !mode) say({ t: "click", x: ev.clientX, y: ev.clientY,
+      mods: (ev.altKey ? 1 : 0) | (ev.ctrlKey ? 2 : 0) | (ev.metaKey ? 4 : 0) | (ev.shiftKey ? 8 : 0) });
+  }, { capture: true, passive: true });
+  addEventListener("input", (ev) => {
+    if (!ev.isTrusted) return;
+    clearTimeout(typed);
+    typed = setTimeout(() => say({ t: "typed" }), 400);
+  }, { capture: true, passive: true });
+  // Cmd+F (Ctrl+F) the page doesn't take itself (Google Docs has its own find): the dashboard's find bar
+  addEventListener("keydown", (ev) => {
+    if (!ev.isTrusted || !(ev.metaKey || ev.ctrlKey) || ev.altKey || ev.shiftKey || ev.key.toLowerCase() !== "f") return;
+    setTimeout(() => { if (!ev.defaultPrevented) say({ t: "find" }); }, 0);
+  }, { capture: true });
+  window.__agCues = { draw };
+})()"""
 PICKER_TYPES = {"date", "time", "datetime-local", "month", "week", "color"}
 CURSOR = re.compile(r'(?:url\("(?:https?|data):[^"\\]*"\)(?: -?\d+(?:\.\d+)? -?\d+(?:\.\d+)?)?, )*[a-z-]+')
 
@@ -3412,6 +3844,20 @@ class Browsers:
         for b in list(self.open.values()):
             b.chrome_gone()
 
+    def revive(self) -> None:
+        """Each Browser a page shows, its tabs opened again now (the ag app connected) -- or its view told why they
+        can't be (the app closed: PAUSED), as the error its view shows."""
+        for b in list(self.open.values()):
+            if not b.watched():
+                continue
+
+            def again(b: "Browser" = b) -> None:
+                try:
+                    b.live()
+                except BrowserError:
+                    pass                                 # (its error, set and shown by `live`)
+            self.chrome.later(again)
+
     # -- the user's message
 
     def compose(self, session: dict, text: str) -> Tuple[str, Optional[Browser]]:
@@ -3497,6 +3943,7 @@ class Browsers:
             if acts:
                 b.acts.acquire()
                 b.acts_by = threading.get_ident()
+                b._hold(True)                                # (in the ag app, held there: `_hold`)
                 self._expect(b, checks, begun)               # as the action will find it: the user's input held
             got = getattr(self, f"_t_{name}")(b, args)
             self._reread(b)

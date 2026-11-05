@@ -1,18 +1,21 @@
 """A Browser (browser.py): a page of the web its actor and the user both act in -- its state and screen streamed to the
 page, what the user does in it, the MCP server its actor calls; and the user's Chrome's logins for every Browser.
 
-Its Chrome is the dashboard's own, or the user's (config.toml's `[dashboard] browser_profile = "mine"`)."""
+Its Chrome is the dashboard's own, or the user's (config.toml's `[dashboard] browser_profile = "mine"`), or the ag app's
+native pages, over the app's link (/api/desktop: desktop/DESIGN.md)."""
 
+import asyncio
+import hmac
 import json
 from typing import Annotated
 
 import harness_kit
-from fastapi import APIRouter, Depends, Path, Request
+from fastapi import APIRouter, Depends, Path, Request, WebSocket, WebSocketDisconnect
 from starlette.responses import Response
 
 from .. import browser, editor, mcp
 from .common import KEEPALIVE_EVENT, Answered, Body, Errors, Events, Parts, answer, blocking, event, failure, \
-    not_found, send
+    named_here, not_found, send
 
 KEY = r"^[0-9a-f]{16}$"
 Key = Annotated[str, Path(pattern=KEY)]
@@ -71,16 +74,17 @@ def _num(body: dict, k: str):
 
 
 @router.get("/browser/w/{key}/stream")
-def stream(srv: Parts, key: Key, video: str = "", page: str = "", hidden: str = "") -> Response:
+def stream(srv: Parts, key: Key, video: str = "", page: str = "", hidden: str = "", native: str = "") -> Response:
     """Server-sent events, until the page goes: a Browser's `state` {tabs, active, picks, acting, dialog, error, running,
     viewport, video} as it changes, and its screen, `frame` {data (a JPEG, base64), w, h (the page's size), seq}, as it
     does.
 
     With ?video=1 (the page decodes video), `video` chunks {t: key | delta, ts, d (base64), seq; a key's codec, w, h}
     instead where they can be (browser_video.py), every one from a key frame on, in order. `page`: the page's id, for
-    it to say whether it is shown (`watch`); ?hidden=1, it is not, now."""
+    it to say whether it is shown (`watch`); ?hidden=1, it is not, now. ?native=1: the ag app's page, which shows the
+    tab's own native page over the view (desktop/DESIGN.md): its state only, no frames."""
     b = _browser(srv, key)
-    viewer = b.join(video == "1", page[:64], hidden != "1")
+    viewer = b.join(video == "1", page[:64], hidden != "1", native == "1")
 
     async def events():
         while True:
@@ -132,6 +136,15 @@ def hover(srv: Parts, key: Key, body: Object) -> Response:
     """{x, y}: where the user's pointer is in it -> {}."""
     b = _browser(srv, key)
     b.hover(_num(body, "x"), _num(body, "y"))
+    return answer({})
+
+
+@router.post("/browser/w/{key}/mode")
+def mode(srv: Parts, key: Key, body: Object) -> Response:
+    """{mode: pick | area | null}: in the ag app (desktop/DESIGN.md), the user's Pick or Area begun on its native page,
+    or ended -- there the page takes the pointer itself (browser.py's `set_mode`) -> {}."""
+    b = _browser(srv, key)
+    b.set_mode(body.get("mode") if isinstance(body.get("mode"), str) else None)
     return answer({})
 
 
@@ -282,3 +295,59 @@ def logins(srv: Parts, body: Body) -> Response:
     if body.get("action") == "import":
         return answer(bs.import_logins(body.get("sites") or []))
     return answer(bs.login_sites())
+
+
+APP_FIRST_WAIT = 10.0                            # seconds the ag app's token is waited for
+
+
+@router.websocket("/api/desktop")
+async def desktop(ws: WebSocket) -> None:
+    """The ag app's link (desktop/DESIGN.md, "The app link"): one WebSocket the app opens to its dashboard, over which
+    it plays the browser for the home's Browsers -- the Chrome DevTools Protocol, each message JSON text, as Chrome's
+    own connection carries them (browser.py's `AppCdp`), until either side closes. The app opens no port of its own:
+    nothing connects to it. Only the app may use it: its first message is the home's token (browser.py's
+    `app_token`), which the app reads from the home and no web page can; and a page's socket always says where the page
+    is (Origin), where the app's says nothing."""
+    srv = ws.app.state.server
+    bs = _browsers(srv) if srv is not None else None
+    if bs is None or ws.headers.get("origin") or not named_here(ws.headers.get("host"), srv):
+        await ws.close(code=1008)
+        return
+    await ws.accept()
+    try:
+        token = await asyncio.wait_for(ws.receive_text(), APP_FIRST_WAIT)
+    except (asyncio.TimeoutError, WebSocketDisconnect, KeyError):
+        await _close_socket(ws)
+        return
+    if not hmac.compare_digest(token.encode("utf-8"), browser.app_token().encode("utf-8")):
+        await _close_socket(ws, 1008)
+        return
+    loop = asyncio.get_running_loop()
+    out: "asyncio.Queue" = asyncio.Queue()       # to the app, from any thread: `send`; None, `close`
+    conn = bs.chrome.attach_app(lambda text: loop.call_soon_threadsafe(out.put_nowait, text),
+                                lambda: loop.call_soon_threadsafe(out.put_nowait, None))
+
+    async def to_app() -> None:
+        while True:
+            text = await out.get()
+            if text is None:
+                break
+            await ws.send_text(text)
+        await _close_socket(ws)
+
+    sending = asyncio.create_task(to_app())
+    try:
+        while True:
+            conn.got(await ws.receive_text())
+    except (WebSocketDisconnect, KeyError, RuntimeError):
+        pass
+    finally:
+        conn.got(None)                           # the link gone: its Browsers' pages with it (paused)
+        sending.cancel()
+
+
+async def _close_socket(ws: WebSocket, code: int = 1000) -> None:
+    try:
+        await ws.close(code=code)
+    except Exception:                            # noqa: BLE001 - closed already
+        pass

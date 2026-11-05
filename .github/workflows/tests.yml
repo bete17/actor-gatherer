@@ -54,6 +54,23 @@ jobs:
       - run: pnpm test
       - run: pnpm build
 
+  desktop:
+    # The desktop app (desktop/DESIGN.md): its types and unit tests. Its end-to-end tests run Electron with real
+    # dashboards and are run on a Mac for now (desktop/DESIGN.md, "Running it").
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile --ignore-scripts   # no Electron download: these checks don't run it
+      - run: pnpm typecheck
+      - run: pnpm test
+
   browser:
     runs-on: ubuntu-latest
     defaults:
