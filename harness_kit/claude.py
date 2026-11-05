@@ -854,9 +854,11 @@ def cwd_of(messages: list) -> Optional[str]:
 
 
 def _rule(line: str) -> bool:
-    """A row of its screen that is one of its message box's rules: "─" across it, a label in it or not."""
+    """A row of its screen that is one of its message box's rules: "─" across it, a label in it or not. A label goes at
+    its start, its middle or its end and may be as long as the row leaves room for -- the session's name once it has one
+    ("──────── Fix the parser tests ─"), "─── History 9/9 ───" -- with a "─" kept at each end (its `borderText`)."""
     line = line.strip()
-    return len(line) >= 20 and line.count("─") >= 0.8 * len(line)
+    return len(line) >= 20 and line[0] == "─" and line[-1] == "─"
 
 
 class ClaudeCode(Harness):
@@ -1001,7 +1003,7 @@ class ClaudeCode(Harness):
 
     def box(self, screen) -> Optional[str]:
         """Its message box: a prompt row ("❯", or "!" in its shell mode) and the rows of what is typed, between two
-        full-width rules (the upper one may carry a label: "─── History 9/9 ───"), the cursor shown in it while it has
+        full-width rules (the upper one may carry a label: "─── History 9/9 ───", the session's name), the cursor shown in it while it has
         the keys. A dialog (/mcp, /model), a menu, a question, a permission it asks, takes the box's place and hides the
         cursor; so does its folder-trust prompt."""
         if not screen.cursor_shown:

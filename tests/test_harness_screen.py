@@ -101,6 +101,14 @@ class ClaudeBoxTest(unittest.TestCase):
         self.assertEqual(self.box("❯", (9, 2)), Box.EMPTY)
         self.assertEqual(self.box("❯ ", (9, 2), top="─── History 9/9 " + "─" * 60), Box.EMPTY)   # a labelled rule
 
+    def test_its_box_under_the_session_s_name(self):
+        """/rename puts the name at the end of the upper rule, however long: a long one leaves it mostly not "─"."""
+        for name in ("Fix the parser tests", "A much longer name for this session than most would give"):
+            top = "─" * (COLS - len(name) - 3) + f" {name} ─"
+            self.assertEqual(self.box("❯\xa0", (9, 2), top=top), Box.EMPTY, name)
+            self.assertEqual(self.box("❯\xa0hello", (9, 7), top=top), Box.HOLDS, name)
+        self.assertEqual(self.box("❯\xa0", (9, 2), top="─" * 30 + " centred " + "─" * 41), Box.EMPTY)
+
     def test_its_box_holding_what_was_typed(self):
         self.assertEqual(self.box("❯ hello there", (9, 13)), Box.HOLDS)
         self.assertEqual(self.box("❯ /mc", (9, 5), extra={6: "  ❯ /mcp      Manage MCP servers"}), Box.HOLDS)
