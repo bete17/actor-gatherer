@@ -519,6 +519,7 @@ function filesBackground(info) {
 state.chatView = null;                                // {key, view}
 const chatSends = [];                                 // {key, cid, text, at (the page's ms), ran}
 function takeChatView(g, c, view) {
+  if (!view || view.error || !view.current) view = null;   // one the server could not make: none
   const k = key(g, c), has = window.agNext.chat.cidsOf(view);
   state.chatView = { key: k, view };
   for (let i = chatSends.length - 1; i >= 0; i--) if (chatSends[i].key === k && has.has(chatSends[i].cid)) chatSends.splice(i, 1);

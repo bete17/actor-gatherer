@@ -325,6 +325,16 @@ class StreamTest(HomeBase):
         self.assertEqual(got[1]["turns"][-1]["text"], "one more")
         self.assertEqual(got[1]["current"]["turn"], got[1]["turns"][-1]["n"])
 
+    def test_chat_s_view_of_an_actor_with_no_gatherer_yet_is_its_sends(self):
+        from ag_dashboard import chat_view
+        self.assertEqual(chat_view.of("none-yet", "c9")["current"]["state"], "idle")
+        sent = {"sent": [{"cid": "p1", "text": "hello", "at": 100.0}, {"cid": "p2", "text": "and", "at": 101.0}]}
+        got = chat_view.of("none-yet", "c9", sent, now=103.0)
+        self.assertEqual((got["turns"], got["current"]["state"], got["opening"]["cid"], got["opening"]["unseen"]),
+                         ([], "opening", "p1", False))
+        self.assertEqual([(w["cid"], w["how"]) for w in got["waiting"]], [("p2", "chat")])
+        self.assertTrue(chat_view.of("none-yet", "c9", sent, now=200.0)["opening"]["unseen"])
+
     def test_another_channel_s_change_sends_its_agent_nothing(self):
         httpd = self.start()
         s = self.open(httpd, "?gatherer=g&channel=c1")

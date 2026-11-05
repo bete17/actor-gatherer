@@ -288,11 +288,30 @@ def view(conn, channel: str, session: Optional[dict] = None, now: Optional[float
 
 
 def of(gatherer: str, channel: str, session: Optional[dict] = None, now: Optional[float] = None) -> dict:
-    """`view`, of the gatherer as it is now -- {error} with no database for it."""
+    """`view`, of the gatherer as it is now -- with no database for it yet (made by its first call), of the session's
+    sends alone (`unstored`)."""
     conn = data._connect(gatherer)
     if conn is None:
-        return {"error": f"no database for gatherer {gatherer!r}"}
+        return unstored(session, now)
     try:
         return view(conn, channel, session, now)
     finally:
         conn.close()
+
+
+def unstored(session: Optional[dict], now: Optional[float] = None) -> dict:
+    """The view of a conversation nothing of which is stored yet: the session's first send from Chat opening its turn
+    (not seen by the harness: its record is in no database yet), the rest waiting; no turn else."""
+    now = time.time() if now is None else now
+    sends = sorted(((session or {}).get("sent") or []), key=lambda s: s.get("at") or 0)
+    opening = None
+    if sends:
+        s = sends[0]
+        opening = {"text": s["text"], "cid": s.get("cid"), "began": s["at"], "seen": False,
+                   "unseen": now - s["at"] > UNSEEN_SECONDS}
+    waiting = [{"text": s["text"], "cid": s.get("cid"), "how": "chat"} for s in sends[1:]]
+    waiting += [{"text": t, "cid": None, "how": "dashboard"} for t in (session or {}).get("queued") or []]
+    current = {"state": OPENING if opening else IDLE, "turn": "opening" if opening else None, "doing": None,
+               "failing": None, "asking": None, "stopped": None}
+    return {"turns": [], "opening": opening, "current": current, "waiting": waiting, "taken_back": None,
+            "version": [0, 0, (session or {}).get("ended"), len(waiting), len(sends), bool(opening and opening["unseen"])]}
