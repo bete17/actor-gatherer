@@ -1,0 +1,1138 @@
+{
+ "_reads": [
+  {
+   "_at": 1793903463.552798,
+   "answered_at": null,
+   "basis": null,
+   "context_id": 1,
+   "error": null,
+   "error_status": null,
+   "est_tokens": 9,
+   "limit_tokens": 967000,
+   "manager": "proactive_context_manager",
+   "p_action": null,
+   "p_answer_id": null,
+   "p_call_id": null,
+   "p_channel": "3a41c263-c235-477c-9b26-171588e48e9b",
+   "p_cwd": "/tmp/claude-501/sl/cwd",
+   "p_kind": null,
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "pid": null,
+   "pid_started": null,
+   "preamble_json": "[1, 2]",
+   "read_at": "2026-11-05T18:31:03.552798+00:00",
+   "read_id": 1,
+   "real_tokens": 47021,
+   "row_id": 9,
+   "run": null,
+   "sent_tokens": 31762
+  },
+  {
+   "_at": 1793903476.626158,
+   "answered_at": null,
+   "basis": null,
+   "context_id": 1,
+   "error": null,
+   "error_status": null,
+   "est_tokens": 34,
+   "limit_tokens": 967000,
+   "manager": "proactive_context_manager",
+   "p_action": null,
+   "p_answer_id": null,
+   "p_call_id": null,
+   "p_channel": "3a41c263-c235-477c-9b26-171588e48e9b",
+   "p_cwd": "/tmp/claude-501/sl/cwd",
+   "p_kind": null,
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "pid": null,
+   "pid_started": null,
+   "preamble_json": "[1, 2]",
+   "read_at": "2026-11-05T18:31:16.626158+00:00",
+   "read_id": 2,
+   "real_tokens": 47052,
+   "row_id": 18,
+   "run": null,
+   "sent_tokens": 47072
+  },
+  {
+   "_at": 1793903478.748094,
+   "answered_at": null,
+   "basis": null,
+   "context_id": 1,
+   "error": null,
+   "error_status": null,
+   "est_tokens": 118,
+   "limit_tokens": 967000,
+   "manager": "proactive_context_manager",
+   "p_action": null,
+   "p_answer_id": null,
+   "p_call_id": null,
+   "p_channel": "3a41c263-c235-477c-9b26-171588e48e9b",
+   "p_cwd": "/tmp/claude-501/sl/cwd",
+   "p_kind": null,
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "pid": null,
+   "pid_started": null,
+   "preamble_json": "[1, 2]",
+   "read_at": "2026-11-05T18:31:18.748094+00:00",
+   "read_id": 3,
+   "real_tokens": 47208,
+   "row_id": 25,
+   "run": null,
+   "sent_tokens": 47156
+  }
+ ],
+ "actions": [
+  {
+   "at": 1793903476.443,
+   "what": "typed"
+  },
+  {
+   "at": 1793903476.443,
+   "what": "key Enter"
+  }
+ ],
+ "channel": "3a41c263-c235-477c-9b26-171588e48e9b",
+ "event_type_properties": [
+  {
+   "event_type_id": 1,
+   "identifies": 1,
+   "name": "channel",
+   "required": 0
+  },
+  {
+   "event_type_id": 1,
+   "identifies": 0,
+   "name": "cwd",
+   "required": 0
+  },
+  {
+   "event_type_id": 2,
+   "identifies": 1,
+   "name": "channel",
+   "required": 0
+  },
+  {
+   "event_type_id": 2,
+   "identifies": 0,
+   "name": "cwd",
+   "required": 0
+  },
+  {
+   "event_type_id": 3,
+   "identifies": 1,
+   "name": "channel",
+   "required": 0
+  },
+  {
+   "event_type_id": 3,
+   "identifies": 0,
+   "name": "cwd",
+   "required": 0
+  },
+  {
+   "event_type_id": 4,
+   "identifies": 1,
+   "name": "channel",
+   "required": 0
+  },
+  {
+   "event_type_id": 4,
+   "identifies": 0,
+   "name": "cwd",
+   "required": 0
+  },
+  {
+   "event_type_id": 5,
+   "identifies": 1,
+   "name": "channel",
+   "required": 0
+  },
+  {
+   "event_type_id": 5,
+   "identifies": 0,
+   "name": "cwd",
+   "required": 0
+  },
+  {
+   "event_type_id": 6,
+   "identifies": 1,
+   "name": "channel",
+   "required": 0
+  },
+  {
+   "event_type_id": 6,
+   "identifies": 0,
+   "name": "poller",
+   "required": 0
+  },
+  {
+   "event_type_id": 6,
+   "identifies": 0,
+   "name": "cwd",
+   "required": 0
+  },
+  {
+   "event_type_id": 7,
+   "identifies": 1,
+   "name": "channel",
+   "required": 0
+  },
+  {
+   "event_type_id": 7,
+   "identifies": 0,
+   "name": "poller",
+   "required": 0
+  },
+  {
+   "event_type_id": 8,
+   "identifies": 1,
+   "name": "channel",
+   "required": 0
+  },
+  {
+   "event_type_id": 8,
+   "identifies": 0,
+   "name": "cwd",
+   "required": 0
+  },
+  {
+   "event_type_id": 9,
+   "identifies": 0,
+   "name": "channel",
+   "required": 0
+  },
+  {
+   "event_type_id": 10,
+   "identifies": 0,
+   "name": "channel",
+   "required": 0
+  },
+  {
+   "event_type_id": 5,
+   "identifies": 0,
+   "name": "kind",
+   "required": 0
+  },
+  {
+   "event_type_id": 1,
+   "identifies": 0,
+   "name": "kind",
+   "required": 0
+  },
+  {
+   "event_type_id": 1,
+   "identifies": 0,
+   "name": "words",
+   "required": 0
+  },
+  {
+   "event_type_id": 9,
+   "identifies": 0,
+   "name": "read_id",
+   "required": 0
+  },
+  {
+   "event_type_id": 11,
+   "identifies": 0,
+   "name": "channel",
+   "required": 0
+  },
+  {
+   "event_type_id": 12,
+   "identifies": 0,
+   "name": "channel",
+   "required": 0
+  },
+  {
+   "event_type_id": 13,
+   "identifies": 0,
+   "name": "channel",
+   "required": 0
+  },
+  {
+   "event_type_id": 14,
+   "identifies": 0,
+   "name": "channel",
+   "required": 0
+  },
+  {
+   "event_type_id": 14,
+   "identifies": 0,
+   "name": "answer_id",
+   "required": 0
+  },
+  {
+   "event_type_id": 15,
+   "identifies": 0,
+   "name": "channel",
+   "required": 0
+  },
+  {
+   "event_type_id": 15,
+   "identifies": 0,
+   "name": "answer_id",
+   "required": 0
+  },
+  {
+   "event_type_id": 15,
+   "identifies": 0,
+   "name": "read_id",
+   "required": 0
+  },
+  {
+   "event_type_id": 2,
+   "identifies": 0,
+   "name": "kind",
+   "required": 0
+  },
+  {
+   "event_type_id": 3,
+   "identifies": 0,
+   "name": "kind",
+   "required": 0
+  },
+  {
+   "event_type_id": 3,
+   "identifies": 0,
+   "name": "action",
+   "required": 0
+  },
+  {
+   "event_type_id": 3,
+   "identifies": 0,
+   "name": "call_id",
+   "required": 0
+  },
+  {
+   "event_type_id": 4,
+   "identifies": 0,
+   "name": "kind",
+   "required": 0
+  },
+  {
+   "event_type_id": 4,
+   "identifies": 0,
+   "name": "call_id",
+   "required": 0
+  },
+  {
+   "event_type_id": 16,
+   "identifies": 0,
+   "name": "channel",
+   "required": 0
+  },
+  {
+   "event_type_id": 16,
+   "identifies": 0,
+   "name": "call_id",
+   "required": 0
+  }
+ ],
+ "event_types": [
+  {
+   "created_at": "2026-11-05T18:30:51.402661+00:00",
+   "event_type_id": 1,
+   "name": "user_message"
+  },
+  {
+   "created_at": "2026-11-05T18:30:51.402981+00:00",
+   "event_type_id": 2,
+   "name": "agent_message"
+  },
+  {
+   "created_at": "2026-11-05T18:30:51.403095+00:00",
+   "event_type_id": 3,
+   "name": "tool_call"
+  },
+  {
+   "created_at": "2026-11-05T18:30:51.403181+00:00",
+   "event_type_id": 4,
+   "name": "tool_output"
+  },
+  {
+   "created_at": "2026-11-05T18:30:51.403265+00:00",
+   "event_type_id": 5,
+   "name": "context"
+  },
+  {
+   "created_at": "2026-11-05T18:30:51.403771+00:00",
+   "event_type_id": 6,
+   "name": "environment_update"
+  },
+  {
+   "created_at": "2026-11-05T18:30:51.403900+00:00",
+   "event_type_id": 7,
+   "name": "context_stream"
+  },
+  {
+   "created_at": "2026-11-05T18:30:51.403991+00:00",
+   "event_type_id": 8,
+   "name": "agent_reasoning"
+  },
+  {
+   "created_at": "2026-11-05T18:30:51.406067+00:00",
+   "event_type_id": 9,
+   "name": "model_call"
+  },
+  {
+   "created_at": "2026-11-05T18:31:03.475610+00:00",
+   "event_type_id": 10,
+   "name": "chat_sent"
+  },
+  {
+   "created_at": "2026-11-05T18:31:03.894265+00:00",
+   "event_type_id": 11,
+   "name": "session_file"
+  },
+  {
+   "created_at": "2026-11-05T18:31:03.898119+00:00",
+   "event_type_id": 12,
+   "name": "message_sent"
+  },
+  {
+   "created_at": "2026-11-05T18:31:04.152406+00:00",
+   "event_type_id": 13,
+   "name": "name"
+  },
+  {
+   "created_at": "2026-11-05T18:31:04.825687+00:00",
+   "event_type_id": 14,
+   "name": "reply_part"
+  },
+  {
+   "created_at": "2026-11-05T18:31:04.833127+00:00",
+   "event_type_id": 15,
+   "name": "reply_end"
+  },
+  {
+   "created_at": "2026-11-05T18:31:19.043561+00:00",
+   "event_type_id": 16,
+   "name": "file_touched"
+  }
+ ],
+ "events": [
+  {
+   "_at": 1793903451.507533,
+   "counted": null,
+   "event_id": "call:c5ad0fe239414ba08dd3cdde04af6940",
+   "event_type_id": 9,
+   "inserted_at": "2026-11-05T18:30:51.507533+00:00",
+   "p_action": null,
+   "p_answer_id": null,
+   "p_call_id": null,
+   "p_channel": "3a41c263-c235-477c-9b26-171588e48e9b",
+   "p_cwd": null,
+   "p_kind": null,
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "payload_json": "{\"derives\": true, \"harness\": \"claude\", \"kind\": \"other\", \"version\": \"2.1.318\"}",
+   "row_id": 1,
+   "text": null,
+   "tokens": 30
+  },
+  {
+   "_at": 1793903463.516688,
+   "counted": null,
+   "event_id": "call:24e0f32b19b8464f867be17ee44ba00b",
+   "event_type_id": 9,
+   "inserted_at": "2026-11-05T18:31:03.516688+00:00",
+   "p_action": null,
+   "p_answer_id": null,
+   "p_call_id": null,
+   "p_channel": "3a41c263-c235-477c-9b26-171588e48e9b",
+   "p_cwd": null,
+   "p_kind": null,
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "payload_json": "{\"derives\": true, \"harness\": \"claude\", \"kind\": \"other\", \"version\": \"2.1.318\"}",
+   "row_id": 2,
+   "text": null,
+   "tokens": 30
+  },
+  {
+   "_at": 1793903463.539787,
+   "counted": 1,
+   "event_id": "sha256:83ccbcb65cf30c5888d19b79a04973a6c4edc1fe1b02b836c16ab225a97037a7",
+   "event_type_id": 5,
+   "inserted_at": "2026-11-05T18:31:03.539787+00:00",
+   "p_action": null,
+   "p_answer_id": null,
+   "p_call_id": null,
+   "p_channel": "3a41c263-c235-477c-9b26-171588e48e9b",
+   "p_cwd": "/tmp/claude-501/sl/cwd",
+   "p_kind": "environment",
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "payload_json": "{\"trimmed\": 797}",
+   "row_id": 3,
+   "text": "[797 characters]",
+   "tokens": 219
+  },
+  {
+   "_at": 1793903463.540037,
+   "counted": 1,
+   "event_id": "sha256:ceef01890e415f7d023faa8cd64f9e5d70419f79ec8afaf18d9ab445cc56467d",
+   "event_type_id": 5,
+   "inserted_at": "2026-11-05T18:31:03.540037+00:00",
+   "p_action": null,
+   "p_answer_id": null,
+   "p_call_id": null,
+   "p_channel": "3a41c263-c235-477c-9b26-171588e48e9b",
+   "p_cwd": "/tmp/claude-501/sl/cwd",
+   "p_kind": "environment",
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "payload_json": "{\"trimmed\": 647}",
+   "row_id": 4,
+   "text": "[647 characters]",
+   "tokens": 210
+  },
+  {
+   "_at": 1793903463.542126,
+   "counted": 1,
+   "event_id": "sha256:d8f27b3f40aacc1ca6618e4ce7012ba6769ed9a8e70c79066862246c1dfa2a43",
+   "event_type_id": 5,
+   "inserted_at": "2026-11-05T18:31:03.542126+00:00",
+   "p_action": null,
+   "p_answer_id": null,
+   "p_call_id": null,
+   "p_channel": "3a41c263-c235-477c-9b26-171588e48e9b",
+   "p_cwd": "/tmp/claude-501/sl/cwd",
+   "p_kind": "environment",
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "payload_json": "{\"trimmed\": 18}",
+   "row_id": 5,
+   "text": "[18 characters]",
+   "tokens": 13717
+  },
+  {
+   "_at": 1793903463.542354,
+   "counted": 1,
+   "event_id": "sha256:4e1973062b3646b667ceb6cc8873615a7616439557902563051b0b12bafbad0b",
+   "event_type_id": 5,
+   "inserted_at": "2026-11-05T18:31:03.542354+00:00",
+   "p_action": null,
+   "p_answer_id": null,
+   "p_call_id": null,
+   "p_channel": "3a41c263-c235-477c-9b26-171588e48e9b",
+   "p_cwd": "/tmp/claude-501/sl/cwd",
+   "p_kind": "tool_notice",
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "payload_json": "{\"trimmed\": 534}",
+   "row_id": 6,
+   "text": "[534 characters]",
+   "tokens": 184
+  },
+  {
+   "_at": 1793903463.54244,
+   "counted": 1,
+   "event_id": "sha256:3bf3dce97b7917eae77975dae3b7b65a4f586725dc7bc6bd3b64544e72a6a262",
+   "event_type_id": 5,
+   "inserted_at": "2026-11-05T18:31:03.542440+00:00",
+   "p_action": null,
+   "p_answer_id": null,
+   "p_call_id": null,
+   "p_channel": "3a41c263-c235-477c-9b26-171588e48e9b",
+   "p_cwd": "/tmp/claude-501/sl/cwd",
+   "p_kind": "tool_notice",
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "payload_json": "{\"trimmed\": 620}",
+   "row_id": 7,
+   "text": "[620 characters]",
+   "tokens": 206
+  },
+  {
+   "_at": 1793903463.542538,
+   "counted": 1,
+   "event_id": "sha256:45d7fcd1d9a235f9ff99fef0d2a99441c887298286e5db1d1c98c612c5755909",
+   "event_type_id": 5,
+   "inserted_at": "2026-11-05T18:31:03.542538+00:00",
+   "p_action": null,
+   "p_answer_id": null,
+   "p_call_id": null,
+   "p_channel": "3a41c263-c235-477c-9b26-171588e48e9b",
+   "p_cwd": "/tmp/claude-501/sl/cwd",
+   "p_kind": "tool_notice",
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "payload_json": "{\"trimmed\": 882}",
+   "row_id": 8,
+   "text": "[882 characters]",
+   "tokens": 379
+  },
+  {
+   "_at": 1793903463.542608,
+   "counted": 1,
+   "event_id": "sha256:d251413bffd6b2105389a2ecaec942c061fc9720bcbc34a1f4ad019640eda743",
+   "event_type_id": 1,
+   "inserted_at": "2026-11-05T18:31:03.542608+00:00",
+   "p_action": null,
+   "p_answer_id": null,
+   "p_call_id": null,
+   "p_channel": "3a41c263-c235-477c-9b26-171588e48e9b",
+   "p_cwd": "/tmp/claude-501/sl/cwd",
+   "p_kind": "user",
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": "Hello. Reply with one word: ready.",
+   "payload_json": "{\"content\": [{\"text\": \"Hello. Reply with one word: ready.\", \"type\": \"text\"}], \"role\": \"user\"}",
+   "row_id": 9,
+   "text": "Hello. Reply with one word: ready.",
+   "tokens": 16
+  },
+  {
+   "_at": 1793903463.558171,
+   "counted": null,
+   "event_id": "call:f4e87be7f5a24474813789e0ee1d5ef0",
+   "event_type_id": 9,
+   "inserted_at": "2026-11-05T18:31:03.558171+00:00",
+   "p_action": null,
+   "p_answer_id": null,
+   "p_call_id": null,
+   "p_channel": "3a41c263-c235-477c-9b26-171588e48e9b",
+   "p_cwd": null,
+   "p_kind": null,
+   "p_poller": null,
+   "p_read_id": 1,
+   "p_words": null,
+   "payload_json": "{\"derives\": true, \"harness\": \"claude\", \"kind\": \"turn\", \"version\": \"2.1.318\"}",
+   "row_id": 10,
+   "text": null,
+   "tokens": 30
+  },
+  {
+   "_at": 1793903463.581838,
+   "counted": null,
+   "event_id": "chat_sent:f7ce0193927a4fc6901cd47d41fb6b45",
+   "event_type_id": 10,
+   "inserted_at": "2026-11-05T18:31:03.581838+00:00",
+   "p_action": null,
+   "p_answer_id": null,
+   "p_call_id": null,
+   "p_channel": "3a41c263-c235-477c-9b26-171588e48e9b",
+   "p_cwd": null,
+   "p_kind": null,
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "payload_json": "{\"at\": 1793903463.339082, \"text\": \"Hello. Reply with one word: ready.\"}",
+   "row_id": 11,
+   "text": null,
+   "tokens": 26
+  },
+  {
+   "_at": 1793903463.894552,
+   "counted": null,
+   "event_id": "file:/home/user/.claude/projects/-private-tmp-claude-501-sl-cwd/3a41c263-c235-477c-9b26-171588e48e9b.jsonl",
+   "event_type_id": 11,
+   "inserted_at": "2026-11-05T18:31:03.894552+00:00",
+   "p_action": null,
+   "p_answer_id": null,
+   "p_call_id": null,
+   "p_channel": "3a41c263-c235-477c-9b26-171588e48e9b",
+   "p_cwd": null,
+   "p_kind": null,
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "payload_json": "{\"harness\": \"claude\", \"path\": \"/home/user/.claude/projects/-private-tmp-claude-501-sl-cwd/3a41c263-c235-477c-9b26-171588e48e9b.jsonl\"}",
+   "row_id": 12,
+   "text": null,
+   "tokens": 57
+  },
+  {
+   "_at": 1793903463.898316,
+   "counted": null,
+   "event_id": "message_sent:3a41c263-c235-477c-9b26-171588e48e9b.jsonl:691.88234639",
+   "event_type_id": 12,
+   "inserted_at": "2026-11-05T18:31:03.898316+00:00",
+   "p_action": null,
+   "p_answer_id": null,
+   "p_call_id": null,
+   "p_channel": "3a41c263-c235-477c-9b26-171588e48e9b",
+   "p_cwd": null,
+   "p_kind": null,
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "payload_json": "{\"at\": 1793903463.503, \"how\": \"prompt\", \"joins\": false, \"queued\": null, \"text\": \"Hello. Reply with one word: ready.\", \"words\": \"Hello. Reply with one word: ready.\", \"written\": 1793903463.503}",
+   "row_id": 13,
+   "text": null,
+   "tokens": 64
+  },
+  {
+   "_at": 1793903464.152637,
+   "counted": null,
+   "event_id": "name:3a41c263-c235-477c-9b26-171588e48e9b.jsonl:234958.6d13e5f3",
+   "event_type_id": 13,
+   "inserted_at": "2026-11-05T18:31:04.152637+00:00",
+   "p_action": null,
+   "p_answer_id": null,
+   "p_call_id": null,
+   "p_channel": "3a41c263-c235-477c-9b26-171588e48e9b",
+   "p_cwd": null,
+   "p_kind": null,
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "payload_json": "{\"at\": null, \"by\": \"claude\", \"text\": \"Ready check\"}",
+   "row_id": 14,
+   "text": null,
+   "tokens": 19
+  },
+  {
+   "_at": 1793903464.825951,
+   "counted": null,
+   "event_id": "msg_011CgkFvEwGbMqVDRckEHKRR:0",
+   "event_type_id": 14,
+   "inserted_at": "2026-11-05T18:31:04.825951+00:00",
+   "p_action": null,
+   "p_answer_id": "msg_011CgkFvEwGbMqVDRckEHKRR",
+   "p_call_id": null,
+   "p_channel": "3a41c263-c235-477c-9b26-171588e48e9b",
+   "p_cwd": null,
+   "p_kind": null,
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "payload_json": "{\"payload\": {\"content\": [{\"text\": \"Ready.\", \"type\": \"text\"}], \"role\": \"assistant\"}, \"properties\": {\"kind\": \"agent\"}, \"text\": \"Ready.\", \"type\": \"agent_message\"}",
+   "row_id": 15,
+   "text": null,
+   "tokens": 47
+  },
+  {
+   "_at": 1793903464.833379,
+   "counted": null,
+   "event_id": "msg_011CgkFvEwGbMqVDRckEHKRR:end",
+   "event_type_id": 15,
+   "inserted_at": "2026-11-05T18:31:04.833379+00:00",
+   "p_action": null,
+   "p_answer_id": "msg_011CgkFvEwGbMqVDRckEHKRR",
+   "p_call_id": null,
+   "p_channel": "3a41c263-c235-477c-9b26-171588e48e9b",
+   "p_cwd": null,
+   "p_kind": null,
+   "p_poller": null,
+   "p_read_id": 1,
+   "p_words": null,
+   "payload_json": "{\"stop\": \"end_turn\"}",
+   "row_id": 16,
+   "text": null,
+   "tokens": 7
+  },
+  {
+   "_at": 1793903476.619694,
+   "counted": 1,
+   "event_id": "sha256:e11a8573fac31dbd3c85f3bc663adb84c1c6672f49e9bd7ed7fdb1c724bab0e7",
+   "event_type_id": 2,
+   "inserted_at": "2026-11-05T18:31:16.619694+00:00",
+   "p_action": null,
+   "p_answer_id": null,
+   "p_call_id": null,
+   "p_channel": "3a41c263-c235-477c-9b26-171588e48e9b",
+   "p_cwd": "/tmp/claude-501/sl/cwd",
+   "p_kind": "agent",
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "payload_json": "{\"content\": [{\"text\": \"Ready.\", \"type\": \"text\"}], \"role\": \"assistant\"}",
+   "row_id": 17,
+   "text": "Ready.",
+   "tokens": 4
+  },
+  {
+   "_at": 1793903476.619855,
+   "counted": 1,
+   "event_id": "sha256:b0bbe1748f8108eca0940cab14cb5033943143a3768c9d52283f43371eb7ed19",
+   "event_type_id": 1,
+   "inserted_at": "2026-11-05T18:31:16.619855+00:00",
+   "p_action": null,
+   "p_answer_id": null,
+   "p_call_id": null,
+   "p_channel": "3a41c263-c235-477c-9b26-171588e48e9b",
+   "p_cwd": "/tmp/claude-501/sl/cwd",
+   "p_kind": "user",
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": "Run the shell command ls -la and tell me how many entries it lists.",
+   "payload_json": "{\"content\": [{\"text\": \"Run the shell command ls -la and tell me how many entries it lists.\", \"type\": \"text\"}], \"role\": \"user\"}",
+   "row_id": 18,
+   "text": "Run the shell command ls -la and tell me how many entries it lists.",
+   "tokens": 23
+  },
+  {
+   "_at": 1793903476.630591,
+   "counted": null,
+   "event_id": "call:ee1efeeefcd04fa696cb34133096f9e2",
+   "event_type_id": 9,
+   "inserted_at": "2026-11-05T18:31:16.630591+00:00",
+   "p_action": null,
+   "p_answer_id": null,
+   "p_call_id": null,
+   "p_channel": "3a41c263-c235-477c-9b26-171588e48e9b",
+   "p_cwd": null,
+   "p_kind": null,
+   "p_poller": null,
+   "p_read_id": 2,
+   "p_words": null,
+   "payload_json": "{\"derives\": true, \"harness\": \"claude\", \"kind\": \"turn\", \"version\": \"2.1.318\"}",
+   "row_id": 19,
+   "text": null,
+   "tokens": 30
+  },
+  {
+   "_at": 1793903476.641867,
+   "counted": null,
+   "event_id": "chat_sent:7b524611fa18469590875666507bde0e",
+   "event_type_id": 10,
+   "inserted_at": "2026-11-05T18:31:16.641867+00:00",
+   "p_action": null,
+   "p_answer_id": null,
+   "p_call_id": null,
+   "p_channel": "3a41c263-c235-477c-9b26-171588e48e9b",
+   "p_cwd": null,
+   "p_kind": null,
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "payload_json": "{\"at\": 1793903476.447063, \"text\": \"Run the shell command ls -la and tell me how many entries it lists.\"}",
+   "row_id": 20,
+   "text": null,
+   "tokens": 33
+  },
+  {
+   "_at": 1793903476.709053,
+   "counted": null,
+   "event_id": "message_sent:3a41c263-c235-477c-9b26-171588e48e9b.jsonl:375167.8ce84539",
+   "event_type_id": 12,
+   "inserted_at": "2026-11-05T18:31:16.709053+00:00",
+   "p_action": null,
+   "p_answer_id": null,
+   "p_call_id": null,
+   "p_channel": "3a41c263-c235-477c-9b26-171588e48e9b",
+   "p_cwd": null,
+   "p_kind": null,
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "payload_json": "{\"at\": 1793903476.601, \"how\": \"prompt\", \"joins\": false, \"queued\": null, \"text\": \"Run the shell command ls -la and tell me how many entries it lists.\", \"words\": \"Run the shell command ls -la and tell me how many entries it lists.\", \"written\": 1793903476.601}",
+   "row_id": 21,
+   "text": null,
+   "tokens": 78
+  },
+  {
+   "_at": 1793903477.639666,
+   "counted": null,
+   "event_id": "msg_011CgkFwCpnabigE3yXwre8m:0",
+   "event_type_id": 14,
+   "inserted_at": "2026-11-05T18:31:17.639666+00:00",
+   "p_action": null,
+   "p_answer_id": "msg_011CgkFwCpnabigE3yXwre8m",
+   "p_call_id": null,
+   "p_channel": "3a41c263-c235-477c-9b26-171588e48e9b",
+   "p_cwd": null,
+   "p_kind": null,
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "payload_json": "{\"payload\": {\"content\": [{\"caller\": {\"type\": \"direct\"}, \"id\": \"toolu_017hSZENbhTgnNC6tubpZo1E\", \"input\": {\"command\": \"ls -la\", \"description\": \"List all files in current directory\"}, \"name\": \"Bash\", \"type\": \"tool_use\"}], \"role\": \"assistant\"}, \"properties\": {\"action\": \"shell\", \"call_id\": \"toolu_017hSZENbhTgnNC6tubpZo1E\", \"kind\": \"tool_call\"}, \"text\": \"Bash({\\\"command\\\": \\\"ls -la\\\", \\\"description\\\": \\\"List all files in current directory\\\"})\", \"type\": \"tool_call\"}",
+   "row_id": 22,
+   "text": null,
+   "tokens": 156
+  },
+  {
+   "_at": 1793903478.14491,
+   "counted": null,
+   "event_id": "msg_011CgkFwCpnabigE3yXwre8m:end",
+   "event_type_id": 15,
+   "inserted_at": "2026-11-05T18:31:18.144910+00:00",
+   "p_action": null,
+   "p_answer_id": "msg_011CgkFwCpnabigE3yXwre8m",
+   "p_call_id": null,
+   "p_channel": "3a41c263-c235-477c-9b26-171588e48e9b",
+   "p_cwd": null,
+   "p_kind": null,
+   "p_poller": null,
+   "p_read_id": 2,
+   "p_words": null,
+   "payload_json": "{\"stop\": \"tool_use\"}",
+   "row_id": 23,
+   "text": null,
+   "tokens": 7
+  },
+  {
+   "_at": 1793903478.743202,
+   "counted": 1,
+   "event_id": "sha256:6b196b9de2e61da71d37924f03a262ec0e9efb73b70099a23a6674912803c4c5",
+   "event_type_id": 3,
+   "inserted_at": "2026-11-05T18:31:18.743202+00:00",
+   "p_action": "shell",
+   "p_answer_id": null,
+   "p_call_id": "toolu_017hSZENbhTgnNC6tubpZo1E",
+   "p_channel": "3a41c263-c235-477c-9b26-171588e48e9b",
+   "p_cwd": "/tmp/claude-501/sl/cwd",
+   "p_kind": "tool_call",
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "payload_json": "{\"content\": [{\"caller\": {\"type\": \"direct\"}, \"id\": \"toolu_017hSZENbhTgnNC6tubpZo1E\", \"input\": {\"command\": \"ls -la\", \"description\": \"List all files in current directory\"}, \"name\": \"Bash\", \"type\": \"tool_use\"}], \"role\": \"assistant\"}",
+   "row_id": 24,
+   "text": "Bash({\"command\": \"ls -la\", \"description\": \"List all files in current directory\"})",
+   "tokens": 82
+  },
+  {
+   "_at": 1793903478.743344,
+   "counted": 1,
+   "event_id": "sha256:742d75b40c709dd9082c389ca2b4d870ba4b147144ec8c6b8aca2c0bb0a1cb97",
+   "event_type_id": 4,
+   "inserted_at": "2026-11-05T18:31:18.743344+00:00",
+   "p_action": null,
+   "p_answer_id": null,
+   "p_call_id": "toolu_017hSZENbhTgnNC6tubpZo1E",
+   "p_channel": "3a41c263-c235-477c-9b26-171588e48e9b",
+   "p_cwd": "/tmp/claude-501/sl/cwd",
+   "p_kind": "tool_result",
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "payload_json": "{\"content\": [{\"content\": \"total 0\\ndrwxr-xr-x@  2 user  wheel    64 Nov  2 19:57 .\\ndrwxr-xr-x@ 71 user  wheel  2272 Nov  3 13:30 ..\", \"is_error\": false, \"tool_use_id\": \"toolu_017hSZENbhTgnNC6tubpZo1E\", \"type\": \"tool_result\"}], \"role\": \"user\"}",
+   "row_id": 25,
+   "text": "total 0\ndrwxr-xr-x@  2 user  wheel    64 Nov  2 19:57 .\ndrwxr-xr-x@ 71 user  wheel  2272 Nov  3 13:30 ..",
+   "tokens": 74
+  },
+  {
+   "_at": 1793903478.75417,
+   "counted": null,
+   "event_id": "call:63bfbc6e7a8a401e87bab799977a721f",
+   "event_type_id": 9,
+   "inserted_at": "2026-11-05T18:31:18.754170+00:00",
+   "p_action": null,
+   "p_answer_id": null,
+   "p_call_id": null,
+   "p_channel": "3a41c263-c235-477c-9b26-171588e48e9b",
+   "p_cwd": null,
+   "p_kind": null,
+   "p_poller": null,
+   "p_read_id": 3,
+   "p_words": null,
+   "payload_json": "{\"derives\": true, \"harness\": \"claude\", \"kind\": \"turn\", \"version\": \"2.1.318\"}",
+   "row_id": 26,
+   "text": null,
+   "tokens": 30
+  },
+  {
+   "_at": 1793903479.04384,
+   "counted": null,
+   "event_id": "file_touched:toolu_017hSZENbhTgnNC6tubpZo1E:-:-",
+   "event_type_id": 16,
+   "inserted_at": "2026-11-05T18:31:19.043840+00:00",
+   "p_action": null,
+   "p_answer_id": null,
+   "p_call_id": "toolu_017hSZENbhTgnNC6tubpZo1E",
+   "p_channel": "3a41c263-c235-477c-9b26-171588e48e9b",
+   "p_cwd": null,
+   "p_kind": null,
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "payload_json": "{\"call\": \"toolu_017hSZENbhTgnNC6tubpZo1E\", \"checked\": null, \"detail\": {}, \"how\": null, \"named\": null, \"path\": null}",
+   "row_id": 27,
+   "text": null,
+   "tokens": 47
+  },
+  {
+   "_at": 1793903479.550755,
+   "counted": null,
+   "event_id": "msg_011CgkFwN2SNUvgkda7LT672:0",
+   "event_type_id": 14,
+   "inserted_at": "2026-11-05T18:31:19.550755+00:00",
+   "p_action": null,
+   "p_answer_id": "msg_011CgkFwN2SNUvgkda7LT672",
+   "p_call_id": null,
+   "p_channel": "3a41c263-c235-477c-9b26-171588e48e9b",
+   "p_cwd": null,
+   "p_kind": null,
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "payload_json": "{\"payload\": {\"content\": [{\"text\": \"`ls -la` lists 2 entries: `.` and `..`. The directory is empty apart from those two.\", \"type\": \"text\"}], \"role\": \"assistant\"}, \"properties\": {\"kind\": \"agent\"}, \"text\": \"`ls -la` lists 2 entries: `.` and `..`. The directory is empty apart from those two.\", \"type\": \"agent_message\"}",
+   "row_id": 28,
+   "text": null,
+   "tokens": 91
+  },
+  {
+   "_at": 1793903479.550914,
+   "counted": null,
+   "event_id": "msg_011CgkFwN2SNUvgkda7LT672:end",
+   "event_type_id": 15,
+   "inserted_at": "2026-11-05T18:31:19.550914+00:00",
+   "p_action": null,
+   "p_answer_id": "msg_011CgkFwN2SNUvgkda7LT672",
+   "p_call_id": null,
+   "p_channel": "3a41c263-c235-477c-9b26-171588e48e9b",
+   "p_cwd": null,
+   "p_kind": null,
+   "p_poller": null,
+   "p_read_id": 3,
+   "p_words": null,
+   "payload_json": "{\"stop\": \"end_turn\"}",
+   "row_id": 29,
+   "text": null,
+   "tokens": 7
+  },
+  {
+   "_at": 1793903479.565894,
+   "counted": null,
+   "event_id": "sha256:bd0833f226df493ef796eeb6b605674a23585997b6ee73505988e27c12f061cb",
+   "event_type_id": 2,
+   "inserted_at": "2026-11-05T18:31:19.565894+00:00",
+   "p_action": null,
+   "p_answer_id": null,
+   "p_call_id": null,
+   "p_channel": "3a41c263-c235-477c-9b26-171588e48e9b",
+   "p_cwd": "/tmp/claude-501/sl/cwd",
+   "p_kind": "agent",
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "payload_json": "{\"content\": [{\"text\": \"`ls -la` lists 2 entries: `.` and `..`. The directory is empty apart from those two.\", \"type\": \"text\"}], \"role\": \"assistant\"}",
+   "row_id": 30,
+   "text": "`ls -la` lists 2 entries: `.` and `..`. The directory is empty apart from those two.",
+   "tokens": 25
+  },
+  {
+   "_at": 1793903479.571564,
+   "counted": null,
+   "event_id": "call:09216cfb4fd5488eb86bb162cc813dda",
+   "event_type_id": 9,
+   "inserted_at": "2026-11-05T18:31:19.571564+00:00",
+   "p_action": null,
+   "p_answer_id": null,
+   "p_call_id": null,
+   "p_channel": "3a41c263-c235-477c-9b26-171588e48e9b",
+   "p_cwd": null,
+   "p_kind": null,
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "payload_json": "{\"derives\": true, \"harness\": \"claude\", \"kind\": \"suggestion\", \"version\": \"2.1.318\"}",
+   "row_id": 31,
+   "text": null,
+   "tokens": 31
+  }
+ ],
+ "gatherer": "rec1793903450",
+ "recorded": 1793903491.500853,
+ "sampled": {
+  "_boundaries": [
+   {
+    "at": 1793903475.406192,
+    "rows": []
+   }
+  ],
+  "_builds": [
+   {
+    "at": 1793903475.406192,
+    "rows": []
+   }
+  ],
+  "_withdrawn": [
+   {
+    "at": 1793903475.406192,
+    "rows": []
+   }
+  ]
+ },
+ "schema": [
+  "CREATE TABLE event_types (\n    event_type_id INTEGER PRIMARY KEY,\n    name        TEXT    NOT NULL UNIQUE,  -- what identifies the type (e.g. user_message)\n    created_at  TEXT    NOT NULL    -- UTC time the type was defined\n)",
+  "CREATE TABLE events (\n    row_id      INTEGER PRIMARY KEY,  -- insertion order; what `read` sorts by. Not\n                                      -- AUTOINCREMENT: that spends an id (and a\n                                      -- write) on every duplicate DO NOTHING\n                                      -- skips. Rows are never deleted, so ids\n                                      -- are never reused either way.\n    inserted_at TEXT    NOT NULL,   -- UTC time the event was first stored\n    event_id    TEXT,               -- the caller's id for the event: what makes a\n                                    -- re-sent event a duplicate. NULL = the caller\n                                    -- gave none; the row is then its own event,\n                                    -- known by row_id, and never a duplicate.\n    event_type_id INTEGER NOT NULL REFERENCES event_types (event_type_id),\n    payload_json TEXT   NOT NULL,   -- the payload, as given\n    tokens      INTEGER NOT NULL,   -- the caller's count if it gave one, else the\n                                    -- tokenizer's count of `text` (of payload_json\n                                    -- without one), taken at insert\n    text        TEXT,               -- the event's readable text, as the caller gave it:\n                                    -- what a policy shows and counts of it. NULL: none\n    counted     INTEGER             -- 1: `tokens` is the model's provider's count, set after\n                                    -- insert (`record_counts`); NULL: the caller's or the tokenizer's\n                                    -- given; its payload as JSON stands in\n                                    -- (then a p_<name> column per property: add_properties)\n, p_channel, p_cwd, p_poller, p_kind, p_words, p_read_id, p_answer_id, p_action, p_call_id)",
+  "CREATE TABLE event_type_properties (\n    event_type_id INTEGER NOT NULL REFERENCES event_types (event_type_id),\n    name        TEXT    NOT NULL,   -- the property; its column is p_<name>\n    required    INTEGER NOT NULL,   -- 1: an event of the type must carry it\n    identifies  INTEGER NOT NULL DEFAULT 0,   -- 1: part of an event's identity, with its id\n    PRIMARY KEY (event_type_id, name)\n)",
+  "CREATE TABLE _made_items (\n    made_id     INTEGER PRIMARY KEY,\n    created_at  TEXT    NOT NULL,   -- (and the properties of the read it was made for)\n    name        TEXT,               -- what it is, in the manager's terms\n    source      TEXT,               -- what made it, in the manager's terms (e.g. a build)\n    item_json   TEXT    NOT NULL,   -- the item, exactly as returned by read\n    tokens      INTEGER,            -- its size, by the manager's tokenizer (or, `counted`, the provider's)\n    counted     INTEGER,            -- 1: `tokens` is the provider's count (`record_counts`)\n    sha         TEXT                -- of its name, source and text (`made_sha`): what makes it the same item;\n                                    -- NULL: made by an older ag, not yet folded (migrate.py)\n, p_channel, p_cwd, p_poller, p_kind, p_words, p_read_id, p_answer_id, p_action, p_call_id)",
+  "CREATE TABLE _reads (\n    read_id     INTEGER PRIMARY KEY,\n    read_at     TEXT    NOT NULL,   -- (and the read's properties)\n    row_id      INTEGER,            -- the event (an events row) the read responded to\n    manager     TEXT,               -- which implementation read\n    basis       TEXT,               -- what the context was built from, in the\n                                    -- manager's terms (e.g. a build id); NULL = none\n    est_tokens  INTEGER,            -- the context's size by the manager's own count; NULL = not given\n    real_tokens INTEGER,            -- its size as the model's provider counted it (the\n                                    -- call's input tokens, reported after it); NULL = not yet\n    limit_tokens INTEGER,           -- the harness's own limit the call stated (where it compacts,\n                                    -- or its window ends); NULL = none\n    preamble_json TEXT,             -- the harness's preamble the call stated: the _preambles it\n                                    -- sent besides its messages, as a JSON list of ids; NULL = none\n    sent_tokens INTEGER,            -- all the call sent -- every item and the preamble -- as the\n                                    -- manager counted it at the read (less what the harness then\n                                    -- left out, as it reports); NULL = not known\n    pid         INTEGER,            -- the harness's process that made the call, and when it started\n    pid_started TEXT,               -- (\"<boot id>:<start ticks>\", so a reused pid is not it); NULL = not known\n    run         TEXT,               -- the harness's run that made the call, as its launcher named it (the hook\n                                    -- server's /r/<run>/: codex's, the id of the process ag started); NULL = none\n    error_status INTEGER,           -- no longer set: a failed call is a `call_failed` event (an older\n    error       TEXT,               -- file's copied there once, `_migrated`)\n    answered_at TEXT,               -- no longer set: an answer is its `reply_end` event\n    context_id  INTEGER             -- the reads it shares its context with: those with the same properties\n                                    -- (set as it is logged, `_reads_context`); NULL: an older file's, until moved\n, p_channel, p_cwd, p_poller, p_kind, p_words, p_read_id, p_answer_id, p_action, p_call_id)",
+  "CREATE TABLE _contexts (\n    context_id  INTEGER PRIMARY KEY,\n    key         TEXT    NOT NULL UNIQUE   -- the properties set, as JSON, by name (`context_key`)\n)",
+  "CREATE TABLE _preambles (\n    preamble_id INTEGER PRIMARY KEY,\n    name        TEXT    NOT NULL,   -- what it is, as the harness names it: \"instructions\", \"tools\", ...\n    sha         TEXT    NOT NULL UNIQUE,   -- of the name and the text\n    text        TEXT    NOT NULL,\n    tokens      INTEGER,            -- its size, by the manager's tokenizer (or, `counted`, the provider's)\n    counted     INTEGER             -- 1: `tokens` is the provider's count (`record_counts`)\n)",
+  "CREATE TABLE _read_items (\n    read_id     INTEGER NOT NULL,\n    position    INTEGER NOT NULL,\n    row_id      INTEGER,\n    made_id     INTEGER,\n    PRIMARY KEY (read_id, position),\n    CHECK ((row_id IS NULL) != (made_id IS NULL))\n)",
+  "CREATE TABLE _stays (\n    context_id  INTEGER NOT NULL,\n    position    INTEGER NOT NULL,\n    row_id      INTEGER,\n    made_id     INTEGER,\n    from_read   INTEGER NOT NULL,\n    to_read     INTEGER,\n    CHECK ((row_id IS NULL) != (made_id IS NULL))\n)",
+  "CREATE TABLE _made_folded (\n    old         INTEGER PRIMARY KEY,\n    made_id     INTEGER NOT NULL\n) WITHOUT ROWID",
+  "CREATE TABLE _polls (\n    name        TEXT    PRIMARY KEY,    -- the poller's name\n    polled_at   REAL    NOT NULL        -- seconds since the epoch\n)",
+  "CREATE TABLE _withdrawn (\n    row_id       INTEGER PRIMARY KEY,  -- the event (an events row)\n    withdrawn_at TEXT    NOT NULL,     -- when (UTC, ISO)\n    read_id      INTEGER               -- the read of the call it came with; NULL = not known\n)",
+  "CREATE TABLE _open (\n    session     TEXT    PRIMARY KEY,   -- the session: its calls' `channel`\n    pid         INTEGER NOT NULL,      -- the harness's process, and when it started\n    pid_started TEXT    NOT NULL,      -- (\"<boot id>:<start ticks>\", as _reads has it)\n    opened_at   TEXT    NOT NULL,\n    opened_by   TEXT,                  -- what claimed it: \"launcher\", \"call\"\n    yields      INTEGER NOT NULL DEFAULT 0   -- 1: idle, and gives way to another process's claim\n)",
+  "CREATE TABLE _migrated (\n    name        TEXT    PRIMARY KEY,\n    at          TEXT    NOT NULL\n)",
+  "CREATE TABLE tasks (\n    channel_key    TEXT    NOT NULL,\n    task_index     INTEGER NOT NULL,\n    name           TEXT    NOT NULL,\n    description    TEXT,\n    first_row      INTEGER NOT NULL,\n    last_row       INTEGER NOT NULL,\n    tokens         INTEGER,\n    retention_json TEXT,\n    PRIMARY KEY (channel_key, task_index)\n)",
+  "CREATE TABLE cleaned_messages (\n    row_id      INTEGER PRIMARY KEY,\n    text        TEXT    NOT NULL,\n    build_id    INTEGER                  -- the build whose summary wrote it\n)",
+  "CREATE TABLE _builds (\n    build_id          INTEGER PRIMARY KEY,\n    channel_key       TEXT NOT NULL,\n    status            TEXT NOT NULL,     -- running / ready / failed / nothing\n    started_at        REAL NOT NULL,\n    finished_at       REAL,\n    through_row       INTEGER,           -- the last row the analysis saw\n    open_from_row     INTEGER,           -- where the running (open) task starts\n    ranking_json      TEXT,              -- earlier tasks, most relevant first: [[channel_key, task_index], ...]\n    parallel_mark     INTEGER,           -- other channels' rows up to here were seen\n    error             TEXT,\n    reason            TEXT               -- why it was started: limit / boundary / request / direct\n)",
+  "CREATE TABLE _boundaries (\n    row_id      INTEGER PRIMARY KEY,     -- the user message (an events row)\n    channel_key TEXT NOT NULL,\n    asked_at    REAL NOT NULL,\n    decided_at  REAL,\n    new_task    INTEGER,                 -- 1 / 0; NULL = not decided yet\n    why         TEXT\n)",
+  "CREATE INDEX events_type ON events (event_type_id)",
+  "CREATE INDEX _stays_open ON _stays (context_id, position) WHERE to_read IS NULL",
+  "CREATE INDEX _stays_from ON _stays (context_id, from_read)",
+  "CREATE INDEX _reads_context ON _reads (context_id, read_id)",
+  "CREATE INDEX _read_items_row ON _read_items (row_id)",
+  "CREATE UNIQUE INDEX _made_items_sha ON _made_items (sha)",
+  "CREATE INDEX _builds_channel ON _builds (channel_key, build_id)",
+  "CREATE UNIQUE INDEX events_id ON events (ifnull(p_channel, ''), event_id)",
+  "CREATE INDEX _reads_properties ON _reads (ifnull(p_channel, ''), ifnull(p_cwd, ''), ifnull(p_poller, ''), ifnull(p_kind, ''), ifnull(p_words, ''), ifnull(p_read_id, ''), ifnull(p_answer_id, ''), ifnull(p_action, ''), ifnull(p_call_id, ''), read_id)",
+  "CREATE TRIGGER _reads_context AFTER INSERT ON _reads WHEN NEW.context_id IS NULL BEGIN INSERT OR IGNORE INTO _contexts (key) VALUES (json_patch('{}', json_object('action', NEW.p_action, 'answer_id', NEW.p_answer_id, 'call_id', NEW.p_call_id, 'channel', NEW.p_channel, 'cwd', NEW.p_cwd, 'kind', NEW.p_kind, 'poller', NEW.p_poller, 'read_id', NEW.p_read_id, 'words', NEW.p_words))); UPDATE _reads SET context_id = (SELECT context_id FROM _contexts WHERE key = json_patch('{}', json_object('action', NEW.p_action, 'answer_id', NEW.p_answer_id, 'call_id', NEW.p_call_id, 'channel', NEW.p_channel, 'cwd', NEW.p_cwd, 'kind', NEW.p_kind, 'poller', NEW.p_poller, 'read_id', NEW.p_read_id, 'words', NEW.p_words))) WHERE read_id = NEW.read_id; END"
+ ],
+ "sessions": [
+  {
+   "at": 1793903475.406192,
+   "state": {
+    "session": {
+     "ended": 0.0,
+     "queued": [],
+     "started_as": null,
+     "status": "terminal",
+     "stopped_at": null,
+     "terminal": true
+    },
+    "status": "idle"
+   }
+  },
+  {
+   "at": 1793903476.630223,
+   "state": {
+    "session": {
+     "ended": 0.0,
+     "queued": [],
+     "started_as": null,
+     "status": "terminal",
+     "stopped_at": null,
+     "terminal": true
+    },
+    "status": "running"
+   }
+  },
+  {
+   "at": 1793903479.597572,
+   "state": {
+    "session": {
+     "ended": 0.0,
+     "queued": [],
+     "started_as": null,
+     "status": "terminal",
+     "stopped_at": null,
+     "terminal": true
+    },
+    "status": "idle"
+   }
+  }
+ ]
+}
