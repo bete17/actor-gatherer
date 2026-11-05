@@ -19,3 +19,6 @@ ag_dashboard/static/
 # Playwright's runs (frontend/e2e)
 frontend/test-results/
 frontend/playwright-report/
+# the desktop app's Playwright runs (desktop/e2e); its build is dist/, above
+desktop/test-results/
+desktop/playwright-report/

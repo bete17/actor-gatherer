@@ -233,6 +233,10 @@ class InstructionsError(ValueError):
     """Instructions the harness cannot be given for a run (`Harness.instruction_args`): why, in a few words."""
 
 
+class TrustError(ValueError):
+    """A folder the harness could not be made to trust before it starts (`Harness.trust`): why, in a few words."""
+
+
 def picked(ask: dict, choice: dict) -> List[dict]:
     """Each question of a question `ask` with what `choice` picked for it: {question, multi, count (its options),
     places (the picked options', from 0), labels (theirs), text (the reader's own answer, or None)}. `choice`:
@@ -455,6 +459,13 @@ class Harness(ABC):
         (`instruction_args`); `cwd`, the directory it is started in (and runs in), for a harness that must be told it.
         The message it starts with goes after them, after `--`."""
         raise NotImplementedError(f"{self.label or self.name or 'this harness'} is not run in a terminal here")
+
+    def trust(self, cwd: str, env: Optional[Dict[str, str]] = None) -> List[str]:
+        """What makes it start in `cwd` without first asking, in its terminal, whether to trust the folder -- a question
+        that holds back the message it is started with until someone answers it there. Its arguments for that (put
+        before `command`'s), after doing whatever must be done before it starts; `env`, the environment it runs in.
+        [] where it does not ask, or `command` already sees to it. Raises TrustError where it could not: it asks."""
+        return []
 
     # ---- its own files: what it keeps for itself, and where a reader saves what it reads
 

@@ -81,7 +81,11 @@ TEMPLATE = '''# This home's settings, by who reads them:
 #   [dashboard]             ag dashboard: `chat = "headless"` sends a message to an
 #                           actor with no terminal open to an agent with no screen
 #                           (`claude -p`, `codex exec`); the default, "terminal",
-#                           opens the actor's terminal with it. `browser = "<path>"`:
+#                           opens the actor's terminal with it. `trust_folders = false`:
+#                           Claude Code and Codex ask in an actor's terminal whether to
+#                           trust its folder, as they do on their own; by default ag
+#                           trusts it for them (Codex for that run; Claude Code saves it
+#                           in ~/.claude.json, as its own "Yes" does). `browser = "<path>"`:
 #                           the Chrome a Browser runs (else one installed is found);
 #                           `browser_profile = "mine"`: Browsers run in your own Chrome,
 #                           your logins and history (turn on its remote debugging at

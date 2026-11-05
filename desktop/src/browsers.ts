@@ -1,0 +1,577 @@
+// The Browsers' native pages (desktop/DESIGN.md, "The app link" and "A tab in its pane"). Each Browser tab ag opens is a
+// WebContentsView in the app's window, kept over the pane that shows it and hidden otherwise. ag drives them with the
+// Chrome DevTools Protocol, over one WebSocket the app opens to its dashboard (`Link`): the app plays the browser's part
+// -- its targets are these pages, each session a page's own in-app connection (webContents.debugger). The app opens no
+// debugging port: Google refuses a sign-in in a browser that has one (desktop/DESIGN.md, "Rules the app keeps").
+import { clipboard, dialog, Menu, session, WebContentsView, type BaseWindow, type IpcMainEvent, type WebContents } from "electron";
+import { randomBytes, randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
+
+export const PARTITION = "persist:browsers"; // the pages' profile, in the app's folder in the home: logins last
+const RECONNECT = [1000, 2000, 5000, 10_000]; // ms between tries to reach the dashboard again
+
+export type Stage = { x: number; y: number; w: number; h: number; key: string; target: string; covered?: boolean };
+type Log = (...parts: unknown[]) => void;
+/** A page, and what ag said of it: its user's input `held` off it while the agent acts (App.hold); their Esc ag's
+ * (`esc`, App.esc: to stop the agent, or end a Pick); a still picture shown in its place while something of the
+ * dashboard's covers its pane (`still`); the dialog it waits on (`asking`: page-preload.cts). */
+type Page = { view: WebContentsView; opener?: string; held?: boolean; esc?: boolean; still?: boolean; asking?: Asking };
+type Asking = { event: IpcMainEvent; type: string; given: string };
+export type Dialog = { type: string; message: string; default: string };
+/** Where the pages' files go: page-preload.cjs; the home's downloads folder (ag's own Chrome's too); the user's
+ * answers to sites' permission asks, kept. */
+export type Places = { pagePreload: string; downloads: string; permissions: string };
+
+// Sites' permission asks (Electron grants every one unless told): asked of the user, once per site, as Chrome does;
+// those Chrome grants unasked, granted; the rest refused.
+const ASKED: Record<string, string> = {
+  media: "use your camera or microphone",
+  geolocation: "know your location",
+  notifications: "show notifications",
+  "clipboard-read": "see text and images you copy",
+  "display-capture": "share your screen",
+  midiSysex: "control your MIDI devices",
+  "idle-detection": "know when you're using this device",
+  "window-management": "manage windows on your displays",
+  "storage-access": "use cookies and site data from other sites",
+  "top-level-storage-access": "use cookies and site data from other sites",
+  "speaker-selection": "choose your speakers",
+  openExternal: "open an app on your Mac",
+  fileSystem: "edit files on your Mac",
+};
+const GRANTED = new Set(["clipboard-sanitized-write", "pointerLock", "background-sync"]);
+
+/** A file name in `dir` not taken yet: "report (1).pdf" after "report.pdf", as Chrome names a second download. */
+function freshPath(dir: string, name: string): string {
+  const safe = path.basename(name) || "download";
+  const ext = path.extname(safe), stem = safe.slice(0, safe.length - ext.length);
+  for (let n = 0; ; n++) {
+    const candidate = path.join(dir, n ? `${stem} (${n})${ext}` : safe);
+    if (!existsSync(candidate)) return candidate;
+  }
+}
+
+/** The id Chrome gives a page: ag compares a tab's main frame id with it, so it must be Chrome's own. */
+async function targetIdOf(wc: WebContents): Promise<string> {
+  const attached = wc.debugger.isAttached();
+  if (!attached) wc.debugger.attach("1.3");
+  try {
+    return ((await wc.debugger.sendCommand("Target.getTargetInfo")) as { targetInfo: { targetId: string } }).targetInfo
+      .targetId;
+  } finally {
+    if (!attached) wc.debugger.detach();
+  }
+}
+
+function contextMenu(win: BaseWindow, wc: WebContents, find: () => void): void {
+  wc.on("context-menu", (_e, p) => {
+    const items: Electron.MenuItemConstructorOptions[] = [];
+    if (p.linkURL) items.push({ label: "Copy Link Address", click: () => clipboard.writeText(p.linkURL) }, { type: "separator" });
+    if (p.isEditable) items.push({ role: "cut" }, { role: "copy" }, { role: "paste" }, { role: "selectAll" });
+    else if (p.selectionText) items.push({ role: "copy" });
+    const nav = wc.navigationHistory;
+    items.push(
+      { type: "separator" },
+      { label: "Back", enabled: nav.canGoBack(), click: () => nav.goBack() },
+      { label: "Forward", enabled: nav.canGoForward(), click: () => nav.goForward() },
+      { label: "Reload", click: () => wc.reload() },
+      { type: "separator" },
+      { label: "Find in Page…", click: find },
+    );
+    Menu.buildFromTemplate(items).popup({ window: win });
+  });
+}
+
+/** The pages, in `win`, each over the pane that shows it. */
+export class Pages {
+  private pages = new Map<string, Page>();
+  private stages: Stage[] = [];
+  /** The link's, while connected: what ag is told of a page made, changed, gone; the user's Esc on one, ag's. */
+  hooks: {
+    created?: (id: string) => void;
+    changed?: (id: string) => void;
+    destroyed?: (id: string) => void;
+    escape?: (id: string) => void;
+    findBar?: (id: string) => void;
+    dialog?: (id: string, d: Dialog) => void;
+    download?: (begun: Record<string, string>) => void;
+    downloaded?: (done: Record<string, string>) => void;
+  } = {};
+  private shield: WebContentsView | null = null; // over a page whose input is held: takes the user's clicks, not ag's
+  private static current: Pages | null = null; // the pages the profile's downloads and permission asks are for
+
+  constructor(
+    private win: BaseWindow,
+    private log: Log,
+    private still: (target: string, url: string | null) => void, // a page's still picture to the dashboard, or none
+    private places: Places,
+  ) {
+    if (!Pages.current) Pages.serve();
+    Pages.current = this;
+  }
+
+  /** The pages' profile's downloads, into the home's downloads folder, told to ag as Chrome tells them (so the
+   * dashboard lists them, as for its own Chrome); and sites' permission asks, put to the user. Once per app. */
+  private static serve(): void {
+    const profile = session.fromPartition(PARTITION);
+    profile.on("will-download", (_event, item, wc) => {
+      const pages = Pages.current;
+      if (!pages) return item.cancel();
+      mkdirSync(pages.places.downloads, { recursive: true });
+      const guid = randomUUID(), file = freshPath(pages.places.downloads, item.getFilename());
+      item.setSavePath(file);
+      pages.hooks.download?.({ guid, url: item.getURL(), suggestedFilename: path.basename(file), frameId: pages.idOf(wc) ?? "" });
+      item.once("done", (_e, state) =>
+        pages.hooks.downloaded?.({ guid, state: state === "completed" ? "completed" : "canceled", filePath: file }),
+      );
+    });
+    profile.setPermissionCheckHandler((_wc, permission, origin) => GRANTED.has(permission) || Pages.current?.kept(origin, permission) === true);
+    profile.setPermissionRequestHandler((wc, permission, callback, details) => {
+      const pages = Pages.current;
+      if (!pages || GRANTED.has(permission)) return callback(!!pages);
+      if (!ASKED[permission]) return callback(false);
+      void pages.ask(wc, permission, details).then(callback);
+    });
+  }
+
+  private remembered(): Record<string, boolean> {
+    try {
+      return JSON.parse(readFileSync(this.places.permissions, "utf8")) as Record<string, boolean>;
+    } catch {
+      return {};
+    }
+  }
+
+  private kept(origin: string, permission: string): boolean | undefined {
+    return this.remembered()[`${origin} ${permission}`];
+  }
+
+  /** The user's answer to a site's ask, from the app's own dialog over the window -- kept for that site. */
+  private async ask(wc: WebContents, permission: string, details: Electron.PermissionRequest): Promise<boolean> {
+    let origin = "";
+    try {
+      origin = new URL(details.requestingUrl || wc.getURL()).origin;
+    } catch {
+      return false;
+    }
+    const kept = this.kept(origin, permission);
+    if (kept !== undefined) return kept;
+    const external = (details as { externalURL?: string }).externalURL;
+    let what = ASKED[permission];
+    if (permission === "openExternal" && external) {
+      try {
+        what = `open ${new URL(external).protocol.replace(/:$/, "")} links in an app on your Mac`;
+      } catch {
+        // (as asked)
+      }
+    }
+    const { response } = await dialog.showMessageBox(this.win, {
+      type: "question", message: `${new URL(origin).host} wants to ${what}`, buttons: ["Allow", "Block"], defaultId: 1, cancelId: 1,
+    });
+    const all = this.remembered();
+    all[`${origin} ${permission}`] = response === 0;
+    try {
+      writeFileSync(this.places.permissions, JSON.stringify(all, null, 2));
+    } catch {
+      // not kept: asked again next time
+    }
+    return response === 0;
+  }
+
+  idOf(wc: WebContents): string | undefined {
+    for (const [id, p] of this.pages) if (p.view.webContents === wc) return id;
+    return undefined;
+  }
+
+  /** A page's alert, confirm or prompt (page-preload.cts): told to ag as Chrome's own dialog would be, the page waiting
+   * until it is answered (`answer`) -- or, with no ag to tell, answered as a cancel at once. */
+  dialog(event: IpcMainEvent, d: Dialog): void {
+    const id = this.idOf(event.sender);
+    const p = id ? this.pages.get(id) : undefined;
+    if (!id || !p || p.asking || !this.hooks.dialog) {
+      event.returnValue = d.type === "confirm" ? false : null;
+      return;
+    }
+    p.asking = { event, type: d.type, given: d.default };
+    this.hooks.dialog(id, d);
+  }
+
+  /** Whether the page waits on a dialog of this app's: it answers nothing else then (page-preload.cts holds it). */
+  waiting(id: string): boolean {
+    return !!this.pages.get(id)?.asking;
+  }
+
+  /** ag's answer (Page.handleJavaScriptDialog): false if the page waits on no dialog of this app's. */
+  answer(id: string, accept: boolean, text?: string): boolean {
+    const p = this.pages.get(id);
+    const a = p?.asking;
+    if (!p || !a) return false;
+    p.asking = undefined;
+    a.event.returnValue = a.type === "confirm" ? accept : a.type === "prompt" ? (accept ? (text ?? a.given) : null) : null;
+    return true;
+  }
+
+  /** Chrome's own find in a page, as the dashboard's find bar asks (browser.py's `find`): the first match, else
+   * (`again`) the next or the one before (`back`): {count, index}. None asked: the finding ended. */
+  find(id: string, q: string, back: boolean, again: boolean): Promise<{ count: number; index: number }> {
+    const wc = this.contents(id);
+    if (!wc || !q) {
+      wc?.stopFindInPage("clearSelection");
+      return Promise.resolve({ count: 0, index: -1 });
+    }
+    return new Promise((resolve) => {
+      let asked = -1;
+      const done = (r: { count: number; index: number }) => {
+        clearTimeout(timer);
+        wc.off("found-in-page", on);
+        resolve(r);
+      };
+      const on = (_e: Electron.Event, r: Electron.Result) => {
+        if (r.requestId === asked && r.finalUpdate) done({ count: r.matches, index: r.matches ? r.activeMatchOrdinal - 1 : -1 });
+      };
+      const timer = setTimeout(() => done({ count: 0, index: -1 }), 3000);
+      wc.on("found-in-page", on);
+      asked = wc.findInPage(q, { forward: !back, findNext: !again });
+    });
+  }
+
+  ids(): string[] {
+    return [...this.pages.keys()];
+  }
+
+  contents(id: string): WebContents | undefined {
+    return this.pages.get(id)?.view.webContents;
+  }
+
+  /** The page as Chrome's Target domain describes one. */
+  info(id: string): Record<string, unknown> {
+    const p = this.pages.get(id)!;
+    const wc = p.view.webContents;
+    return {
+      targetId: id,
+      type: "page",
+      title: wc.getTitle(),
+      url: wc.getURL(),
+      attached: wc.debugger.isAttached(),
+      canAccessOpener: !!p.opener,
+      ...(p.opener ? { openerId: p.opener } : {}),
+      browserContextId: "app",
+    };
+  }
+
+  /** A new page, at `url`: its target id. */
+  async make(url: string): Promise<string> {
+    const view = new WebContentsView({
+      webPreferences: { partition: PARTITION, sandbox: true, contextIsolation: true, backgroundThrottling: false,
+        preload: this.places.pagePreload },
+    });
+    const id = await this.setUp(view);
+    view.webContents.loadURL(url || "about:blank").catch(() => {});
+    return id;
+  }
+
+  /** A page in the window, ag told of it: one ag asked for, or a popup a page opened (`opener`: that page's id). A popup
+   * opens as a real one -- its opener keeps its hold on it (window.opener), as a sign-in popup ("Continue with Google")
+   * needs, to hand its result back -- and ag shows it as a tab of the Browser's. */
+  private async setUp(view: WebContentsView, opener?: string): Promise<string> {
+    view.setVisible(false);
+    this.win.contentView.addChildView(view);
+    const wc = view.webContents;
+    let id = "";
+    wc.setWindowOpenHandler(() => ({
+      action: "allow",
+      createWindow: (options) => {
+        // (Electron hands the new window's WebContents in `options`, though its types don't say so)
+        const opened = (options as { webContents?: WebContents }).webContents;
+        const popup = new WebContentsView({ webContents: opened } as Electron.WebContentsViewConstructorOptions);
+        this.setUp(popup, id).catch((err) => this.log("popup not set up:", err));
+        return popup.webContents;
+      },
+    }));
+    contextMenu(this.win, wc, () => this.hooks.findBar?.(id));
+    // Leaving a page that asks to be stayed on ("Leave site?"): left -- the agent's navigations among them, which no
+    // one would be there to answer. (Electron would stay, asking no one.)
+    wc.on("will-prevent-unload", (event) => event.preventDefault());
+    // The user's keys (ag's own, sent over the link, never come here): Esc to ag when it is ag's; none while held.
+    wc.on("before-input-event", (event, input) => {
+      const p = this.pages.get(id);
+      if (!p) return;
+      if (p.esc && input.type === "keyDown" && input.key === "Escape") {
+        event.preventDefault();
+        this.hooks.escape?.(id);
+      } else if (p.held) event.preventDefault();
+    });
+    id = await targetIdOf(wc);
+    this.pages.set(id, { view, opener });
+    wc.on("destroyed", () => this.gone(id)); // closed by ag, or by its own page (a popup done: window.close)
+    for (const ev of ["did-navigate", "did-navigate-in-page", "page-title-updated"] as const)
+      wc.on(ev as "did-navigate", () => this.hooks.changed?.(id));
+    this.hooks.created?.(id);
+    this.place();
+    return id;
+  }
+
+  private gone(id: string): void {
+    const p = this.pages.get(id);
+    if (!p) return;
+    this.pages.delete(id);
+    try {
+      this.win.contentView.removeChildView(p.view);
+    } catch {
+      // the window is gone
+    }
+    this.hooks.destroyed?.(id);
+    this.place();
+  }
+
+  close(id: string): boolean {
+    const p = this.pages.get(id);
+    if (!p) return false;
+    p.view.webContents.close(); // its "destroyed" takes it out
+    return true;
+  }
+
+  /** Every page closed: the link is gone, so its Browsers are paused (ag opens them again when it is back). */
+  closeAll(): void {
+    for (const id of this.ids()) {
+      this.answer(id, false); // (a page waiting on a dialog: let go first)
+      this.close(id);
+    }
+  }
+
+  /** Each pane's page over it, the others hidden -- or, while something of the dashboard's covers the pane, a still
+   * picture of the page in its place (the page hidden once the picture is there). `stages`: where the panes are now. */
+  place(stages?: Stage[]): void {
+    if (stages) this.stages = stages;
+    const shown = new Set<string>();
+    let shielded: Electron.Rectangle | null = null;
+    for (const s of this.stages) {
+      const p = this.pages.get(s.target);
+      if (!p || shown.has(s.target)) continue;
+      shown.add(s.target);
+      const bounds = { x: Math.round(s.x), y: Math.round(s.y), width: Math.max(1, Math.round(s.w)), height: Math.max(1, Math.round(s.h)) };
+      p.view.setBounds(bounds);
+      if (s.covered) {
+        if (!p.still) {
+          p.still = true;
+          p.view.webContents
+            .capturePage()
+            .then((img) => {
+              if (!p.still) return;
+              this.still(s.target, img.toDataURL());
+              p.view.setVisible(false);
+            })
+            .catch(() => {});
+        }
+        continue;
+      }
+      if (p.still) {
+        p.still = false;
+        this.still(s.target, null);
+      }
+      p.view.setVisible(true);
+      if (p.held) shielded = bounds;
+    }
+    for (const [id, p] of this.pages) if (!shown.has(id)) p.view.setVisible(false);
+    if (shielded) {
+      if (!this.shield) {
+        this.shield = new WebContentsView();
+        this.shield.setBackgroundColor("#00000000");
+      }
+      this.win.contentView.addChildView(this.shield); // (again: on top)
+      this.shield.setBounds(shielded);
+      this.shield.setVisible(true);
+    } else this.shield?.setVisible(false);
+  }
+
+  /** ag's word on a page (App.hold, App.esc). */
+  mark(id: string, what: "held" | "esc", on: boolean): void {
+    const p = this.pages.get(id);
+    if (!p) return;
+    p[what] = on;
+    if (what === "held") this.place();
+  }
+}
+
+/** The home's token for the app's link (ag_dashboard/browser.py's `app_token`): read, or made if neither side has yet. */
+export function appToken(home: string): string {
+  const file = path.join(home, "dashboard", "desktop-token");
+  try {
+    const token = readFileSync(file, "utf8").trim();
+    if (token) return token;
+  } catch {
+    // not made yet
+  }
+  mkdirSync(path.dirname(file), { recursive: true });
+  try {
+    writeFileSync(file, randomBytes(32).toString("base64url"), { flag: "wx", mode: 0o600 });
+  } catch {
+    // the dashboard made it meanwhile
+  }
+  return readFileSync(file, "utf8").trim();
+}
+
+type Message = { id?: number; method?: string; params?: Record<string, unknown>; sessionId?: string };
+
+/** The app's link to its dashboard (ag_dashboard/api/desktop.py): the token first, then the protocol both ways. While
+ * it is down the pages are closed (their Browsers paused) and it tries again, as the dashboard may be restarting. */
+export class Link {
+  private ws: WebSocket | null = null;
+  private tries = 0;
+  private stopped = false;
+
+  constructor(
+    private pages: Pages,
+    private url: string,
+    private token: () => string,
+    private log: Log,
+  ) {}
+
+  start(): void {
+    this.stopped = false;
+    this.connect();
+  }
+
+  stop(): void {
+    this.stopped = true;
+    this.ws?.close();
+  }
+
+  private connect(): void {
+    if (this.stopped) return;
+    const ws = (this.ws = new WebSocket(this.url));
+    let open = false;
+    const sessions = new Map<string, WebContents>(); // session id -> the page it is of
+    const wired = new WeakSet<WebContents>();
+    let discover = true; // its pages told as they come and go, as Chrome does once asked (ag asks only some Chromes)
+    const send = (m: unknown) => ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify(m));
+
+    ws.addEventListener("open", () => {
+      open = true;
+      this.tries = 0;
+      ws.send(this.token());
+      this.pages.hooks = {
+        created: (id) => discover && send({ method: "Target.targetCreated", params: { targetInfo: this.pages.info(id) } }),
+        changed: (id) => discover && send({ method: "Target.targetInfoChanged", params: { targetInfo: this.pages.info(id) } }),
+        destroyed: (id) => discover && send({ method: "Target.targetDestroyed", params: { targetId: id } }),
+        escape: (id) => send({ method: "App.escape", params: { targetId: id } }),
+        findBar: (id) => send({ method: "App.findBar", params: { targetId: id } }),
+        // a page's dialog, to each session of its as Chrome's own would be told; downloads, as Chrome tells them
+        dialog: (id, d) => {
+          const wc = this.pages.contents(id);
+          for (const [sid, w] of sessions)
+            if (w === wc)
+              send({ method: "Page.javascriptDialogOpening", sessionId: sid,
+                params: { url: wc?.getURL() ?? "", message: d.message, type: d.type, hasBrowserHandler: true, defaultPrompt: d.default } });
+        },
+        download: (begun) => send({ method: "Browser.downloadWillBegin", params: begun }),
+        downloaded: (done) => send({ method: "Browser.downloadProgress", params: done }),
+      };
+      this.log("linked to the dashboard");
+    });
+
+    const wire = (wc: WebContents) => {
+      if (wired.has(wc)) return;
+      wired.add(wc);
+      wc.debugger.on("message", (_e, method, params) => {
+        for (const [sid, w] of sessions) if (w === wc) send({ method, params, sessionId: sid });
+      });
+      wc.debugger.on("detach", () => {
+        for (const [sid, w] of sessions) if (w === wc) sessions.delete(sid);
+      });
+    };
+
+    ws.addEventListener("message", async (ev) => {
+      const m = JSON.parse(String(ev.data)) as Message;
+      const p = m.params || {};
+      if (m.id === undefined) {
+        // ag's own word, not the protocol's (browser.py's AppCdp.notify)
+        if (m.method === "App.hold" || m.method === "App.esc")
+          this.pages.mark(String(p.targetId), m.method === "App.hold" ? "held" : "esc", !!p.on);
+        return;
+      }
+      const answer = (r: object) => send({ id: m.id, ...(m.sessionId ? { sessionId: m.sessionId } : {}), ...r });
+      const fail = (e: unknown) => answer({ error: { code: -32000, message: e instanceof Error ? e.message : String(e) } });
+      try {
+        if (m.sessionId) {
+          const wc = sessions.get(m.sessionId);
+          if (!wc || wc.isDestroyed()) return fail("No session with given id");
+          const id = this.pages.idOf(wc);
+          // A page waiting on its dialog is held still by it, its own scripts and Chrome's look into it alike (a
+          // browser's own dialog would let the look in): anything but the answer refused at once, not left waiting.
+          if (id && this.pages.waiting(id) && m.method !== "Page.handleJavaScriptDialog")
+            return fail("the page waits on its dialog: answer it first");
+          if (m.method === "Page.handleJavaScriptDialog" && id && this.pages.answer(id, !!p.accept, p.promptText as string | undefined)) {
+            answer({ result: {} });
+            for (const [sid, w] of sessions)
+              if (w === wc) send({ method: "Page.javascriptDialogClosed", sessionId: sid, params: { result: !!p.accept, userInput: String(p.promptText ?? "") } });
+            return;
+          }
+          return answer({ result: await wc.debugger.sendCommand(m.method || "", p) });
+        }
+        switch (m.method) {
+          case "Target.setDiscoverTargets":
+            discover = !!p.discover;
+            answer({ result: {} });
+            if (discover) for (const id of this.pages.ids()) this.pages.hooks.created?.(id);
+            return;
+          case "Target.createTarget":
+            return answer({ result: { targetId: await this.pages.make(String(p.url || "about:blank")) } });
+          case "Target.attachToTarget": {
+            const wc = this.pages.contents(String(p.targetId));
+            if (!wc) return fail("No target with given id found");
+            if (!wc.debugger.isAttached()) wc.debugger.attach("1.3");
+            wire(wc);
+            const sid = randomUUID().replace(/-/g, "").toUpperCase();
+            sessions.set(sid, wc);
+            return answer({ result: { sessionId: sid } });
+          }
+          case "Target.detachFromTarget":
+            sessions.delete(String(p.sessionId));
+            return answer({ result: {} });
+          case "Target.closeTarget":
+            return answer({ result: { success: this.pages.close(String(p.targetId)) } });
+          case "Target.getTargetInfo":
+            return this.pages.contents(String(p.targetId))
+              ? answer({ result: { targetInfo: this.pages.info(String(p.targetId)) } })
+              : fail("No target with given id found");
+          case "Target.getTargets":
+            return answer({ result: { targetInfos: this.pages.ids().map((id) => this.pages.info(id)) } });
+          case "App.find":
+            return answer({ result: await this.pages.find(String(p.targetId), String(p.q || ""), !!p.back, !!p.again) });
+          case "Browser.getVersion":
+            return answer({
+              result: { protocolVersion: "1.3", product: `Chrome/${process.versions.chrome}`, revision: "", userAgent: "", jsVersion: process.versions.v8 },
+            });
+          default:
+            if (m.method?.startsWith("Target.") || m.method?.startsWith("Browser.")) return answer({ result: {} });
+            return fail(`'${m.method}' wasn't found`);
+        }
+      } catch (e) {
+        fail(e);
+      }
+    });
+
+    ws.addEventListener("close", () => {
+      if (this.ws === ws) this.ws = null;
+      this.pages.hooks = {};
+      for (const wc of new Set(sessions.values())) {
+        try {
+          wc.debugger.detach();
+        } catch {
+          // closed already
+        }
+      }
+      sessions.clear();
+      this.pages.closeAll(); // paused: ag opens them again once the link is back
+      if (open) this.log("link to the dashboard closed");
+      if (this.stopped) return;
+      const wait = RECONNECT[Math.min(this.tries++, RECONNECT.length - 1)];
+      setTimeout(() => this.connect(), wait);
+    });
+    ws.addEventListener("error", () => {
+      // (a close follows)
+    });
+  }
+}

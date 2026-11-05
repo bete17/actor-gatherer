@@ -714,6 +714,25 @@ class ChromeTest(ChromeBase):
         self.assertIn(hints["architecture"], ("arm", "x86"))
         self.assertEqual(hints["bitness"], "64")
 
+    def test_its_pages_are_shown_in_the_dashboard_s_theme(self):
+        """The dashboard's page tells its theme (set_scheme): a page open then is shown in it at once, and one opened
+        later is opened in it -- as a site with a dark look shows it in one's own Chrome in a dark system."""
+        dark = "matchMedia('(prefers-color-scheme: dark)').matches"
+        url = self.serve("scheme.html", "<!doctype html><title>Scheme</title>")
+        self.text("navigate", url=url)
+        self.assertEqual(self.text("evaluate", expression=dark), "false")     # headless Chrome's own: light
+        self.assertEqual(self.bs.set_scheme("dark"), {"scheme": "dark"})
+        self.assertEqual(self.text("evaluate", expression=dark), "true")
+        self.text("tabs", action="new", url=url)
+        self.assertIn("2 (shown)", self.text("tabs"))
+        self.assertEqual(self.text("evaluate", expression=dark), "true")
+        self.bs.set_scheme("light")
+        self.assertEqual(self.text("evaluate", expression=dark), "false")
+        self.text("tabs", action="switch", index=1)
+        self.assertEqual(self.text("evaluate", expression="matchMedia('(prefers-color-scheme: light)').matches"), "true")
+        with self.assertRaises(browser.BrowserError):
+            self.bs.set_scheme("sepia")
+
     def test_the_screen_comes_quicker_while_the_user_scrolls_or_drags_then_sharp_again(self):
         def cast(want):
             end = time.time() + 5

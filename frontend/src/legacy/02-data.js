@@ -234,6 +234,10 @@ function setTheme(pick, keep) {
   window.dispatchEvent(new Event("ag-theme"));
 }
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => window.dispatchEvent(new Event("ag-theme")));
+// The page's theme as shown, light or dark: the one picked, else the system's. DocWriter's page, the Editor and the
+// Browsers' pages (bwTellScheme) take it on.
+const shownTheme = () => document.documentElement.dataset.theme
+  || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
 // The actor at work in the Chat view: acting out what it does (the stage), or small with its one motion ("simple"); kept in
 // this browser, acting until one is picked.
 const AVATAR_KEY = "ag-dashboard-avatar";

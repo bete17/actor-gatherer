@@ -77,6 +77,7 @@ function takeHome(home) {
   state.home = home;
   markSeen();
   dwTell();
+  bwTellScheme();
 }
 function markSeen() {
   if (SNAPSHOT || PANE || !state.home || document.visibilityState !== "visible") return;
