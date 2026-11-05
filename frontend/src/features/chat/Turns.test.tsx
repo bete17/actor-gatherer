@@ -253,6 +253,23 @@ describe("Turns", () => {
     expect(node.querySelector("#fl-turn-2 .fl-times")!.textContent).toBe("last activity 30s ago · 30s so far");
   });
 
+  it("grows the turn a message opens in, and the turn stored in its place on from there", () => {
+    const ts = turns(1);
+    const { page } = testPage(ts);
+    const node = page.draw({ mine: [{ cid: "p9", text: "And now?", at: NOW * 1000 }] });
+    const opened = node.querySelector<HTMLElement>(":scope > .fl-turn.opened")!;
+    expect(opened.classList.contains("fl-in")).toBe(true);
+    expect(opened.style.getPropertyValue("--in")).toBe("-0ms");
+    vi.setSystemTime(NOW * 1000 + 100);
+    const stored = [...ts, turn(1, { text: "And now?", cid: "p9", began: NOW })];
+    page.draw({ mine: [], ...withTurns(stored, { current: now(stored, "working") }) });
+    const t = node.querySelector<HTMLElement>("#fl-turn-1")!;
+    expect([t.classList.contains("fl-in"), t.style.getPropertyValue("--in")]).toEqual([true, "-100ms"]);
+    vi.setSystemTime(NOW * 1000 + 1000);
+    page.draw(withTurns(stored)); // grown: drawn as any turn, its box kept
+    expect(node.querySelector("#fl-turn-1")).toBe(t);
+  });
+
   it("opens the turn of a message sent from here to an actor not at work, before the view has it", () => {
     const { page } = testPage(turns(1));
     expect(page.draw().querySelector(".fl-done")).not.toBeNull();

@@ -838,7 +838,9 @@ class ProactiveContextManager(Policy):
         if not tasks:
             tables.settle(conn, build["build_id"], "nothing", error="no tasks at adoption")
             return None
-        foreign, turns_by_channel = self.other_tasks(conn, types, ch)
+        foreign, turns_by_channel = self.other_tasks(conn, types, ch, read.stopped)
+        if read.stopped():                           # the harness hung up meanwhile (Esc): laid out at the next read
+            return None
         turns_by_channel[ch] = turns
         before = tasks[:-2]
         earlier = layout.earlier_messages(before, turns, cfg, tok)
@@ -1055,9 +1057,15 @@ class ProactiveContextManager(Policy):
                 return False
             time.sleep(min(0.1, max(0.0, deadline - time.monotonic())))
 
-    def other_tasks(self, conn, types: TypeIds, channel_id) -> Tuple[List, Dict]:
+    def other_tasks(self, conn, types: TypeIds, channel_id,
+                    stopped: Callable[[], bool] = lambda: False) -> Tuple[List, Dict]:
+        """(the other channels' tasks, located in their turns; those turns, by channel): each channel's whole history
+        read, so seconds in a big gatherer -- cut short, with what was found so far, once `stopped` (the harness hung
+        up on the call: `Read.stopped`)."""
         found, turns_by_channel, unseen = [], {}, self.unseen(conn, types)
         for other in tables.channels_with_tasks(conn):
+            if stopped():
+                break
             if other == channel_id or other is None or other in unseen:
                 continue
             _, turns = history.split(history.rows(conn, types, self.groups, other), types, self.groups, self.tokenizer)

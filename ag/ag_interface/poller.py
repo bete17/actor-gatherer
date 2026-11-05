@@ -5,7 +5,8 @@ from a harness that sees the conversation. Some events happen elsewhere: a
 file changed on disk, a build finished, a message arrived on another
 channel. A POLLER is how those get in. The manager asks each of its pollers,
 when it reads, for what happened since it last asked -- it keeps that moment
-itself, per gatherer and per poller -- and stores what they return before
+itself, per gatherer and per poller (and per conversation, for one that follows
+the conversation: `watch`) -- and stores what they return before
 the policy builds the context.
 """
 
@@ -23,7 +24,9 @@ class Poller(ABC):
 
     - `since` is when this poller was last asked for this gatherer, in seconds since the epoch;
       `None` the first time. The poller decides what `None` means: the file poller reports
-      nothing and starts from now, while a poller reading a log might return its backlog.
+      nothing and starts from now, while a poller reading a log might return its backlog. A poller
+      that follows the conversation (`watch`) is asked for one conversation at a time, the call's:
+      its `since` is when it was last asked for that one.
     - `types` are the gatherer's event types with their ids. Return events typed by those ids
       (`Event(type_id, payload, id=..., properties=..., text=...)`), and nothing if the gatherer
       lacks your type.
@@ -118,9 +121,13 @@ class Poller(ABC):
 
     def watch(self, texts: Iterable[str]) -> None:
         """What the conversation's raw part says, given right before each `poll`: the texts of the
-        events the gatherer's channels were last sent verbatim, and of those since (the pollers' own
-        left out). A poller that only looks at what the conversation refers to takes it from here --
-        the file poller, the files it names -- instead of looking at everything; by default nothing."""
+        events the call's conversation was last sent verbatim, and of its events since (the pollers'
+        own left out) -- that one conversation's, not the gatherer's other sessions', so it costs what
+        one conversation says. A poller that only looks at what the conversation refers to takes it
+        from here -- the file poller, the files it names -- instead of looking at everything; by
+        default nothing. One that does is polled per conversation: its `since` is that conversation's
+        (a change it finds for one is stored once, by its `id`, however many name it). Called with no
+        conversation in particular (the manager's `poll` without one), the texts are every conversation's."""
 
     @abstractmethod
     def poll(self, since: Optional[float], types: List[EventType]) -> List[Event]:

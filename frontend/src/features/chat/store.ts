@@ -74,3 +74,7 @@ export const useTurns = create<TurnsState>()((set, get) => ({
   setFirst: (first) => set({ first }),
   setShown: (shown) => set({ shown }),
 }));
+
+/** When this page first drew each turn opening (Pending.tsx's `seeing`), by the actor and its send: it grows in from then,
+ * and the turn stored in its place goes on growing from there. */
+export const turnsSeen = new Map<string, number>();

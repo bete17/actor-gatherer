@@ -207,9 +207,10 @@ CREATE TABLE IF NOT EXISTS _made_folded (
 ) WITHOUT ROWID;
 
 -- When each poller was last asked for this gatherer's events: the moment the
--- next poll starts from.
+-- next poll starts from. A poller that follows the conversation has one per
+-- conversation, named after it too (manager.py's `own_mark`).
 CREATE TABLE IF NOT EXISTS _polls (
-    name        TEXT    PRIMARY KEY,    -- the poller's name
+    name        TEXT    PRIMARY KEY,    -- the poller's name (then, for one conversation's, its properties)
     polled_at   REAL    NOT NULL        -- seconds since the epoch
 );
 

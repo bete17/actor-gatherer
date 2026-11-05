@@ -10,13 +10,27 @@ import path from "node:path";
 
 export const PARTITION = "persist:browsers"; // the pages' profile, in the app's folder in the home: logins last
 const RECONNECT = [1000, 2000, 5000, 10_000]; // ms between tries to reach the dashboard again
+const PICTURE_WAIT = 3000; // ms a hidden page has to give its still picture
 
 export type Stage = { x: number; y: number; w: number; h: number; key: string; target: string; covered?: boolean };
+export type Size = { width: number; height: number };
 type Log = (...parts: unknown[]) => void;
 /** A page, and what ag said of it: its user's input `held` off it while the agent acts (App.hold); their Esc ag's
  * (`esc`, App.esc: to stop the agent, or end a Pick); a still picture shown in its place while something of the
- * dashboard's covers its pane (`still`); the dialog it waits on (`asking`: page-preload.cts). */
-type Page = { view: WebContentsView; opener?: string; held?: boolean; esc?: boolean; still?: boolean; asking?: Asking };
+ * dashboard's covers its pane (`still`), or none to be had (`bare`: the page shown as it is); the dialog it waits on
+ * (`asking`: page-preload.cts). Its `size`: its pane's when last shown (or, before any showed it, the one ag asked
+ * for), which it is laid out at while hidden (`sizedAt`, `Pages.hide`). */
+type Page = {
+  view: WebContentsView;
+  opener?: string;
+  held?: boolean;
+  esc?: boolean;
+  still?: boolean;
+  bare?: boolean;
+  asking?: Asking;
+  size: Size;
+  sizedAt?: string;
+};
 type Asking = { event: IpcMainEvent; type: string; given: string };
 export type Dialog = { type: string; message: string; default: string };
 /** Where the pages' files go: page-preload.cjs; the home's downloads folder (ag's own Chrome's too); the user's
@@ -52,16 +66,13 @@ function freshPath(dir: string, name: string): string {
   }
 }
 
-/** The id Chrome gives a page: ag compares a tab's main frame id with it, so it must be Chrome's own. */
+/** The id Chrome gives a page: ag compares a tab's main frame id with it, so it must be Chrome's own. The page's in-app
+ * DevTools connection is left attached: ag's sessions share it, and the size a hidden page is laid out at
+ * (`Pages.hide`) lasts only while it is. */
 async function targetIdOf(wc: WebContents): Promise<string> {
-  const attached = wc.debugger.isAttached();
-  if (!attached) wc.debugger.attach("1.3");
-  try {
-    return ((await wc.debugger.sendCommand("Target.getTargetInfo")) as { targetInfo: { targetId: string } }).targetInfo
-      .targetId;
-  } finally {
-    if (!attached) wc.debugger.detach();
-  }
+  if (!wc.debugger.isAttached()) wc.debugger.attach("1.3");
+  return ((await wc.debugger.sendCommand("Target.getTargetInfo")) as { targetInfo: { targetId: string } }).targetInfo
+    .targetId;
 }
 
 function contextMenu(win: BaseWindow, wc: WebContents, find: () => void): void {
@@ -99,6 +110,7 @@ export class Pages {
     downloaded?: (done: Record<string, string>) => void;
   } = {};
   private shield: WebContentsView | null = null; // over a page whose input is held: takes the user's clicks, not ag's
+  private lastSize: Size | null = null; // the last pane's a page was shown in: a new page's, if ag gives none
   private static current: Pages | null = null; // the pages the profile's downloads and permission asks are for
 
   constructor(
@@ -260,21 +272,24 @@ export class Pages {
     };
   }
 
-  /** A new page, at `url`: its target id. */
-  async make(url: string): Promise<string> {
+  /** A new page, at `url`, laid out at `size` (its Browser's view's, as ag knows it) while no pane shows it: its
+   * target id. */
+  async make(url: string, size?: Size): Promise<string> {
     const view = new WebContentsView({
       webPreferences: { partition: PARTITION, sandbox: true, contextIsolation: true, backgroundThrottling: false,
         preload: this.places.pagePreload },
     });
-    const id = await this.setUp(view);
+    const id = await this.setUp(view, undefined, size);
     view.webContents.loadURL(url || "about:blank").catch(() => {});
     return id;
   }
 
   /** A page in the window, ag told of it: one ag asked for, or a popup a page opened (`opener`: that page's id). A popup
    * opens as a real one -- its opener keeps its hold on it (window.opener), as a sign-in popup ("Continue with Google")
-   * needs, to hand its result back -- and ag shows it as a tab of the Browser's. */
-  private async setUp(view: WebContentsView, opener?: string): Promise<string> {
+   * needs, to hand its result back -- and ag shows it as a tab of the Browser's. Hidden until a pane shows it, laid out
+   * at `size`, else its opener's, else the last pane's, else the window's. */
+  private async setUp(view: WebContentsView, opener?: string, size?: Size): Promise<string> {
+    const at: Size = size ?? (opener ? this.pages.get(opener)?.size : undefined) ?? this.lastSize ?? this.windowSize();
     view.setVisible(false);
     this.win.contentView.addChildView(view);
     const wc = view.webContents;
@@ -303,7 +318,9 @@ export class Pages {
       } else if (p.held) event.preventDefault();
     });
     id = await targetIdOf(wc);
-    this.pages.set(id, { view, opener });
+    const page: Page = { view, opener, size: at };
+    this.pages.set(id, page);
+    this.emulate(page);
     wc.on("destroyed", () => this.gone(id)); // closed by ag, or by its own page (a popup done: window.close)
     for (const ev of ["did-navigate", "did-navigate-in-page", "page-title-updated"] as const)
       wc.on(ev as "did-navigate", () => this.hooks.changed?.(id));
@@ -351,29 +368,43 @@ export class Pages {
       if (!p || shown.has(s.target)) continue;
       shown.add(s.target);
       const bounds = { x: Math.round(s.x), y: Math.round(s.y), width: Math.max(1, Math.round(s.w)), height: Math.max(1, Math.round(s.h)) };
+      p.size = this.lastSize = { width: bounds.width, height: bounds.height };
       p.view.setBounds(bounds);
-      if (s.covered) {
+      if (s.covered && !p.bare) {
+        if (!p.view.getVisible()) this.emulate(p); // (laid out at the pane's size, for its picture too)
         if (!p.still) {
           p.still = true;
-          p.view.webContents
-            .capturePage()
-            .then((img) => {
+          this.picture(p)
+            .then((url) => {
               if (!p.still) return;
-              this.still(s.target, img.toDataURL());
-              p.view.setVisible(false);
+              if (!url) {
+                // no picture to be had: the page itself, over what covers its pane, rather than a blank
+                p.still = false;
+                p.bare = true;
+                this.place();
+                return;
+              }
+              this.still(s.target, url);
+              this.hide(p);
             })
             .catch(() => {});
         }
         continue;
       }
+      if (!s.covered) p.bare = false;
       if (p.still) {
         p.still = false;
         this.still(s.target, null);
       }
       p.view.setVisible(true);
+      this.unemulate(p); // (its own size now, the pane's)
       if (p.held) shielded = bounds;
     }
-    for (const [id, p] of this.pages) if (!shown.has(id)) p.view.setVisible(false);
+    for (const [id, p] of this.pages)
+      if (!shown.has(id)) {
+        p.still = p.bare = false; // (its picture, if any, no more its pane's: taken again if it is shown covered)
+        this.hide(p);
+      }
     if (shielded) {
       if (!this.shield) {
         this.shield = new WebContentsView();
@@ -383,6 +414,54 @@ export class Pages {
       this.shield.setBounds(shielded);
       this.shield.setVisible(true);
     } else this.shield?.setVisible(false);
+  }
+
+  /** `p` out of sight, laid out at its size: a page hidden in the window has none of its own -- a tab the agent opened
+   * while its pane showed something else would be laid out at 0 x 0, so its tools would work on a page the user
+   * never sees, and Chrome would leave a screenshot's scale on it (ag's are at 1/dpr), drawing it at half size once
+   * shown. The size is the DevTools emulation's, which lays a page out without drawing it; taken off when shown. */
+  private hide(p: Page): void {
+    p.view.setVisible(false);
+    this.emulate(p);
+  }
+
+  private emulate(p: Page): void {
+    const at = `${p.size.width}x${p.size.height}`;
+    const wc = p.view.webContents;
+    if (p.sizedAt === at || wc.isDestroyed() || !wc.debugger.isAttached()) return;
+    p.sizedAt = at;
+    wc.debugger
+      .sendCommand("Emulation.setDeviceMetricsOverride", { ...p.size, deviceScaleFactor: 0, mobile: false })
+      .catch(() => (p.sizedAt = undefined));
+  }
+
+  private unemulate(p: Page): void {
+    const wc = p.view.webContents;
+    if (!p.sizedAt || wc.isDestroyed() || !wc.debugger.isAttached()) return;
+    p.sizedAt = undefined;
+    wc.debugger.sendCommand("Emulation.clearDeviceMetricsOverride").catch(() => {});
+  }
+
+  /** A still picture of `p` as it is now, as a data URL, or null if none could be had: a page shown, what the window
+   * draws of it; a hidden one, drawn for the picture by Chrome (what the window last drew of it may be old, or nothing:
+   * a tab opened out of sight). A page held still by its dialog may never answer: PICTURE_WAIT. */
+  private async picture(p: Page): Promise<string | null> {
+    const wc = p.view.webContents;
+    if (p.view.getVisible()) {
+      const img = await wc.capturePage();
+      if (!img.isEmpty()) return img.toDataURL();
+    }
+    if (wc.isDestroyed() || !wc.debugger.isAttached()) return null;
+    const got = (await Promise.race([
+      wc.debugger.sendCommand("Page.captureScreenshot", { format: "png" }),
+      new Promise((resolve) => setTimeout(() => resolve({}), PICTURE_WAIT)),
+    ])) as { data?: string };
+    return got.data ? `data:image/png;base64,${got.data}` : null;
+  }
+
+  private windowSize(): Size {
+    const b = this.win.getContentBounds();
+    return { width: b.width, height: b.height };
   }
 
   /** ag's word on a page (App.hold, App.esc). */
@@ -516,8 +595,12 @@ export class Link {
             answer({ result: {} });
             if (discover) for (const id of this.pages.ids()) this.pages.hooks.created?.(id);
             return;
-          case "Target.createTarget":
-            return answer({ result: { targetId: await this.pages.make(String(p.url || "about:blank")) } });
+          case "Target.createTarget": {
+            // laid out at the size ag gives (its Browser's view's: Chrome's own width/height, for a new window)
+            const w = Number(p.width), h = Number(p.height);
+            const size = w > 0 && h > 0 ? { width: Math.round(w), height: Math.round(h) } : undefined;
+            return answer({ result: { targetId: await this.pages.make(String(p.url || "about:blank"), size) } });
+          }
           case "Target.attachToTarget": {
             const wc = this.pages.contents(String(p.targetId));
             if (!wc) return fail("No target with given id found");

@@ -2,11 +2,43 @@
 // next step, at the latest turn's end, faded and marked pending; and the turn a message opened that is not stored yet,
 // drawn in full the moment it is sent -- the actor at work under it, or, the session not having had it for long, the way
 // to its terminal.
+import { useState, type CSSProperties } from "react";
 import { useChat } from "./context";
 import { Bubble } from "./Bubble";
+import { turnsSeen } from "./store";
 import { waitsOf } from "./view";
 import { Status, StoppedLine, Working } from "./Working";
 import type { ChatFeed, Opening } from "./types";
+
+/** A turn that opens grows in (fl-in, 11-files-view.css) this long; the stored turn after it goes on from where it is. */
+export const GROW_MS = 320;
+
+/** The key a turn opening is known by on this page, from its first draw on: the actor and its send (its message's words,
+ * for one with no id: sent in its terminal). */
+export const seenKey = (feed: ChatFeed, cid: string | null | undefined, text: string) =>
+  feed.key + "\u0000" + (cid || text.trim().slice(0, 200));
+
+/** A turn opening first drawn now (by `seenKey`): from now on it grows in. */
+export function seeing(key: string, now = Date.now()): void {
+  const seen = turnsSeen.get(key);
+  if (seen !== undefined && now - seen <= 60000) return;
+  if (turnsSeen.size > 50) turnsSeen.clear();
+  turnsSeen.set(key, now);
+}
+
+/** How far into growing in (fl-in) a turn is when its box is first drawn: the time since this page first drew the turn
+ * opening (`seeing`), as a CSS delay, kept for the box's life -- so the stored turn drawn in the opening's place goes on
+ * from there, and a redraw does not move it. Null for a turn grown, or never seen opening. */
+export function useGrowing(key: string): CSSProperties | null {
+  const [age] = useState(() => growingFor(key));
+  return age === null ? null : ({ "--in": `-${Math.round(age)}ms` } as CSSProperties);
+}
+
+function growingFor(key: string, now = Date.now()): number | null {
+  const seen = key ? turnsSeen.get(key) : undefined;
+  const age = seen === undefined ? Infinity : now - seen;
+  return age < GROW_MS ? age : null;
+}
 
 export interface Waiting {
   texts: string[];
@@ -39,9 +71,13 @@ export function OpenedTurn({ o, interrupting }: { o: Opening; interrupting: bool
   const now = interrupting ? "Interrupting…" : "Working…";
   const w = waiting(feed);
   const asks = !!o.unseen && !!feed.info.session?.terminal && feed.terminalView;
+  const key = seenKey(feed, o.cid, o.text);
+  seeing(key);
+  const grow = useGrowing(key);
+  const cls = "fl-turn opened" + (grow ? " fl-in" : "");
   if (o.stopped)
     return (
-      <div className="fl-turn opened">
+      <div className={cls} style={grow ?? undefined}>
         <Bubble text={o.text} title="Sent to the agent, and stopped before it was stored" />
         <StoppedLine t={{ n: -1, text: o.text, stopped: o.stopped }} latest={true} />
         {w ? <Pending w={w} /> : null}
@@ -49,7 +85,7 @@ export function OpenedTurn({ o, interrupting }: { o: Opening; interrupting: bool
     );
   return (
     <>
-      <div className="fl-turn opened">
+      <div className={cls} style={grow ?? undefined}>
         <Bubble text={o.text} title="Sent to the agent: shown here until the gatherer has stored it" />
         {o.unseen ? (
           <div className="fl-pending">
