@@ -263,6 +263,20 @@ describe("Turns", () => {
     expect(node.querySelector(".fl-pending")).toBeNull();
   });
 
+  it("says a turn sent and stopped before the harness recorded it is interrupted, not at work", () => {
+    const ts = turns(1);
+    const opening = { text: "Hello", cid: "p1", began: NOW - 2, seen: false, stopped: { kind: "interrupted" } };
+    const { page, host } = testPage(ts, {
+      view: chatView(ts, { opening, current: { state: "stopped", turn: "opening", stopped: opening.stopped } }),
+      interrupting: true,
+    });
+    const node = page.draw();
+    const opened = node.querySelector(":scope > .fl-turn.opened")!;
+    expect(opened.querySelector(".fl-stopped")!.textContent).toBe("⎿Interrupted");
+    expect(node.querySelector(".fl-working, .fl-status")).toBeNull();
+    expect(host.calls).toContainEqual(["interruptOver"]);
+  });
+
   it("draws what waits for the agent's next step at the latest turn's end", () => {
     const ts = turns(1);
     const waiting = [

@@ -180,12 +180,30 @@ def _over(conn, channel: str, tables: set) -> bool:
     return stop in data.OVER or stop not in data.GOES_ON
 
 
+def _stop_on(opening: Optional[dict], session: Optional[dict]) -> tuple:
+    """A turn opening that the harness has recorded nothing of, a key that stops a turn typed into its terminal since
+    (the session's `stopped_at`), as the terminal's message box shows it after: empty -- the harness stopped it, before
+    any call that would record it (a codex session's first message: its thread is made by that call) -- the opening
+    stopped; holding it -- the harness took it back into its box -- the opening gone, taken back. (opening, taken back)."""
+    stop, box = (session or {}).get("stopped_at"), (session or {}).get("box")
+    if opening is None or opening.get("seen") or not stop or stop <= opening["began"]:
+        return opening, None
+    if box == "empty":
+        return dict(opening, unseen=False, stopped={"kind": "interrupted", "at": stop, "text": None, "status": None,
+                                                   "reason": None}), None
+    if box == "holds":
+        return None, {"text": opening["text"], "at": stop, "cid": opening.get("cid"), "since": opening["began"]}
+    return opening, None
+
+
 def _state(conn, channel: str, tables: set, turns: List[dict], opening: Optional[dict], held: List[dict],
            session: Optional[dict], backs: List[dict]) -> dict:
     """The latest turn's state (module doc): from what its record says it stopped on, else its newest call -- hung up on
     after its answer had begun: stopped (the harness keeps the turn, interrupted); before, on the message of a turn
     taken back: the turn before it, over -- else whether its answer ended it (data.py's `turn_over`)."""
     out = {"state": IDLE, "turn": None, "doing": None, "failing": None, "asking": None, "stopped": None}
+    if opening is not None and opening.get("stopped"):
+        return dict(out, state=STOPPED, turn="opening", stopped=opening["stopped"])
     if opening is not None:
         return dict(out, state=OPENING, turn="opening")
     if not turns:
@@ -241,7 +259,7 @@ def view(conn, channel: str, session: Optional[dict] = None, now: Optional[float
     back, _ = data.taken_back(conn, channel, tables, data.record_of(conn, channel), now)
     if back is not None:                                 # the send it was: the one the newest hang-up took back
         s = next((s for s in reversed(sends) if s["cid"] in took and _said(s["text"]) == _said(back["text"])), None)
-        back = {"text": back["text"], "at": back.get("at"), "cid": s["cid"] if s else None}
+        back = {"text": back["text"], "at": back.get("at"), "cid": s["cid"] if s else None, "since": back.get("since")}
     done = {s["cid"] for s in links.values()} | set(took)
     pending = [s for s in sends if s["cid"] not in done]
     stored = max((t.get("began") or 0.0 for t in turns), default=0.0)
@@ -265,6 +283,8 @@ def view(conn, channel: str, session: Optional[dict] = None, now: Optional[float
         if p is not None:
             opening = {"text": p["text"], "cid": None, "began": p["sent"], "seen": True, "unseen": False}
     shown = _messages(turns)
+    opening, stopped_back = _stop_on(opening, session)
+    back = back or stopped_back
     for q in held:                                       # held by the harness -- not one stored since it was queued, which
         if any(_said(text) == _said(q["text"]) and at is not None and q.get("queued") is not None   # it has sent, its
                and at >= q["queued"] - SENT_BEFORE for _, text, at in shown):                      # record yet to say
@@ -309,9 +329,11 @@ def unstored(session: Optional[dict], now: Optional[float] = None) -> dict:
         s = sends[0]
         opening = {"text": s["text"], "cid": s.get("cid"), "began": s["at"], "seen": False,
                    "unseen": now - s["at"] > UNSEEN_SECONDS}
+    opening, back = _stop_on(opening, session)
     waiting = [{"text": s["text"], "cid": s.get("cid"), "how": "chat"} for s in sends[1:]]
     waiting += [{"text": t, "cid": None, "how": "dashboard"} for t in (session or {}).get("queued") or []]
-    current = {"state": OPENING if opening else IDLE, "turn": "opening" if opening else None, "doing": None,
-               "failing": None, "asking": None, "stopped": None}
-    return {"turns": [], "opening": opening, "current": current, "waiting": waiting, "taken_back": None,
+    stopped = (opening or {}).get("stopped")
+    current = {"state": STOPPED if stopped else OPENING if opening else IDLE, "turn": "opening" if opening else None,
+               "doing": None, "failing": None, "asking": None, "stopped": stopped}
+    return {"turns": [], "opening": opening, "current": current, "waiting": waiting, "taken_back": back,
             "version": [0, 0, (session or {}).get("ended"), len(waiting), len(sends), bool(opening and opening["unseen"])]}

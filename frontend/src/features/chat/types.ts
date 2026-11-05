@@ -111,13 +111,15 @@ export interface Actor {
 }
 
 /** A turn sent and not stored yet (chat_view.py's `opening`): its message, the send it is (sent from Chat), when it was
- * sent (seconds), whether the session has it (`seen`), and not had for long (`unseen`). */
+ * sent (seconds), whether the session has it (`seen`), not had for long (`unseen`), and stopped by a key typed into its
+ * terminal before the harness recorded anything of it (`stopped`). */
 export interface Opening {
   text: string;
   cid?: string | null;
   began: number;
   seen?: boolean;
   unseen?: boolean;
+  stopped?: Stopped | null;
 }
 
 /** The latest turn's state (chat_view.py's `current`): a turn opening, at work, asking the user, done, stopped short
@@ -146,7 +148,7 @@ export interface ChatView {
   current: Current;
   waiting: Waits[];
   /** the message Esc took back, before any of its answer came */
-  taken_back: { text: string; at?: number | null; cid?: string | null } | null;
+  taken_back: { text: string; at?: number | null; cid?: string | null; since?: number | null } | null;
   version?: unknown;
 }
 

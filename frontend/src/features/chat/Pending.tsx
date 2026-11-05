@@ -5,7 +5,7 @@
 import { useChat } from "./context";
 import { Bubble } from "./Bubble";
 import { waitsOf } from "./view";
-import { Status, Working } from "./Working";
+import { Status, StoppedLine, Working } from "./Working";
 import type { ChatFeed, Opening } from "./types";
 
 export interface Waiting {
@@ -31,13 +31,22 @@ export function Pending({ w }: { w: Waiting }) {
 
 /** The turn a message opened, not stored yet (view.ts's openingOf): its message in full, as the terminal shows it; the
  * actor at work under it, from when it was sent -- or, the session not having had it for long (`unseen`), that, and the
- * way to its terminal, which may be asking something first; what waits after it. Replaced by the stored turn, which
- * counts from the same moment. */
+ * way to its terminal, which may be asking something first; or how it stopped, Esc stopping it before the harness
+ * recorded anything of it (`stopped`); what waits after it. Replaced by the stored turn, which counts from the same
+ * moment. */
 export function OpenedTurn({ o, interrupting }: { o: Opening; interrupting: boolean }) {
   const { feed, host } = useChat();
   const now = interrupting ? "Interrupting…" : "Working…";
   const w = waiting(feed);
   const asks = !!o.unseen && !!feed.info.session?.terminal && feed.terminalView;
+  if (o.stopped)
+    return (
+      <div className="fl-turn opened">
+        <Bubble text={o.text} title="Sent to the agent, and stopped before it was stored" />
+        <StoppedLine t={{ n: -1, text: o.text, stopped: o.stopped }} latest={true} />
+        {w ? <Pending w={w} /> : null}
+      </div>
+    );
   return (
     <>
       <div className="fl-turn opened">

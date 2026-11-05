@@ -653,6 +653,10 @@ class _Term:
         self.stopped = 0.0              # when the last thing typed was a key that stops a turn alone (STOP_KEYS); 0: it was not
         self.answering = False          # an answer's keys being typed into it (`answer`)
         self.keying = 0.0               # until when a message the dashboard pastes goes into it (`_paste`)
+        self.pasted = 0.0               # when it last pasted one: a stop key waits until the harness has taken it (`type`)
+        self.harness: Optional[str] = None   # the session's harness and gatherer, as it was started
+        self.gatherer: Optional[str] = None
+        self.boxed: Optional[str] = None     # its message box as last seen after a stop key (`_read_terminal`)
         self.drafted = 0                # characters the reader typed into its input box and has not sent (`drafted`)
         self.kept = False               # put away (`put_away`): its end is kept
         self.drawn = -1                 # where in what it printed it last cleared its screen (CLEARED), to draw it all
@@ -742,14 +746,19 @@ class Sessions:
 
     def chat_row(self, session_id: str) -> Optional[dict]:
         """What Chat's view (chat_view.py) takes of a session the table has: {ended, queued (its messages waiting), sent
-        (its latest messages from Chat, as each came)} -- None for one it does not have."""
+        (its latest messages from Chat, as each came), stopped_at (when a key that stops a turn was the last typed into
+        its terminal; None: something else was), box (since then, what its message box shows: a Box, or None)} -- None
+        for one it does not have."""
         s = self._row(session_id)
         if s is None:
             return None
         with self.lock:
-            a = self.agents.get(session_id)
-            return {"ended": s.get("ended") or 0, "queued": list(a.queue) if a else [],
-                    "sent": list(self.sent.get(session_id, ()))}
+            a, t = self.agents.get(session_id), self.terms.get(session_id)
+        got = {"ended": s.get("ended") or 0, "queued": list(a.queue) if a else [], "sent": list(self.sent.get(session_id, ())),
+               "stopped_at": (t.stopped or None) if t else None, "box": None}
+        if t is not None and t.stopped:                  # what its box shows since the stop key, as its screen has it
+            got["box"] = self._box(t, s["harness"])
+        return got
 
     def list(self) -> List[dict]:
         """Every session the table has, newest first, each with `queued` (its messages waiting), `pid` (the
@@ -1379,6 +1388,7 @@ class Sessions:
             finally:
                 os._exit(127)
         t = _Term(pid, fd, log, fullscreen, cols, rows)
+        t.harness, t.gatherer = s["harness"], s["gatherer"]
         self.terms[sid] = t
         if resume and not s["turns"]:
             self._set(sid, turns=1)
@@ -1482,6 +1492,13 @@ class Sessions:
                         t.screen.feed(chunk)
                     except Exception:  # noqa: BLE001 - a screen that cannot be read is not looked at again
                         t.screen = None
+            if t.stopped and time.time() - t.stopped < HOLD_MAX:    # a stop key typed lately: Chat's view of it
+                box = self._box(t, t.harness or "")                 # (chat_view.py) told what its box now shows
+                if box != t.boxed:
+                    t.boxed = box
+                    with self.lock:
+                        now_id = next((k for k, v in self.terms.items() if v is t), session_id)
+                    self._changed(t.gatherer or "", now_id)
         try:
             _, status = os.waitpid(t.pid, 0)
             code = os.waitstatus_to_exitcode(status)
@@ -1564,18 +1581,25 @@ class Sessions:
     def type(self, session_id: str, data: str) -> None:
         """What was typed in the page, to the session's terminal, as typed. A key that stops a turn, typed while the
         dashboard's own keys go in -- a message it pastes (`_paste`), an answer (`answer`) -- after them: in the middle,
-        it would cut the message off from its Enter or dismiss the question half answered."""
+        it would cut the message off from its Enter or dismiss the question half answered; and while the message it
+        pasted is in the harness's message box still (`_unsent`), after the harness has taken it: before, the harness
+        has no turn to stop and lets the key go by, and the message goes on to be answered."""
         t = self.terms.get(session_id)
         if t is None:
             raise SessionError("the session has no terminal open")
-        if data in STOP_KEYS and (t.answering or t.keying > time.time()):
+        if data in STOP_KEYS and (t.answering or t.keying > time.time() or self._unsent(t)):
             threading.Thread(target=self._type_after, args=(session_id, t, data), name="ag-stop-key", daemon=True).start()
             return
         self._type_now(session_id, t, data)
 
+    def _unsent(self, t: _Term) -> bool:
+        """Whether the message the dashboard last pasted is in the harness's message box still -- its Enter typed, and
+        the harness not yet started on it -- as the screen shows (`_box`: it holds something), up to HOLD_MAX after."""
+        return bool(t.pasted) and time.time() - t.pasted < HOLD_MAX and self._box(t, t.harness or "") == Box.HOLDS
+
     def _type_after(self, session_id: str, t: _Term, data: str) -> None:
         end = time.time() + HOLD_MAX
-        while (t.answering or t.keying > time.time()) and time.time() < end:
+        while (t.answering or t.keying > time.time() or self._unsent(t)) and time.time() < end:
             time.sleep(0.05)
         time.sleep(KEYS_GAP)
         try:
@@ -1743,7 +1767,7 @@ class Sessions:
         while it goes in waits for its Enter (`keying`, `type`)."""
         now = time.time()
         wait = max(0.0, KEYS_GAP - (now - t.stopped)) if t.stopped else 0.0
-        t.typed, t.stopped, t.drafted = now, 0.0, 0
+        t.typed, t.stopped, t.drafted, t.pasted = now, 0.0, 0, now
         t.keying = now + wait + (CLEAR_GAP if clear else 0.0) + PASTE_ENTER + KEYS_GAP
         paste = b"\x1b[200~" + text.replace("\x1b", "").encode("utf-8") + b"\x1b[201~"
         if not clear and not wait:

@@ -538,8 +538,9 @@ state.chatSend = async () => false;                    // the message box's send
 const sendFailed = new Map();                         // per actor (its draft's key): why its last message was not sent
 // Whether the message Claude Code took back is in its input box untouched, as sessions.py's `took_back` reads it: what was
 // last typed into its terminal, the dashboard's, is the key that stopped the turn, after the call before (`since`).
+const takenBack = (info) => { const v = chatViewOf(info); return (v && v.taken_back) || (info && info.taken_back) || null; };
 const untouched = (info) => {
-  const tb = info && info.taken_back, s = info && info.session;
+  const tb = takenBack(info), s = info && info.session;
   return !!tb && !!s && !!s.stopped_at && s.stopped_at > (tb.since || 0);
 };
 // Claude Code put the message it was stopped on (Esc before any of its answer came: data.py's `taken_back`) back in its
@@ -559,7 +560,7 @@ function markRefill(draft, mark) {
   try { sessionStorage.setItem(REFILLED_KEY, JSON.stringify(m)); } catch (e) { if (mark) refilledHere[draft] = mark; else delete refilledHere[draft]; }
 }
 function refill(info, draft) {
-  const tb = info && info.taken_back, mark = refills()[draft], box = document.getElementById("composer-text");
+  const tb = takenBack(info), mark = refills()[draft], box = document.getElementById("composer-text");
   const mine = box && box.dataset.draft === draft ? box : null;
   if (tb && untouched(info)) {
     if (mark && mark.at === tb.at) return;

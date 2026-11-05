@@ -64,6 +64,15 @@ reads.
      back, its reasoning before its words: for ~30 ms the newest row was reasoning, and the turn was "working" again
      between two "done". Once the latest call's `reply_end` is in, with nothing of the user's or a tool's after it,
      its stop decides (`_over`). The actor list's status (data.py's `turn_over`) has the same gap: step 5.
+   - **Esc waits until the harness has the message.** Typed 0.35 s after a first message, Esc reached Claude Code
+     before it had submitted the message, and it let the key go by and answered; Chat said "Interrupting…" meanwhile.
+     A stop key now waits while the terminal's message box still holds the message the dashboard pasted
+     (sessions.py's `_unsent`, at most HOLD_MAX).
+   - **Esc before the harness recorded anything.** Codex stopped before the first call of a new session -- the call
+     that makes its thread -- so nothing was recorded, and the turn stayed "opening". With a stop key typed after the
+     message (the session's `stopped_at`), the terminal's box decides (`_stop_on`): empty, the opening is stopped
+     ("Interrupted"); holding the message, it was taken back. The one place the view reads the screen; the terminal's
+     reader wakes the stream as the box changes after a stop key.
    - **A send is never after its message.** Kept before it is typed, a send links to a stored message of its words
      only up to SENT_BEFORE (1 s, for sends kept before this) after it: with 5 s, the same words sent again 4 s after
      an Esc (Codex keeps the stopped turn) took the first turn's place.

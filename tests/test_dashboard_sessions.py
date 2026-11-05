@@ -464,6 +464,31 @@ class TerminalTest(SessionsBase):
         self.s.type(sid, "x")
         self.assertIsNone(self.session(sid)["stopped_at"])
 
+    def test_a_stop_key_after_a_message_waits_until_the_harness_has_taken_it(self):
+        """Esc from the page just after a message from Chat: while its message box holds the message still (the harness
+        not started on it: it would let the key go by), the key waits; once the box is empty, it goes in. Chat's view
+        is told the box after it (`chat_row`'s `stopped_at`, `box`)."""
+        sid = self.s.create("g", self.work)["session_id"]
+        self.started(sid)
+        self.s.send(sid, "hello")
+        boxes = iter([Box.HOLDS] * 6)
+        with unittest.mock.patch.object(self.s, "_box", side_effect=lambda t, h: next(boxes, Box.EMPTY)):
+            self.s.type(sid, "\x1b")
+            self.until(lambda: "[got ESC]" in self.screen(sid))
+            self.assertEqual("".join(self.chunks()), "\x1b[200~hello\x1b[201~\r\x1b")
+            self.assertEqual(next(boxes, "spent"), "spent")                 # it waited on every read of the box
+            row = self.s.chat_row(sid)
+        self.assertEqual((row["box"], row["stopped_at"] is not None), (Box.EMPTY, True))
+
+    def test_a_stop_key_waits_for_the_box_no_longer_than_its_hold(self):
+        sid = self.s.create("g", self.work)["session_id"]
+        self.started(sid)
+        self.s.send(sid, "hello")
+        with unittest.mock.patch.object(self.s, "_box", return_value=Box.HOLDS), \
+                unittest.mock.patch.object(sessions, "HOLD_MAX", 0.6):
+            self.s.type(sid, "\x1b")
+            self.until(lambda: "[got ESC]" in self.screen(sid), timeout=3)
+
     def test_a_message_pasted_just_after_an_esc_is_kept_apart_from_it(self):
         """Not read with the paste's opening as one key (Alt+...)."""
         sid = self.s.create("g", self.work)["session_id"]
