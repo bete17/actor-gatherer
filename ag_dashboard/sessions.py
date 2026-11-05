@@ -528,6 +528,19 @@ def chat_mode() -> str:
     return mode if mode in CHAT_MODES else "terminal"
 
 
+def trusts_folders() -> bool:
+    """Whether a session's terminal starts with its folder trusted, so its harness does not first ask there whether to
+    trust it (harness_kit's `trust`): the home's config.toml's `[dashboard] trust_folders`, true unless it says false
+    (or the file cannot be read)."""
+    try:
+        import tomllib
+        with open(os.path.join(home.HOME, "config.toml"), "rb") as fh:
+            dashboard = tomllib.load(fh).get("dashboard")
+    except (OSError, ValueError):
+        return True
+    return not (isinstance(dashboard, dict) and dashboard.get("trust_folders") is False)
+
+
 _models: Dict[str, dict] = {}           # harness -> {"at": when asked, "models": [...]}
 MODELS_KEEP = 600                       # how long a harness's list of models is kept before it is asked again
 
@@ -1292,16 +1305,25 @@ class Sessions:
             raise SessionError(f"no rules for {s['harness']} to start it with")
         first = h.first_prompt(prompt) if prompt else []     # its first message, never read as an option
         told = instructions(s)
-        argv = [*ag_command(), "--quiet", "--gatherer", s["gatherer"], s["harness"],     # quiet: ag's notes not on its screen
-                *extra_args(s), *h.command(sid, resume=resume, model=s.get("model"), permission_mode=s["permission_mode"],
-                           fullscreen=fullscreen, instructions=told, cwd=s["cwd"]), *first]
         screen = h.screen_env(fullscreen)            # its screen as asked, whatever the dashboard's own environment says
         env = {**{k: v for k, v in actor_env(s, agent_env()).items() if k not in OUTER_TERMINAL and k not in screen},
                "TERM": "xterm-256color", "COLORTERM": "truecolor", **{k: v for k, v in screen.items() if v is not None}}
+        trusted, untrusted = [], None                # its folder trusted: no question first, holding back its message
+        if trusts_folders():
+            try:
+                trusted = h.trust(s["cwd"], env)
+            except (harness_kit.TrustError, OSError) as exc:
+                untrusted = str(exc)
+        argv = [*ag_command(), "--quiet", "--gatherer", s["gatherer"], s["harness"],     # quiet: ag's notes not on its screen
+                *trusted, *extra_args(s), *h.command(sid, resume=resume, model=s.get("model"),
+                                                     permission_mode=s["permission_mode"], fullscreen=fullscreen,
+                                                     instructions=told, cwd=s["cwd"]), *first]
         os.makedirs(os.path.dirname(log_path(sid)), exist_ok=True)
         log = open(log_path(sid), "a", encoding="utf-8", buffering=1)
         log.write(f"--- {_now()} terminal{' (full screen)' if fullscreen else ''} {shlex.join(_unsaid(argv[:len(argv) - len(first)], told))}"
                   f"{' -- <the message sent>' if first else ''}\n")       # the message not logged: a line of it is no line of ag's
+        if untrusted:
+            log.write(f"--- its folder not trusted ahead ({untrusted}): it may ask in its terminal first\n")
         try:
             pid, fd = pty.fork()
         except OSError as exc:

@@ -232,6 +232,7 @@ class TerminalTest(CodexBase):
         self.assertIsNone(self.session(first))
         argv = self.logged()[0]["argv"]
         self.assertEqual(argv[:4], ["--quiet", "--gatherer", "g", "codex"])
+        self.assertEqual(argv[4:6], ["-c", 'projects={"%s"={trust_level="trusted"}}' % os.path.realpath(self.work)])
         self.assertEqual(argv[argv.index("-m") + 1], "gpt-5.6-luna")
         self.assertIn("--no-alt-screen", argv)
         self.assertNotIn("resume", argv)
