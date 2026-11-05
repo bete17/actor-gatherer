@@ -547,6 +547,36 @@ class ChatTerminalTest(SessionsBase):
         self.assertEqual("".join(x.get("typed", "") for x in self.logged()), "\x1b[200~next\x1b[201~\r")
         self.assertEqual(len(self.argvs()), 1)
 
+    def test_its_folder_trusted_before_it_starts_unless_the_config_says_not(self):
+        settings = os.path.join(self.claude, ".claude.json")             # Claude Code's own, as CLAUDE_CONFIG_DIR has it
+        os.makedirs(self.claude)
+        with open(settings, "w") as fh:
+            json.dump({"projects": {}}, fh)
+        def trusted():
+            with open(settings) as fh:
+                return json.load(fh)["projects"].get(os.path.realpath(self.work))
+        os.makedirs(dashboard_home.HOME, exist_ok=True)
+        with open(os.path.join(dashboard_home.HOME, "config.toml"), "w") as fh:
+            fh.write("[dashboard]\ntrust_folders = false\n")
+        self.assertFalse(sessions.trusts_folders())
+        sid = self.s.create("g", self.work)["session_id"]
+        self.s.terminal(sid)
+        self.until(lambda: "fake terminal" in self.screen(sid))
+        self.assertIsNone(trusted())                                     # it asks, as before
+        self.s.stop(sid)
+        self.chat(None)
+        self.assertTrue(sessions.trusts_folders())                      # the default
+        self.s.terminal(sid)
+        self.until(lambda: len(self.argvs()) == 2)
+        self.assertEqual(trusted(), {"hasTrustDialogAccepted": True})
+        self.assertEqual(self.argvs()[1][:4], ["--quiet", "--gatherer", "g", "claude"])   # nothing added to its command
+        os.remove(settings)                                              # it could not: started all the same, and said
+        self.s.stop(sid)
+        self.s.terminal(sid)
+        self.until(lambda: len(self.argvs()) == 3)
+        with open(sessions.log_path(sid)) as fh:
+            self.assertIn("its folder not trusted ahead (it has no settings file yet", fh.read())
+
     def test_one_closed_is_opened_again_resuming_the_session(self):
         sid = self.s.create("g", self.work)["session_id"]
         self.s.terminal(sid)

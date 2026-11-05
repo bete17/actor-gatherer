@@ -23,14 +23,16 @@ import glob
 import json
 import os
 import re
+import stat
 import textwrap
-import zlib
 import time
+import unicodedata
+import zlib
 from typing import Dict, List, Optional, Tuple
 
 from .base import (Action, AnswerError, Box, Call, CallKind, Fact, Facts, Follower, Harness, Kind, Part, RenameError,
-                   SaveError, Shape, ToolCall, ToolResult, ask_arg, one_line, other_view, output_of, picked, seconds,
-                   tool_title, typed_in)
+                   SaveError, Shape, ToolCall, ToolResult, TrustError, ask_arg, one_line, other_view, output_of, picked,
+                   seconds, tool_title, typed_in)
 
 # ---------------------------------------------------------------- Claude Code's own text, in the user's name
 
@@ -648,6 +650,85 @@ def config_dir(env: Optional[Dict[str, str]] = None) -> str:
     return os.path.abspath(os.path.expanduser(env.get("CLAUDE_CONFIG_DIR") or "~/.claude"))
 
 
+#: How long ag waits for its lock on its settings file (`trust_folder`) before giving up: it then asks, as before.
+SETTINGS_LOCK_WAIT = 2.0
+
+
+def settings_file(env: Optional[Dict[str, str]] = None) -> str:
+    """Its settings file (the folders it trusts among them): .claude.json in CLAUDE_CONFIG_DIR, else ~/.claude.json."""
+    env = os.environ if env is None else env
+    if env.get("CLAUDE_CONFIG_DIR"):
+        return os.path.abspath(os.path.join(os.path.expanduser(env["CLAUDE_CONFIG_DIR"]), ".claude.json"))
+    return os.path.abspath(os.path.join(env.get("HOME") or os.path.expanduser("~"), ".claude.json"))
+
+
+def trusted_in(projects: dict, folder: str) -> bool:
+    """Whether its settings' `projects` trust `folder` (a resolved path), by its rule: the folder, or one above it up to
+    the top of its git repository (any above it, outside one), accepted in its trust dialog."""
+    at = folder
+    while True:
+        entry = projects.get(at)
+        if isinstance(entry, dict) and entry.get("hasTrustDialogAccepted") is True:
+            return True
+        up = os.path.dirname(at)
+        if os.path.lexists(os.path.join(at, ".git")) or up == at:
+            return False
+        at = up
+
+
+def trust_folder(path: str, folder: str, wait: float = SETTINGS_LOCK_WAIT) -> bool:
+    """Its settings file at `path` made to trust `folder`, as its trust dialog saves it: `projects["<folder>"]
+    .hasTrustDialogAccepted` true (the path resolved, in NFC, as it names it). Every Claude Code running rewrites that
+    file, re-reading it under a lock (a folder beside it, `<path>.lock`), so ag takes the same lock -- waiting `wait`
+    at most -- re-reads it, adds that one entry, and replaces the file whole. Nothing is written where the folder, or
+    one above it, is trusted already. Whether it wrote; raises TrustError where it could not (a missing file is not
+    made: Claude Code makes it on its first run)."""
+    key = unicodedata.normalize("NFC", os.path.realpath(folder))
+    try:
+        with open(path, encoding="utf-8") as fh:
+            settings = json.load(fh)
+    except FileNotFoundError:
+        raise TrustError(f"it has no settings file yet ({path})") from None
+    except (OSError, ValueError) as exc:
+        raise TrustError(f"its settings file could not be read: {exc}") from None
+    if isinstance(settings, dict) and isinstance(settings.get("projects"), dict) and trusted_in(settings["projects"], key):
+        return False
+    lock, tmp, end = path + ".lock", f"{path}.ag-{os.getpid()}.tmp", time.monotonic() + wait
+    while True:
+        try:
+            os.mkdir(lock)
+            break
+        except FileExistsError:
+            if time.monotonic() >= end:
+                raise TrustError(f"its settings file stayed locked {wait:g}s") from None
+            time.sleep(0.05)
+        except OSError as exc:
+            raise TrustError(f"could not lock its settings file: {exc}") from None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            settings = json.load(fh)
+        projects = settings.setdefault("projects", {}) if isinstance(settings, dict) else None
+        if not isinstance(projects, dict):
+            raise TrustError("its settings file is not as expected (no `projects` table)")
+        if trusted_in(projects, key):
+            return False
+        entry = projects.get(key)
+        projects[key] = {**(entry if isinstance(entry, dict) else {}), "hasTrustDialogAccepted": True}
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, stat.S_IMODE(os.stat(path).st_mode))
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(settings, fh, indent=2, ensure_ascii=False)
+        os.replace(tmp, path)
+        return True
+    except (OSError, ValueError) as exc:
+        raise TrustError(f"its settings file could not be written: {exc}") from None
+    finally:
+        for gone in (lambda: os.unlink(tmp), lambda: os.rmdir(lock)):
+            try:
+                gone()
+            except OSError:
+                pass
+
+
 def project_key(directory: str) -> str:
     """The name it gives a directory's folder under <config>/projects/: its path, resolved, every character that is not a
     letter or digit a "-"."""
@@ -880,6 +961,16 @@ class ClaudeCode(Harness):
         return [*(["--permission-mode", permission_mode] if permission_mode else []), *(["--model", model] if model else []),
                 *(self.instruction_args(instructions) if instructions else []),
                 *(["--resume", session] if resume else ["--session-id", session])]
+
+    def trust(self, cwd: str, env: Optional[Dict[str, str]] = None) -> List[str]:
+        """Its settings file (`settings_file`) made to trust the folder, as its dialog's "Yes, I trust this folder" saves
+        it (`trust_folder`): it has no option that trusts one for a run. Not the home folder, which it trusts for a
+        session at a time (a folder's trust counts for those under it, outside a git repository): it asks there."""
+        env = os.environ if env is None else env
+        if os.path.realpath(cwd) == os.path.realpath(env.get("HOME") or os.path.expanduser("~")):
+            raise TrustError("it trusts the home folder for one session at a time")
+        trust_folder(settings_file(env), cwd)
+        return []
 
     def instruction_args(self, text: str) -> List[str]:
         """`--append-system-prompt`: after its own system prompt, on every call of the run (headless or not)."""

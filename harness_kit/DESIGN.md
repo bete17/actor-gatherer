@@ -83,7 +83,10 @@ class Harness(ABC):
   from before that has its harness recorded once, by the shape of its pieces, as its gatherer's old tables are copied
   (`harness`, step 6). The shape test lives there alone (migrate.py's `shape_of`).
 
-`command` is the harness's own options for a session in a terminal (after `ag ... <name>`), `models` the models it
+`command` is the harness's own options for a session in a terminal (after `ag ... <name>`), `trust` what makes it start
+in a folder without first asking there whether to trust it (Codex: an option for the run; Claude Code: its settings
+file's entry, written under its own lock; the dashboard's `[dashboard] trust_folders = false` leaves them asking),
+`models` the models it
 lists (Codex's catalog), and `answer_keys` / `answer_expected` / `answer_summary` how a question or plan it asks in its
 terminal is answered by keys, what it then records, and the answer in a line -- each harness's dialogs described beside
 its rules (Claude Code's `PLAN_KEYS`, Codex's). The dashboard's answers.py hands each question to its harness.

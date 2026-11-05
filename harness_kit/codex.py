@@ -563,6 +563,12 @@ class Codex(Harness):
                 *(self.instruction_args(instructions) if instructions else []),
                 *([] if fullscreen else ["--no-alt-screen"]), *(["resume", session] if resume else [])]
 
+    def trust(self, cwd: str, env: Optional[Dict[str, str]] = None) -> List[str]:
+        """`-c projects={"<cwd>"={trust_level="trusted"}}`: the folder trusted for this run, as its config.toml keeps one
+        the user trusted. Nothing is saved, and the folders trusted there stay trusted. (It asks only in a git
+        repository. The dotted form, `-c projects."<cwd>".trust_level=...`, does not count: it asks all the same.)"""
+        return ["-c", "projects={%s={trust_level=\"trusted\"}}" % json.dumps(os.path.realpath(cwd), ensure_ascii=False)]
+
     def instruction_args(self, text: str) -> List[str]:
         """Its config's `developer_instructions`, set for the run (`-c`, whose value is TOML: a JSON string is one): a
         developer message it sends after its own, on every call -- `codex` and `codex exec` alike, before `resume`."""
