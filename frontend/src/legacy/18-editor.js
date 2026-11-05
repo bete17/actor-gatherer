@@ -10,7 +10,8 @@
 // actors, is what ag's hook found each tool call did on disk (the listing's `writers`): two or more changing one file
 // are said in the tree and over the file. Saved by Save (or ⌘S / Ctrl+S): until then the file on disk, which the
 // actors read, is as it was -- or, with Auto-save on (as it is unless the reader turns it off, kept in this browser), a moment after each
-// edit. The editor (CodeMirror and Yjs, vendor/editor.js) is loaded the first time a file opens.
+// edit. The editor (CodeMirror and Yjs, vendor/editor.js) is loaded the first time a file opens. A file that is not text --
+// an image, a PDF, a sound, a video, anything else -- is shown in its place, not edited (18-editor-view.js).
 const ED_TICK = 2500;            // ms between looks at the open folders (and the header's "Ns ago")
 const ED_SEND = 40;              // ms the edits of a burst of keys are gathered before they are sent
 const ED_CREDIT = [3, 20];       // s an actor's recorded change may come before, and after, a change seen on disk, to be its
@@ -20,7 +21,7 @@ const ED_WRAP_KEY = "ag-editor-wrap";
 const ED_SHOWN_KEY = "ag-dashboard-editor", ED_HEIGHT_KEY = "ag-dashboard-editor-height";
 const ed = { root: "", home: "", lists: new Map(), open: new Set(), file: null, s: null, lib: null, me: null, user: "", err: "",
   timer: null, treeSig: "", barSig: "", host: null, bar: null, tree: null, head: null, body: null, side: null, changes: null,
-  pv: null, pvSide: null,
+  pv: null, pvSide: null, v: null, turn: 0,                                                                  // v: 18-editor-view.js's
   branches: [], brSig: "", brs: null, brOpen: null,
   nav: null, fold: null, cursor: null, revealing: null, newItem: null, pick: null, menu: null, find: null,   // 18-editor-tree.js's
   choose: null, choosing: null, go: null,                                                                     // 18-editor-open.js's
@@ -638,7 +639,7 @@ function pvPdfMark(f, got) {
 }
 document.addEventListener("webviewerloaded", (ev) => {     // the viewer, before it starts: no scripts of the PDF's
   const w = ev.detail && ev.detail.source;
-  if (!ed.pv || !ed.pv.pdf || ed.pv.pdf.frame.contentWindow !== w) return;
+  if (![ed.pv && ed.pv.pdf, ed.v && ed.v.pdf].some((f) => f && f.frame.contentWindow === w)) return;   // the preview's, or a PDF opened
   try {                                              // its stored preferences would set it again: not read
     w.PDFViewerApplicationOptions.set("disablePreferences", true);
     w.PDFViewerApplicationOptions.set("enableScripting", false);
@@ -779,29 +780,36 @@ function edTick() {
     if (!state.editor) { clearInterval(ed.timer); ed.timer = null; return; }
     if (document.hidden || !ed.root) return;
     const dirs = new Set([ed.root, ...ed.open, ...(ed.file ? [edDir(ed.file)] : [])]);
-    Promise.all([...dirs].map((d) => edList(d, false))).then(() => { edTree(); edHead(); if (ed.s) edConflicts(ed.s); });
+    Promise.all([...dirs].map((d) => edList(d, false))).then(() => { edTree(); edHead(); if (ed.s) edConflicts(ed.s); if (ed.v) edViewCheck(ed.v); });
     edBar(); edFetchBranches();
     if (ed.s) { edConflicts(ed.s); edAgentMarks(ed.s); }
   }, ED_TICK);
 }
 
-// A file open: its document (Yjs), shared through the dashboard with every page that has it open and with the disk.
-async function edOpen(path) {
-  if (ed.s && ed.s.path === path && !ed.s.err) return;
+// A file open: what it is first (editor.about) -- text, its document (Yjs), shared through the dashboard with every page
+// that has it open and with the disk; any other file, shown (edShow). `how`: "edit", its text whatever it is (an SVG's,
+// from its header's Edit); "view", shown (an SVG's View).
+async function edOpen(path, how = null) {
+  if (how !== "view" && ed.s && ed.s.path === path && !ed.s.err) return;
+  if (how !== "edit" && ed.v && ed.v.path === path) return;
   edClose();
+  const turn = ++ed.turn;                            // a later pick's, meanwhile, wins
   ed.file = path; ed.err = "";
   if (ed.pv) pvOpen(path);                           // its project's preview, if that shows
   if (!ed.lists.has(edDir(path))) edList(edDir(path));      // its writers
   edReveal(path);                                    // and its row in the tree, the folders down to it opened
   edRememberFile(path);                              // Go to file's "Opened lately"
   edTree(); edHead();
-  let A;
-  try { A = await edLib(); } catch (e) { ed.err = e.message; edHead(); return; }
-  if (ed.file !== path || ed.s) return;              // another picked meanwhile
+  let info, A;
+  try { info = await edAbout(path); } catch (e) { if (ed.turn === turn) { ed.err = e.message; edHead(); } return; }
+  if (ed.turn !== turn) return;
+  if (how !== "edit" && (info.kind !== "text" || !info.text)) return edShow(path, info);
+  try { A = await edLib(); } catch (e) { if (ed.turn === turn) { ed.err = e.message; edHead(); } return; }
+  if (ed.turn !== turn || ed.s) return;              // another picked meanwhile
   const doc = new A.Y.Doc(), ytext = doc.getText("text"), awareness = new A.Awareness(doc);
   const conn = Math.random().toString(36).slice(2) + Date.now().toString(36);
   const s = ed.s = { A, path, root: "/", doc, ytext, awareness, conn, es: null, view: null, marks: null, markN: 0,
-    epoch: null, state: null, err: "", note: "", out: [], sending: false, awareAt: null, who: null };
+    epoch: null, state: null, err: "", note: "", out: [], sending: false, awareAt: null, who: null, info };
   awareness.setLocalStateField("user", edMe());
   doc.on("update", (u, origin) => { if (origin !== "remote" && origin !== "disk") { s.out.push(u); edFlush(s); } });
   awareness.on("update", (_, origin) => { if (origin === "local") edAware(s); });
@@ -830,7 +838,10 @@ async function edOpen(path) {
   on("aware", (v) => A.applyAwarenessUpdate(awareness, edBytes(v.update), "remote"));
   on("left", (v) => A.removeAwarenessStates(awareness, [v.client], "remote"));
   on("state", (v) => { s.state = v; edZone(s); edAgentMarks(s); edConflicts(s); edAutoLater(s); edHead(); });   // after each edit, any page's, and the disk's
-  on("failed", (v) => { s.err = v.error; es.close(); edHead(); });
+  on("failed", (v) => {
+    if (!s.epoch && how !== "edit") { edClose(); return edShow(path, { ...info, text: false, why: `${v.error}: it is shown, not edited.` }); }   // not text after all
+    s.err = v.error; es.close(); edHead();
+  });
   es.onerror = es.onopen = () => { if (ed.s === s) edHead(); };   // the header says while it reconnects
 }
 function edView(s) {
@@ -1237,6 +1248,7 @@ function edSetAuto(on) {
   edHead();
 }
 function edClose() {
+  edViewClose();
   const s = ed.s;
   if (!s) return;
   ed.s = null;
@@ -1259,7 +1271,7 @@ function edClose() {
 function edReopen(s) {
   const lost = s.state && s.state.dirty;
   edClose();
-  edOpen(s.path).then(() => {
+  edOpen(s.path, s.info && s.info.kind !== "text" ? "edit" : null).then(() => {
     if (lost && ed.s) { ed.s.note = "The dashboard restarted, and this file's unsaved changes there were lost: it was opened again from disk."; edHead(); }
   });
 }
@@ -1268,8 +1280,9 @@ window.addEventListener("pagehide", edClose);
 function edHead() {
   if (!ed.head) return;
   const s = ed.s;
+  if (ed.v && ed.v.path === ed.file) return edViewHead(ed.v);
   if (!ed.file) {
-    ed.head.replaceChildren(el("span", { class: "ed-hint", text: "Pick a file to edit it. Everyone with it open sees the others' edits as they type, and what an actor writes to it shows here as it lands." }),
+    ed.head.replaceChildren(el("span", { class: "ed-hint", text: "Pick a file to open it. Text opens to edit: everyone with it open sees the others' edits as they type, and what an actor writes to it shows here as it lands. Images, PDFs, sound and video open to look at." }),
       el("span", { class: "grow", style: "flex: 1" }), edExecBtn(), edCloseBtn());
     return;
   }
@@ -1306,14 +1319,7 @@ function edHead() {
     title: "The lines edited here since the file was opened, tinted: an actor's change to them is asked about, not merged in. Cleared when the file is closed, or by Clear." },
     "Conflict zone", el("button", { type: "button", title: "Clear the conflict zone: the actors' changes to its lines merge in, as anywhere else",
       onclick: () => edClearZone(s) }, "Clear")) : null;
-  const many = writers.length > 1;
-  const by = writers.length ? el("span", { class: "ed-writers" + (many ? " many" : ""),
-    title: `${many ? `${writers.length} actors are changing this file` : "The actor changing this file"} (in the last half hour):\n`
-      + writers.map((w) => `${edWriterName(w)}, ${ago(w.at)}`).join("\n") },
-    el("span", { class: "ed-avs" }, ...writers.slice(0, 4).map((w) => el("button", { type: "button",
-      class: "ed-av" + (ed.changes && ed.changes.k === edKey(w) ? " on" : ""), "aria-label": `${edWriterName(w)}'s changes to this file`,
-      title: `${edWriterName(w)}: its changes to this file in the last ${ED_CHANGES_S / 60} minutes`, onclick: () => edChanges(w) }, edAvatar(w)))),
-    many ? el("span", { class: "lbl", text: `${writers.length} actors changing it` }) : null) : null;
+  const by = edByChip(writers);
   ed.head.replaceChildren(...[
     el("span", { class: "ed-path", title: ed.file, text: edRel(ed.file) }),
     (nc || na) && !(ed.err || (s && s.err)) ? el("button", { type: "button", class: `ed-status ${cls}`, role: "status",
@@ -1331,12 +1337,28 @@ function edHead() {
       "aria-label": "Wrap long lines", onclick: () => edSetWrap(!ed.wrap) }, strokeIcon(ICONS.wrap, 15)),
     el("label", { class: "ed-auto", title: "Save the file a moment after each edit to it, yours or another's: the actors read it as it is typed. Not while a conflict with the file waits." },
       el("input", { type: "checkbox", checked: ed.auto ? "" : null, onchange: (ev) => edSetAuto(ev.target.checked) }), "Auto-save"),
+    s && s.info && s.info.kind !== "text" ? el("button", { type: "button", class: "ed-mode", title: `Show ${edBase(s.path)} as ${ED_VIEW_SAID[s.info.kind] === "image" ? "an image" : `a ${ED_VIEW_SAID[s.info.kind]}`}`,
+      onclick: () => edOpen(s.path, "view") }, strokeIcon(ICONS.page, 13), "View") : null,
     edTexToPdf() ? el("button", { type: "button", class: "ed-topdf", onclick: () => edToPdf(),
       title: "Show the cursor's line in the PDF beside (SyncTeX), or double-click a word of the source. Double-click the PDF to come back to its source." }, "→ PDF") : null,
     edExecBtn(),
     el("button", { type: "button", class: "primary", title: nc ? "Write it to the file on disk, your lines kept where they conflict (⌘S / Ctrl+S)" : "Write it to the file on disk (⌘S / Ctrl+S)",
       disabled: s && st && (st.dirty || st.missing) ? null : "", onclick: () => s && edSave(s) }, "Save"),
     edCloseBtn()].filter(Boolean));
+}
+
+// The actors changing the file open: their avatars -- each pressed, its changes to it in the last minutes (edChanges) --
+// and, two or more, how many.
+function edByChip(writers) {
+  if (!writers.length) return null;
+  const many = writers.length > 1;
+  return el("span", { class: "ed-writers" + (many ? " many" : ""),
+    title: `${many ? `${writers.length} actors are changing this file` : "The actor changing this file"} (in the last half hour):\n`
+      + writers.map((w) => `${edWriterName(w)}, ${ago(w.at)}`).join("\n") },
+    el("span", { class: "ed-avs" }, ...writers.slice(0, 4).map((w) => el("button", { type: "button",
+      class: "ed-av" + (ed.changes && ed.changes.k === edKey(w) ? " on" : ""), "aria-label": `${edWriterName(w)}'s changes to this file`,
+      title: `${edWriterName(w)}: its changes to this file in the last ${ED_CHANGES_S / 60} minutes`, onclick: () => edChanges(w) }, edAvatar(w)))),
+    many ? el("span", { class: "lbl", text: `${writers.length} actors changing it` }) : null);
 }
 
 // The panel: above the panes, opened from a pane's header (setEditor; from a pane's frame, through this page:

@@ -29,7 +29,10 @@ kept, the file's shown beside them, for a page to take or not.
 A file whose document has changes no one saved stays open after its last page goes (a page opened again finds
 them); one with none is closed LINGER seconds after. Only a regular file of UTF-8 text, at most MAX_BYTES, opens,
 and only under the root the page names (the actor's working directory). Needs pycrdt: without it (`AVAILABLE`
-false) the page does not offer the view."""
+false) the page does not offer the view.
+
+Any other file the page shows, not edits: `about` says what it is -- an image, a PDF, a sound, a video, or none of
+them -- and the page reads its bytes (api/editor.py's /api/edit/raw/...)."""
 import base64
 import bisect
 import difflib
@@ -200,6 +203,66 @@ def read(path: str) -> Tuple[str, tuple]:
         return raw.decode("utf-8"), _signature(after)
     except UnicodeDecodeError:
         raise EditorError(f"{path} is not UTF-8 text") from None
+
+
+# What the Editor shows a file as, when not its text (`about`): by its name's ending -- else by its first bytes (MAGIC) --
+# and the media type its bytes are served as (`about`'s `type`, the page's /api/edit/raw/...).
+VIEWS = {**dict.fromkeys("png jpg jpeg gif webp bmp ico avif svg".split(), "image"), "pdf": "pdf",
+         **dict.fromkeys("mp3 wav ogg oga opus flac m4a aac".split(), "audio"),
+         **dict.fromkeys("mp4 m4v webm mov ogv".split(), "video")}
+TYPES = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif", "webp": "image/webp",
+         "bmp": "image/bmp", "ico": "image/x-icon", "avif": "image/avif", "svg": "image/svg+xml", "pdf": "application/pdf",
+         "mp3": "audio/mpeg", "wav": "audio/wav", "ogg": "audio/ogg", "oga": "audio/ogg", "opus": "audio/ogg",
+         "flac": "audio/flac", "m4a": "audio/mp4", "aac": "audio/aac", "mp4": "video/mp4", "m4v": "video/mp4",
+         "webm": "video/webm", "mov": "video/quicktime", "ogv": "video/ogg"}
+MAGIC = ((b"%PDF-", "pdf"), (b"\x89PNG\r\n\x1a\n", "png"), (b"\xff\xd8\xff", "jpg"), (b"GIF87a", "gif"),
+         (b"GIF89a", "gif"))
+SNIFF = 8192                # the bytes of a file looked at to tell what it is
+
+
+def _texty(head: bytes) -> bool:
+    """Whether a file's first bytes are text: no NUL, UTF-8 -- but for a character cut at their end."""
+    if b"\0" in head:
+        return False
+    try:
+        head.decode("utf-8")
+        return True
+    except UnicodeDecodeError as exc:
+        return len(head) == SNIFF and exc.start > len(head) - 4
+
+
+def about(path: str, root: str) -> dict:
+    """What the Editor opens the file P (under R) as: {path, real (links followed), name, kind, type, size, mtime, text,
+    max}. `kind`: "image", "pdf", "audio" or "video" -- by its name's ending, else by its first bytes; one named so whose
+    first bytes are text (a Git LFS pointer, a placeholder) is "text" -- or "text" (UTF-8, as far as its first SNIFF
+    bytes say), else "file". `type`: the media type its bytes are served as -- text as plain text, never as a page.
+    `text`: whether the editor opens it (text, at most MAX_BYTES): an SVG's is too."""
+    real = resolve(path, root)
+    try:
+        st = os.stat(real)
+    except FileNotFoundError:
+        raise EditorError(f"{path} does not exist") from None
+    if not stat.S_ISREG(st.st_mode):
+        raise EditorError(f"{path} is not a file")
+    try:
+        with open(real, "rb") as fh:
+            head = fh.read(SNIFF)
+    except PermissionError:
+        raise EditorError(f"{path} may not be read") from None
+    name = os.path.basename(path.rstrip("/")) or os.path.basename(real)
+    ext = os.path.splitext(name)[1][1:].lower()
+    sniffed = next((x for magic, x in MAGIC if head.startswith(magic)), None) \
+        or ("webp" if head[:4] == b"RIFF" and head[8:12] == b"WEBP" else None)
+    texty = _texty(head)
+    named = VIEWS.get(ext)
+    if named and ext != "svg" and texty and head and not sniffed:
+        named = None                                # named as one, but text
+    kind = named or (VIEWS[sniffed] if sniffed else "text" if texty else "file")
+    shown = ext if named else sniffed
+    kind_type = TYPES.get(shown or "") if kind != "text" else None
+    return {"path": path, "real": real, "name": name, "kind": kind,
+            "type": kind_type or ("text/plain; charset=utf-8" if texty else "application/octet-stream"),
+            "size": st.st_size, "mtime": st.st_mtime, "text": texty and st.st_size <= MAX_BYTES, "max": MAX_BYTES}
 
 
 def change(text, new: str) -> None:

@@ -4,7 +4,7 @@ a Yjs document each -- their edits, saves and conflicts with the file on disk.""
 import base64
 
 from fastapi import APIRouter, Depends, Request
-from starlette.responses import Response
+from starlette.responses import FileResponse, Response
 
 from .. import chooser, editor
 from .common import Body, Errors, Events, Parts, answer, event, local_only, queue_events
@@ -30,6 +30,37 @@ def listing(request: Request, srv: Parts, dir: str = "", root: str = "") -> Resp
         return answer({**srv.editors.listing(dir, root), "choose": choose})
     except editor.EditorError as exc:
         return answer({"error": str(exc), "choose": choose}, 400)
+
+
+@router.get("/api/edit/about", dependencies=[Depends(local_only)])
+def about(request: Request, path: str = "", root: str = "") -> Response:
+    """editor.about(P, R): what the Editor opens the file P (under R) as -- edited, its text; else shown: an image, a
+    PDF, a sound, a video, or what it is -- with `reveal`, what shows it where it is (chooser.shower: "Finder", ...) for
+    a page on this machine, else null."""
+    return answer({**editor.about(path, root), "reveal": chooser.shower() if _here(request) else None})
+
+
+@router.get("/api/edit/raw/{rest:path}", dependencies=[Depends(local_only)])
+def raw(rest: str, root: str = "/", download: str = "") -> FileResponse:
+    """The bytes of the file /R (under the query's `root`), as editor.about says to serve them -- by its path, so what it
+    names beside it (a page's images) is found beside it: as it is shown in the page (an image's, a PDF's for pdf.js, a
+    video's, its ranges as they are asked for), or (download) saved. Sandboxed: a page or an SVG opened here, as any
+    origin's, runs nothing that reaches the dashboard."""
+    got = editor.about("/" + rest, root or "/")
+    return FileResponse(got["real"], media_type=got["type"], filename=got["name"],
+                        content_disposition_type="attachment" if download else "inline",
+                        headers={"cache-control": "no-cache", "x-content-type-options": "nosniff",
+                                 "content-security-policy": "sandbox"})
+
+
+@router.post("/api/edit/reveal", dependencies=[Depends(local_only)])
+def reveal(request: Request, body: Body) -> Response:
+    """{path, root}: the file P (under R) shown where it is, in the system's file manager (chooser.reveal) -- for a page
+    on this machine only: it opens on this machine's screen -> {}."""
+    if not _here(request):
+        raise chooser.ChooseError("It would open on the dashboard's machine, not this one")
+    chooser.reveal(editor.resolve(str(body.get("path") or ""), str(body.get("root") or "")))
+    return answer({})
 
 
 @router.get("/api/edit/files", dependencies=[Depends(local_only)])

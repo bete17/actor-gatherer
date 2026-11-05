@@ -347,8 +347,23 @@ with Auto-save on (a switch in its header, on by default; turned off, kept so in
 edit to it -- except of a file deleted on disk, which only Save writes again.
 Each listed file and folder has the actors that changed it in the last half hour, from what ag's hook found their tool
 calls did on disk (`_touches`): two or more are an amber badge in the tree, and "N actors changing it" over the file.
+A file that is not text is shown in the editor's place, not edited (editor.about says what it is, by its name, else its
+first bytes; the page's 18-editor-view.js): an image (fit to the panel, its own size on a click), a PDF in pdf.js, a
+sound or a video to play, and any other file -- or text over MAX_BYTES -- as a card: what it is, Download, and Show in
+Finder (`open -R`; on Linux xdg-open of its folder: nothing is opened in an app, so a program is never run). An SVG is
+both: shown, and Edit opens its text (View shows it again). Its bytes come from /api/edit/raw/<path>, sandboxed (CSP),
+text always as text/plain, in ranges (a video's seeking). Changed on disk, it is shown again with the next listing
+(every ED_TICK): an image once its new bytes have loaded, a PDF where the reader was, a sound or video once it is
+paused (until then the header offers it).
 
 Not done yet:
+
+- **Rendered views of text.** Markdown, HTML and CSV open as text only; a View (as the SVG's) could render them --
+  HTML sandboxed, its relative links found beside it through /api/edit/raw/<path>.
+- **Large text read-only.** Text over MAX_BYTES is a card with Download; its start, read-only, would do for a log.
+- **More kinds.** TIFF and HEIC (not shown by Chrome), notebooks (.ipynb as text), Office files, archives' contents.
+- **A changed file shown again is up to ED_TICK late**: the viewers have no stream of their own, they ride on the
+  folder's listing.
 
 - **Who changed it comes a moment late.** ag records a call's changes when its results come back, a few seconds after
   the file changed: until then the change is credited to the one actor running in a directory that holds the file,

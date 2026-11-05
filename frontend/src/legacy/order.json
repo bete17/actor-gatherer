@@ -12,7 +12,8 @@
     "09-browser.css",
     "10-editor-marks.css",
     "11-files-view.css",
-    "12-editor-tree.css"
+    "12-editor-tree.css",
+    "13-editor-view.css"
   ],
   "js": [
     "00-preamble.js",
@@ -36,6 +37,7 @@
     "18-editor.js",
     "18-editor-tree.js",
     "18-editor-open.js",
+    "18-editor-view.js",
     "19-docwriter.js",
     "20-browser.js",
     "21-start.js"
