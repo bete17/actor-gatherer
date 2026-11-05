@@ -284,6 +284,16 @@ def create(srv: Parts, body: Body) -> Response:
                             str(body.get("harness") or harness_kit.DEFAULT), str(body.get("model") or "") or None))
 
 
+@router.post("/api/browser/scheme")
+def scheme(srv: Parts, body: Body) -> Response:
+    """{scheme: light | dark}: the dashboard's theme as its page shows it, every Browser's pages shown in it
+    (browser.py's `set_scheme`)."""
+    bs = _browsers(srv)
+    if bs is None:
+        return not_found()
+    return answer(bs.set_scheme(str(body.get("scheme") or "")))
+
+
 @router.post("/api/browser/logins")
 def logins(srv: Parts, body: Body) -> Response:
     """{action?: sites | import, sites?}: the user's Chrome's logins, for every Browser of the dashboard --

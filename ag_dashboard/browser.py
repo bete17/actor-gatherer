@@ -23,7 +23,7 @@ piece is:
     each Browser          `Browsers.create`: its KEY, its actor a new session of the harness chosen (its folder the
                           session's), started with the tools and instructions (`launch_args`); its own tabs, opened in the
                           Chrome when it is used and again after the Chrome stopped (their pages kept in dashboard.db,
-                          `browser`)
+                          `browser`); their pages shown in the dashboard's theme, light or dark (`Browsers.set_scheme`)
     what the user sees    `Browser.join`: while a page shows the Browser's view, the tab's screen, as it changes, to the
                           page's stream (api/browser.py's `stream`) -- in the dashboard's own Chrome as video (H.264,
                           `Capture`: browser_video.py) to a page that can decode it, else as the JPEG frames of Chrome's
@@ -92,6 +92,7 @@ IDLE_STOP = 600.0           # seconds the Chrome runs on with no Browser used
 CALL_WAIT = 20.0            # the most a call to Chrome is waited for
 NAV_WAIT = 20.0             # the most the agent's navigation waits for its site to answer, before it is stopped
 LOAD_WAIT = 15.0            # the most an action waits for the page it started loading
+SCHEMES = ("light", "dark")   # the dashboard's theme as shown, its Browsers' pages' prefers-color-scheme
 SETTLE = 0.25               # seconds after an action before what it did is looked at
 ACTING_KEEP = 1.2           # seconds after the agent's action a change of the page is still taken as its doing
 SHOWN_KEEP = 10             # the agent's latest actions the view lists, as the user is told them (`Browser.shown`)
@@ -710,6 +711,15 @@ def site_of(domain: str) -> str:
     return ".".join(parts[-2:])
 
 
+SCHEME_CALL = "Emulation.setEmulatedMedia"
+
+
+def scheme_params(scheme: str) -> dict:
+    """A tab's pages told `scheme` is the user's (prefers-color-scheme): a site with a light and a dark look shows the
+    one asked for; a site with one look keeps it."""
+    return {"features": [{"name": "prefers-color-scheme", "value": scheme}]}
+
+
 def cookie_param(c: dict) -> dict:
     """A cookie as read from a Chrome, as one to set in another: its session cookies with no expiry."""
     p = {k: v for k, v in c.items() if k in COOKIE_KEYS}
@@ -1219,9 +1229,11 @@ class Browser:
             ("WebAuthn.enable", {"enableUI": False}),                    # `chooser`; passkeys: PASSKEYS; UI_JS
             ("Runtime.addBinding", {"name": UI_BINDING, "executionContextName": UI_WORLD}),
             ("Page.addScriptToEvaluateOnNewDocument", {"source": UI_JS, "worldName": UI_WORLD, "runImmediately": True}))
+        scheme = self.browsers.scheme
+        themed = ((SCHEME_CALL, scheme_params(scheme)),) if scheme else ()   # the dashboard's theme: `set_scheme`
         for method, params in (*hints, ("Page.enable", {}), ("Runtime.enable", {}), ("Log.enable", {}), ("DOM.enable", {}),
                                ("Overlay.enable", {}), ("Emulation.setFocusEmulationEnabled", {"enabled": True}),
-                               *windowless, *native):
+                               *themed, *windowless, *native):
             try:
                 cdp.call(method, params, session)
             except CdpError:
@@ -3670,6 +3682,7 @@ class Browsers:
         self.chrome = Chrome(self)
         self.logins_lock = threading.Lock()
         self.logins: Optional[Tuple[float, list]] = None   # the user's Chrome's cookies, read to pick from (`login_sites`)
+        self.scheme: Optional[str] = None                # "light" or "dark": the dashboard's theme (`set_scheme`)
 
     def close(self) -> None:
         self.chrome.close()
@@ -3735,6 +3748,31 @@ class Browsers:
         """Every open Browser's state to its pages: the Chrome waits on the user, or no longer does."""
         for b in list(self.open.values()):
             b._publish()
+
+    def set_scheme(self, scheme: str) -> dict:
+        """The dashboard's theme as its page shows it, light or dark (SCHEMES): every Browser's pages shown in it, as
+        the user's own Chrome shows them in their system's -- each tab open now at once, each opened later as it opens
+        (`Browser._open`). Told by the dashboard's page at its start, on each change of its theme, and when it is looked
+        at again (two pages in different themes: the one looked at last). Until one tells, a page has its Chrome's
+        own: light in the dashboard's (headless), the system's in the user's or the ag app's."""
+        if scheme not in SCHEMES:
+            raise BrowserError(f"scheme: one of {', '.join(SCHEMES)}")
+        with self.lock:
+            if scheme == self.scheme:
+                return {"scheme": scheme}
+            self.scheme = scheme
+            browsers = list(self.open.values())
+        cdp = self.chrome.conn
+        if cdp is not None and cdp.alive:                # (none running: its tabs, opened, are told then)
+            for b in browsers:
+                with b.lock:
+                    tabs = list(b.tabs)
+                for t in tabs:
+                    try:
+                        cdp.call(SCHEME_CALL, scheme_params(scheme), t.session)
+                    except BrowserError:                 # (a tab closing meanwhile)
+                        pass
+        return {"scheme": scheme}
 
     # -- logins: the user's Chrome's, copied into the dashboard's own, for every Browser of the dashboard
 
