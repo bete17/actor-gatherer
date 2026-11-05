@@ -359,10 +359,12 @@ function filesRender({ info, session, running, writable, held }) {
   // commands start where they would for a new turn -- the commands at their end, the conversation at its end or at the turn picked
   const afresh = !document.querySelector("#main .files .fl-grid");
   // the conversation, at the right: drawn by the new code (src/features/chat/) into a node of the actor's own, the same
-  // from draw to draw (agNext.chat.draw) -- before its first turn is stored, all there is (the first message: pending,
-  // sent from here; or sent, its turn begun; or none yet, the actor waving hello)
+  // from draw to draw (agNext.chat.draw) -- before its first turn, all there is (the actor waving hello). From its first
+  // message on -- the moment it is sent, its turn opening before any is stored -- beside its files and commands, so the
+  // message does not move as its turn is stored.
   const talk = window.agNext.chat.draw(talkFeed(info, session, writable, held, afresh), CHAT_HOST);
-  if (!d.turns.length) return [talk, asking].filter(Boolean);
+  const view = chatViewOf(info), opening = !d.turns.length;
+  if (opening && !(view && (view.turns.length || view.opening)) && !mySends().length) return [talk, asking].filter(Boolean);
   // its node, drawn before its first turn was stored at the frame's top, goes into the grid now: taken out first, so
   // patch() does not look for it at the top once the grid has taken it in (fill)
   if (talk.parentElement && !talk.parentElement.classList.contains("fl-right")) talk.remove();
@@ -438,7 +440,7 @@ function filesRender({ info, session, running, writable, held }) {
   if (!files.length) list.append(el("div", { class: "fv-note", text: kindHidden ? `Only ${plural(kindHidden, "file")} of the kinds switched off below.`
     : gitHidden ? `Only ${plural(gitHidden, "file")} git changed.`
     : tmpFiles ? `Only ${plural(tmpFiles, "file")} in temporary folders.`
-    : running && d.turn === d.turns.length - 1 ? "No files yet in this turn." : "The agent touched no files in this turn." }));
+    : opening || (running && d.turn === d.turns.length - 1) ? "No files yet in this turn." : "The agent touched no files in this turn." }));
   // every call of the turn, in the order made: what it did, its outcome, and the files it touched (a click opens one) --
   // those only git changed as it ran when shown (gitSwitch)
   const cmdFiles = (c) => (c.files || []).filter((p) => showGit || (c.did || {})[p] || !(c.git || {})[p]);
