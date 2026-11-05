@@ -1481,8 +1481,9 @@ class Record(Follower):
         if kind == "enqueue" and text is not None:
             q = {"key": key, "text": text, "at": when, "note": text.lstrip().startswith(QUEUED_NOTES)}
             self.queue.append(q)
-            return [] if q["note"] else [Fact(Facts.MESSAGE_QUEUED, key, when, {"queued": key, "text": text,
-                                                                                 "words": words_of(text)[1]})]
+            return [] if q["note"] else [Fact(Facts.MESSAGE_QUEUED, key, when, {
+                "queued": key, "text": text, "words": words_of(text)[1],
+                "joins_after": when + BUSY_SECONDS if when is not None else None})]
         if kind == "dequeue" and self.queue:                    # the first in: it opens the next turn
             q = self.queue.pop(0)
             self.sent = (self.sent + [(q["text"], when)])[-SENT_KEPT:]

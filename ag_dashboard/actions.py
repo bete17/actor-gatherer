@@ -1,8 +1,8 @@
 """The dashboard's own actions on a session, kept in its gatherer as events of the session -- put in by ag (`ag home
 insert`), as naming.py keeps a name -- so what the harness then did can be checked against what the reader did:
 
-    chat_sent        text: a message sent from Chat (typed into the session's terminal, or held for its next turn);
-                     shown as pending until the harness has it (data.py's `typed`)
+    chat_sent        text, cid: a message sent from Chat (typed into the session's terminal, or held for its next
+                     turn), and the send's id; shown as pending until the harness has it (data.py's `typed`)
     answer_given     call, summary, expect: an answer to what the harness asks, typed into its terminal; what it
                      records is checked against `expect` (data.py's `answer_of`)
     terminal_input   keys typed into the session's terminal from the page: the first after QUIET_SECONDS of none --
@@ -66,9 +66,11 @@ def record(gatherer: Optional[str], channel: Optional[str], events: List[dict], 
         threading.Thread(target=put, name="dashboard-action", daemon=True).start()
 
 
-def chat_sent(gatherer: str, channel: str, text: str, at: Optional[float] = None) -> None:
-    """`at`: when it was sent, where that was before now (a new codex session's, kept until it had its thread)."""
-    record(gatherer, channel, [_event(CHAT_SENT, text=text, **({"at": at} if at is not None else {}))])
+def chat_sent(gatherer: str, channel: str, text: str, at: Optional[float] = None, cid: Optional[str] = None) -> None:
+    """`at`: when it was sent, where that was before now (as the dashboard took it, before typing it; a new codex
+    session's, kept until it had its thread). `cid`: the send's id (sessions.py's `send`)."""
+    record(gatherer, channel, [_event(CHAT_SENT, text=text, **({"at": at} if at is not None else {}),
+                                      **({"cid": cid} if cid else {}))])
 
 
 def answer_given(gatherer: str, channel: str, sent: dict) -> None:

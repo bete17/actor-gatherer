@@ -167,7 +167,8 @@ class ExecTest(CodexBase):
             self.assertTrue(before <= args[3] <= time.time())
             self.until(lambda: (self.session(THREAD) or {}).get("turns") == 1)
             self.s.send(THREAD, "again")                                       # its thread's from the start
-            self.assertEqual(kept.call_args_list[-1].args, ("g", THREAD, "again"))
+            self.assertEqual(kept.call_args_list[-1].args[:3], ("g", THREAD, "again"))
+            self.assertEqual(len({a.args[4] for a in kept.call_args_list}), 2)   # each send with an id of its own
             self.assertEqual(self.s.unsent, {})
 
     def test_a_message_sent_while_a_turn_runs_is_the_next_turn(self):

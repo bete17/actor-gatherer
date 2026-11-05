@@ -620,8 +620,9 @@ class Facts:
     of it besides the conversation (`Harness.derived`): each fact's type, the event it becomes in the gatherer. Each
     fact's data:
 
-        message_queued     queued (its key), text (as the harness keeps it), words (as the user typed it): a message
-                           written while the agent works, held until it can be sent
+        message_queued     queued (its key), text (as the harness keeps it), words (as the user typed it), joins_after
+                           (sent after this time, it joins the turn it was written in: held, not just queued between
+                           turns; None: not known): a message written while the agent works, held until it can be sent
         message_sent       queued (the key of the message_queued it was; None: sent at once, between turns), text,
                            words, how ("mid_turn": into the turn that ran; "next": as the next turn's first, once the
                            turn ended; "prompt": at once, between turns), joins (part of the turn it was written in),

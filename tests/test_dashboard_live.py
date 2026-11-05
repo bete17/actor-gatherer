@@ -312,10 +312,23 @@ class StreamTest(HomeBase):
         got = s.until(lambda name, a: name == "agent" and a["pending"], 2)
         self.assertEqual(got[1]["pending"][-1]["text"], "Done.")
 
+    def test_chat_s_view_at_once_then_as_a_message_is_stored(self):
+        httpd = self.start()
+        s = self.open(httpd, "?gatherer=g&channel=c1")
+        first = s.until(lambda name, v: name == "chat", 2)
+        self.assertIsNotNone(first)
+        self.assertEqual(set(first[1]), {"turns", "opening", "current", "waiting", "taken_back", "version"})
+        n = len(first[1]["turns"])
+        codex_items.CodexItems(self.m).insert("g", user("one more", 93), channel_id="c1")
+        got = s.until(lambda name, v: name == "chat" and len(v["turns"]) == n + 1, 2)
+        self.assertIsNotNone(got)
+        self.assertEqual(got[1]["turns"][-1]["text"], "one more")
+        self.assertEqual(got[1]["current"]["turn"], got[1]["turns"][-1]["n"])
+
     def test_another_channel_s_change_sends_its_agent_nothing(self):
         httpd = self.start()
         s = self.open(httpd, "?gatherer=g&channel=c1")
-        s.next(), s.next()
+        s.next(), s.next(), s.next()                             # home, agent, chat
         codex_items.CodexItems(self.m).insert("g", user("for c2", 92), channel_id="c2")
         got = s.until(lambda name, v: True, 1)
         self.assertIn(got and got[0], ("home", None))           # the home may change; c1 does not
@@ -325,8 +338,8 @@ class StreamTest(HomeBase):
         httpd = self.start()
         also = urllib.parse.quote(json.dumps([["g", "c2"], ["g", "nope"], "not a pair", ["", "c1"]]))
         s = self.open(httpd, f"?gatherer=g&channel=c1&also={also}")
-        got = [s.next() for _ in range(4)]                     # home, the actor picked, and each other, at once
-        self.assertEqual(sorted(n for n, _ in got), ["actor", "actor", "agent", "home"])
+        got = [s.next() for _ in range(5)]                     # home, the actor picked, its Chat, and each other, at once
+        self.assertEqual(sorted(n for n, _ in got), ["actor", "actor", "agent", "chat", "home"])
         actors = {v["channel"]: v for n, v in got if n == "actor"}
         self.assertEqual(set(actors), {"c2", "nope"})          # what is not a [gatherer, channel] is left out
         self.assertEqual(actors["c2"]["gatherer"], "g")

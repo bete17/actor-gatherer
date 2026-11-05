@@ -878,7 +878,9 @@ def withdrawn_reads(conn, channel: str, tables: set, stops: List[float], read_id
     the user's words of the newest user message among them that opened a turn (else None), said_row: its row, reached:
     what of the answer had reached the harness in words, as the hook server saw it relayed (its `call_failed`'s: "text",
     "tool", "nothing"; None from a hook before it said), kept: its text had, or Claude Code's record says the turn was
-    interrupted (`stops`: when) once the call had gone to the model (its read done) and before the next call's read}.
+    interrupted (`stops`: when) once the call had gone to the model (its read done) and before the next call's read,
+    failed: the hook has stored how the call failed (its `call_failed`) -- until then, which it writes just after it
+    withdraws, what it reached is not known, and nothing of it taken back}.
     The hook withdraws a call's events on any Esc, those it stored again (the turns before, sent with it) among them.
     Claude Code keeps them all -- and records the turn interrupted -- once some of the answer's words had come; before,
     it takes the user's message back into its input box (`said`; the events after it with it), recording nothing."""
@@ -892,7 +894,7 @@ def withdrawn_reads(conn, channel: str, tables: set, stops: List[float], read_id
             f"JOIN event_types t ON t.event_type_id = e.event_type_id WHERE ifnull(e.{CHANNEL}, '') = ? AND w.read_id "
             f"{'= ?' if read_id is not None else 'IS NOT NULL'} ORDER BY e.row_id",
             (channel, *([read_id] if read_id is not None else []))):
-        r = out.setdefault(read, {"said": None, "said_row": None, "reached": None, "kept": False})
+        r = out.setdefault(read, {"said": None, "said_row": None, "reached": None, "kept": False, "failed": False})
         if typ == "user_message":
             k, w = (kind, said) if kind and said is not None else harness_kit.words(text or "", harness)
             if k == Kind.USER and w.strip():                 # the newest: the turns before it come first
@@ -902,6 +904,8 @@ def withdrawn_reads(conn, channel: str, tables: set, stops: List[float], read_id
                 f"SELECT e.p_read_id, e.payload_json FROM events e JOIN event_types t ON {BY_CHANNEL} WHERE "
                 f"ifnull(e.{CHANNEL}, '') = ? AND t.name = 'call_failed' AND e.p_read_id >= ?", (channel, min(out))):
             got = _json(raw) or {}
+            if read in out:
+                out[read]["failed"] = True
             if read in out and got.get("status") == HUNG_UP and got.get("reached"):
                 out[read]["reached"] = got["reached"]
                 out[read]["kept"] = got["reached"] == "text"
@@ -1178,10 +1182,20 @@ def typed_at(gatherer: str, channel: str) -> Optional[float]:
 
 def meanwhile(conn, channel: str) -> List[dict]:
     """The messages written while a turn ran that the harness held until it ended, and sent then, unwrapped, as the next
-    request's -- part of that turn too: [{text (as the harness sent it), sent}], in order."""
-    return [{"text": f.get("text") or "", "sent": f.get("at")}
-            for t, f in _facts(conn, channel, ("message_sent",), MESSAGES_READ)
-            if f.get("how") == "next" and f.get("joins") and f.get("at") is not None]
+    request's -- part of that turn too: [{text (as the harness sent it), sent}], in order; then those it holds now,
+    queued and neither sent nor taken out ({text, sent: None, joins_after}): sent after `joins_after` (its record's), one
+    joins its turn -- the message stored then is one of them before its record says it was sent."""
+    out: List[dict] = []
+    pending: Dict[str, dict] = {}
+    for t, f in _facts(conn, channel, ("message_queued", "message_sent", "message_withdrawn"), MESSAGES_READ):
+        q = f.get("queued")
+        if t == "message_queued" and q:
+            pending[q] = {"text": f.get("text") or f.get("words") or "", "sent": None, "joins_after": f.get("joins_after")}
+        elif t in ("message_sent", "message_withdrawn"):
+            pending.pop(q, None)
+            if t == "message_sent" and f.get("how") == "next" and f.get("joins") and f.get("at") is not None:
+                out.append({"text": f.get("text") or "", "sent": f.get("at")})
+    return out + [q for q in pending.values() if isinstance(q["joins_after"], (int, float))]
 
 
 def _result(gatherer: str, channel: str, call: Optional[str]) -> Optional[str]:

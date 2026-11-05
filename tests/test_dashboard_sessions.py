@@ -171,6 +171,32 @@ class AgentTest(SessionsBase):
         self.assertEqual((self.session(sid)["status"], self.session(sid)["last_error"]), ("idle", None))   # kept, giving way
         self.assertTrue(os.path.exists(sessions.log_path(sid)))
 
+    def test_a_send_is_kept_with_its_id_before_it_is_typed_and_recorded_with_it(self):
+        sid = self.s.create("g", self.work)["session_id"]
+        rang = []
+        self.s.on_change = lambda g, c: rang.append((g, c))
+        with unittest.mock.patch.object(sessions.actions, "chat_sent") as kept, \
+                unittest.mock.patch.object(self.s, "_send", wraps=self.s._send) as typed:
+            def seen(*a, **k):
+                self.assertEqual([x["text"] for x in self.s.chat_row(sid)["sent"]], ["hello"])   # kept before
+                return {"session_id": sid, "gatherer": "g"}
+            typed.side_effect = seen
+            self.s.send(sid, "hello", cid="page-1")
+        self.assertIn(("g", sid), rang)                                     # Chat's view has it at once
+        [x] = self.s.chat_row(sid)["sent"]
+        self.assertEqual((x["cid"], x["text"]), ("page-1", "hello"))
+        self.assertEqual(kept.call_args.args, ("g", sid, "hello", x["at"], "page-1"))
+        self.assertEqual(self.session(sid)["sent"], [x])                    # in the home's row of it too
+
+    def test_a_send_that_fails_is_not_kept(self):
+        sid = self.s.create("g", self.work)["session_id"]
+        with unittest.mock.patch.object(self.s, "_send", side_effect=sessions.SessionError("no")), \
+                unittest.mock.patch.object(sessions.actions, "chat_sent") as kept:
+            with self.assertRaises(sessions.SessionError):
+                self.s.send(sid, "hello")
+        self.assertEqual(self.s.chat_row(sid)["sent"], [])
+        kept.assert_not_called()
+
     def test_an_idle_agent_closed_from_the_page_ends_and_the_next_message_resumes_it(self):
         sid = self.s.create("g", self.work)["session_id"]
         with self.assertRaises(sessions.SessionError):                      # no process yet

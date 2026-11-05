@@ -207,7 +207,7 @@ def _events(conn, channel: str, stops: List[dict] = ()):
     if "_withdrawn" in tables:
         back = data.withdrawn_reads(conn, channel, tables, [s["at"] for s in stops if s["kind"] == "interrupted"])
         taken = " OR ".join(f"(w.read_id = {int(r)} AND w.row_id >= {int(w['said_row'])})"
-                            for r, w in back.items() if w["said"] and not w["kept"])
+                            for r, w in back.items() if w["said"] and not w["kept"] and w["failed"])
         own = ", ".join(f"'{t}'" for t in AGENTS_OWN)
         kept = (f" AND (t.name IN ({own}) OR e.row_id NOT IN (SELECT w.row_id FROM _withdrawn w WHERE w.read_id IS NULL"
                 + (f" OR {taken}" if taken else "") + "))")
@@ -338,9 +338,9 @@ def _turn_starts(evs: list, held: List[dict]) -> tuple:
     """Where the session's turns start, of its events (`_events`'): ([(index, row_id, at, text, kind)], more) -- `more`,
     what the user wrote while a turn ran, by the turn's number: [{row_id, at, text, kind}]. A message written while a turn
     ran is part of it, not a turn of its own: one Claude Code sent mid-turn (wrapped), or held until the turn ended and
-    sent then, as its record says (`held`, data.py's `meanwhile`: matched by its words, stored as it was sent -- taken
-    out of it as matched); and codex's answers to what it asked as it worked (ASK_REPLY), which it sends as the user's
-    while the turn runs."""
+    sent then, as its record says (`held`, data.py's `meanwhile`: matched by its words, stored as it was sent -- or, one
+    it holds and has not said it sent, stored after its `joins_after` -- taken out of it as matched); and codex's answers to
+    what it asked as it worked (ASK_REPLY), which it sends as the user's while the turn runs."""
     starts, more = [], {}
     for i, (row_id, typ, at, parts, stored) in enumerate(evs):
         said = [p["text"] for p in parts if p["kind"] == "text" and p.get("role") == "user"]
@@ -348,7 +348,9 @@ def _turn_starts(evs: list, held: List[dict]) -> tuple:
             kind, text = stored or harness_kit.words(said[0])   # the user's words, its harness's wrapper off
             meanwhile = kind in (Kind.MID_TURN, Kind.ASK_REPLY)
             if not meanwhile and at is not None:
-                q = next((q for q in held if q["text"].strip() == said[0].strip() and abs(at - q["sent"]) <= HELD_SECONDS), None)
+                q = next((q for q in held if q["text"].strip() == said[0].strip()
+                          and (abs(at - q["sent"]) <= HELD_SECONDS if q["sent"] is not None else at >= q["joins_after"])),
+                         None)
                 if q is not None:
                     held.remove(q)
                     meanwhile = True
@@ -636,16 +638,22 @@ def files(gatherer: str, channel: str, turn: Optional[int] = None, cwd: str = ""
     if conn is None:
         return {"error": f"no database for gatherer {gatherer!r}"}
     try:
-        stops = _stops(conn, channel)
-        evs = list(_events(conn, channel, stops))
-        touched = _touches(conn, channel)
-        sent = _sent(conn, channel)
-        git = _git(conn) if touched else {"calls": {}, "changed": {}, "trees": []}   # what git did, in any session
-        held = data.meanwhile(conn, channel)          # sent when a turn ended, written while it ran (the record's)
-        reports = data.record_of(conn, channel).reports()   # what each subagent answered, as its own record had it
-        rules = harness_kit.get(data._harness(conn, channel) or harness_kit.DEFAULT)    # its harness's rules
+        return files_of(conn, channel, turn, cwd)
     finally:
         conn.close()
+
+
+def files_of(conn, channel: str, turn: Optional[int] = None, cwd: str = "") -> dict:
+    """`files`, from a connection to the gatherer (left open): what one read of it at one moment says -- as Chat's view
+    makes it (chat_view.py), and the recorded runs' replays."""
+    stops = _stops(conn, channel)
+    evs = list(_events(conn, channel, stops))
+    touched = _touches(conn, channel)
+    sent = _sent(conn, channel)
+    git = _git(conn) if touched else {"calls": {}, "changed": {}, "trees": []}   # what git did, in any session
+    held = data.meanwhile(conn, channel)              # sent when a turn ended, written while it ran (the record's)
+    reports = data.record_of(conn, channel).reports()   # what each subagent answered, as its own record had it
+    rules = harness_kit.get(data._harness(conn, channel) or harness_kit.DEFAULT)    # its harness's rules
     known: Dict[str, Sheet] = {}                     # each file's lines as last seen, over the whole session
     calls: Dict[str, dict] = {}                      # a call waiting for its result, by id
     mine: set = set()                                # the work trees the session's calls make (`git worktree add`)

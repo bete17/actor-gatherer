@@ -70,6 +70,18 @@ class ChecksTest(unittest.TestCase):
         got = check([(100.3, view(ONE, "working")), (100.6, view(moved, "working"))])
         self.assertEqual(got, ["+0.30s: turn 0 began at 100.0, now 100.4"])
 
+    def test_a_send_left_unsorted_once_the_run_settles(self):
+        stuck = {"text": "and now", "cid": "b", "began": 110.0}
+        got = check([(103.0, view(ONE, "done")), (110.0, view(ONE, "opening", opening=stuck)),
+                     (120.0, view(ONE, "opening", opening=stuck))])
+        self.assertEqual(got, ["+17.00s: at the end, a send not sorted out: opening b"])   # never stored
+        waits = [{"text": "x", "cid": "c", "how": "chat"}]
+        self.assertEqual(check([(103.0, view(ONE, "working", waiting=waits))]), [])        # it works: it waits its turn
+        got = check([(103.0, view(ONE, "working", waiting=waits)), (106.0, view(ONE, "done", waiting=waits))])
+        self.assertEqual(got, ["+3.00s: at the end, a send not sorted out: waiting c"])
+        self.assertEqual(check([(106.0, view(ONE, "done", waiting=[{"text": "x", "cid": "c", "how": "chat"}]))],
+                               settled=False), [])
+
 
 if __name__ == "__main__":
     unittest.main()

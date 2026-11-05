@@ -41,11 +41,14 @@ def _cids(v: dict) -> Dict[str, List[str]]:
     return places
 
 
-def check(views: List[Tuple[float, dict]], sends: Tuple[float, ...] = (), blink: float = BLINK_SECONDS) -> List[str]:
+def check(views: List[Tuple[float, dict]], sends: Tuple[float, ...] = (), blink: float = BLINK_SECONDS,
+          settled: bool = True) -> List[str]:
     """The problems in `views` ((at, view), in order): a turn over for a blink between two moments it is at work --
     the same turn, or the next with no message sent meanwhile (`sends`: when the run sent one; stopped, it is over); a
     send in two places at once; a turn that changes or goes from the middle of the conversation, or goes from its end
-    other than taken back; the current state not the latest turn's; a turn's `began` moving."""
+    other than taken back; the current state not the latest turn's; a turn's `began` moving (a turn taken back and
+    sent again begins again); and, the run settled (`settled`: its last view, nothing at work), a send not yet sorted
+    out -- still opening, or waiting from Chat."""
     out: List[str] = []
     began: Dict[Tuple[int, str], float] = {}
     work: Optional[Tuple[float, object]] = None           # (since, the turn) the latest at work
@@ -76,6 +79,8 @@ def check(views: List[Tuple[float, dict]], sends: Tuple[float, ...] = (), blink:
                 back = (v.get("taken_back") or {}).get("text")
                 if len(gone) > 1 or back != gone[0][1]:
                     out.append(f"{when}: turn {gone[0][0]} went without being taken back")
+                for k in gone:                             # sent again, it is a turn of its own: its own start
+                    began.pop(k, None)
         # a turn's start does not move
         for t in v.get("turns", []):
             k = (t["n"], t["text"])
@@ -97,4 +102,11 @@ def check(views: List[Tuple[float, dict]], sends: Tuple[float, ...] = (), blink:
         elif state == "stopped":
             work = over = None
         prev = v
+    if settled and views:
+        at, v = views[-1]
+        state = (v.get("current") or {}).get("state")
+        left = [f"opening {v['opening'].get('cid')}"] if v.get("opening") else []
+        left += [f"waiting {w.get('cid')}" for w in v.get("waiting", []) if w.get("how") == "chat"]
+        if left and state not in ("working", "asking"):     # at work: what waits may still be taken
+            out.append(f"{at - t0:+.2f}s: at the end, a send not sorted out: {', '.join(left)}")
     return out

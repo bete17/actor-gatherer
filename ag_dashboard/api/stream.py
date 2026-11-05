@@ -8,7 +8,7 @@ from typing import Optional
 from fastapi import APIRouter
 from starlette.responses import Response
 
-from .. import data, server
+from .. import chat_view, data, server
 from .common import KEEPALIVE_EVENT, Errors, Events, Parts, blocking, event
 
 router = APIRouter(route_class=Errors)
@@ -37,7 +37,8 @@ def signature(value) -> str:
 def stream(srv: Parts, gatherer: Optional[str] = None, channel: Optional[str] = None,
            also: Optional[str] = None) -> Response:
     """Server-sent events, until the page goes: `home` (data.home()) and, with `gatherer` and `channel`, `agent`
-    (data.agent(G, C)) at once, then again each time they change.
+    (data.agent(G, C)) and `chat` (what Chat shows of it: chat_view.py's `view`, made from one read) at once, then again
+    each time they change -- `chat` also as time alone changes it (a send not seen for long), checked every KEEPALIVE.
 
     Woken by ag's notifications or the fallback check (live.py) -- what the harness's own record of a session says (the
     user writing to it as it works, a question answered in its terminal, Esc) among them, as ag's hook records it --
@@ -54,6 +55,12 @@ def stream(srv: Parts, gatherer: Optional[str] = None, channel: Optional[str] = 
         except Exception as exc:  # noqa: BLE001 - the page shows it; the stream stays up
             return {"error": f"{type(exc).__name__}: {exc}"}
 
+    def chat_of(g: str, c: str) -> dict:
+        try:
+            return chat_view.of(g, c, srv.sessions.chat_row(c))
+        except Exception as exc:  # noqa: BLE001 - the page shows it; the stream stays up
+            return {"error": f"{type(exc).__name__}: {exc}"}
+
     def next_events() -> list:
         """What to send next: the changes once woken (or KEEPALIVE passed), as events; a comment if none."""
         woken = watch.wake.wait(server.KEEPALIVE)
@@ -67,6 +74,8 @@ def stream(srv: Parts, gatherer: Optional[str] = None, channel: Optional[str] = 
             out.append(("home", "home", srv.home_view(woken)))
         if agent and gatherer and channel is not None:
             out.append(("agent", "agent", agent_of(gatherer, channel)))
+        if (agent or not woken) and gatherer and channel is not None:
+            out.append(("chat", "chat", chat_of(gatherer, channel)))
         for i in sorted(changed):
             g, c = others[i]
             out.append(("actor", ("actor", g, c), {"gatherer": g, "channel": c, "agent": agent_of(g, c)}))

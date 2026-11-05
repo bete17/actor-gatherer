@@ -10,6 +10,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from types import SimpleNamespace
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -111,6 +112,25 @@ class HookTest(unittest.TestCase):
         self.assertIn("Reply with the single word ok", sent)
         self.assertNotIn("Write a 900-word story.", sent)
         self.assertEqual(sum("# Environment" in (t or "") for t in sent), 1)   # its notes once, not twice
+
+    def test_a_hang_up_withdraws_before_it_is_recorded(self):
+        """What the call stored is withdrawn before the hang-up is recorded: a reader that finds the hang-up finds what
+        it took back with it (the dashboard tells a message taken back from a turn stopped by the two together)."""
+        _, req = self.call([user(*REMINDERS, "Write a 900-word story.")])
+        order, recorded = [], []
+
+        async def withdraw(*a):
+            order.append("withdrawn")
+            return True
+
+        async def record(gatherer, channel, events):
+            order.append("recorded")
+            recorded.extend(events)
+        with unittest.mock.patch.object(claude_ag, "report_withdrawn", side_effect=withdraw), \
+                unittest.mock.patch.object(self.hook, "recorded", side_effect=record):
+            self.hang_up(req)
+        self.assertEqual(order, ["withdrawn", "recorded"])
+        self.assertEqual([(e["type"], e["payload"].get("withdrawn")) for e in recorded], [("call_failed", True)])
 
     def test_a_later_message_taken_back_is_left_out(self):
         first = [user(*REMINDERS, "What is 2+2?"), NOTES, user("4")]

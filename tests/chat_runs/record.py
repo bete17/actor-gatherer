@@ -3,7 +3,8 @@
     python tests/chat_runs/record.py --home HOME --port PORT --gatherer G --channel C --out RUN.json [--drive DRIVE.json]
 
 While it runs (until Ctrl-C, or --seconds): every 50 ms, the session's state as the dashboard on PORT has it (its
-`/api/home` row), and the rows of the gatherer that change in place -- the withdrawals (a message taken back, then
+`/api/home` row), what the dashboard's stream sends Chat of it (each `chat` event: `streamed`), and the rows of the
+gatherer that change in place -- the withdrawals (a message taken back, then
 sent again, is withdrawn and restored), the builds and the task checks. Then: the gatherer's schema, its event types,
 and every row of the actor's (and of no actor's) events and reads, each with the time it was stored. `--drive`: what
 the run did, as the test driver logged it ({"marks": [[ms, "key Escape"], ...]}), kept as the run's `actions`.
@@ -19,7 +20,9 @@ import re
 import signal
 import sqlite3
 import sys
+import threading
 import time
+import urllib.parse
 import urllib.request
 from datetime import datetime
 
@@ -83,9 +86,33 @@ def session_of(port: int, gatherer: str, channel: str):
         for a in g.get("agents") or []:
             if a.get("channel") == channel:
                 s = a.get("session") or {}
-                return {"status": a.get("status"), "session": {k: s.get(k) for k in (
-                    "status", "queued", "terminal", "stopped_at", "started_as", "ended")}}
+                return {"status": a.get("status"), "harness": a.get("harness"), "session": {k: s.get(k) for k in (
+                    "status", "queued", "terminal", "stopped_at", "started_as", "ended", "sent")}}
     return None
+
+
+def follow(port: int, gatherer: str, channel: str, out: list, stop: list) -> None:
+    """What the dashboard's stream (`/api/stream`) sends Chat of the actor, as it comes: each `chat` event, appended to
+    `out` as {at, view} -- until `stop`."""
+    q = urllib.parse.urlencode({"gatherer": gatherer, "channel": channel})
+    while not stop[0]:
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/stream?{q}", timeout=30) as r:
+                name, data = None, []
+                for raw in r:
+                    if stop[0]:
+                        return
+                    line = raw.decode().rstrip("\r\n")
+                    if line.startswith("event: "):
+                        name = line[7:]
+                    elif line.startswith("data: "):
+                        data.append(line[6:])
+                    elif line == "":
+                        if name == "chat":
+                            out.append({"at": time.time(), "view": json.loads("\n".join(data))})
+                        name, data = None, []
+        except Exception:  # noqa: BLE001 - the dashboard busy, or restarted: open it again
+            time.sleep(0.2)
 
 
 def main(argv=None) -> int:
@@ -99,13 +126,17 @@ def main(argv=None) -> int:
     ap.add_argument("--seconds", type=float, default=0, help="stop after this long (0: at Ctrl-C or SIGTERM)")
     a = ap.parse_args(argv)
     db = f"{a.home}/gatherers/{a.gatherer}/context.db"
+    stop = [False]
+    signal.signal(signal.SIGTERM, lambda *_: stop.__setitem__(0, True))
     while not os.path.exists(db):                      # a new gatherer has none until its first call
+        if stop[0]:
+            print(f"{a.out}: no gatherer {a.gatherer} to record (no call made)", file=sys.stderr)
+            return 1
         time.sleep(0.05)
     conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=5)
     conn.row_factory = sqlite3.Row
-    stop = [False]
-    signal.signal(signal.SIGTERM, lambda *_: stop.__setitem__(0, True))
-    sessions, sampled = [], {name: [] for name in SAMPLED}
+    sessions, sampled, streamed = [], {name: [] for name in SAMPLED}, []
+    threading.Thread(target=follow, args=(a.port, a.gatherer, a.channel, streamed, stop), daemon=True).start()
     end = time.time() + a.seconds if a.seconds else None
     try:
         while not stop[0] and (end is None or time.time() < end):
@@ -126,7 +157,10 @@ def main(argv=None) -> int:
             time.sleep(max(0.0, 0.05 - (time.time() - now)))
     except KeyboardInterrupt:
         pass
-    run = {"gatherer": a.gatherer, "channel": a.channel, "recorded": time.time(),
+    stop[0] = True
+    harness = next((s["state"].get("harness") for s in sessions if s["state"].get("harness")), None)
+    run = {"gatherer": a.gatherer, "channel": a.channel, "recorded": time.time(), "harness": harness,
+           "streamed": streamed,
            "schema": [sql for (sql,) in conn.execute(
                "SELECT sql FROM sqlite_master WHERE sql IS NOT NULL AND type IN ('table', 'view', 'index', 'trigger') "
                "AND name NOT LIKE 'sqlite_%' ORDER BY CASE type WHEN 'table' THEN 0 WHEN 'view' THEN 1 "

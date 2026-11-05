@@ -2097,7 +2097,8 @@
    {
     "queued": "62158.f02322ea",
     "text": "Also tell me what 6 times 7 is.",
-    "words": "Also tell me what 6 times 7 is."
+    "words": "Also tell me what 6 times 7 is.",
+    "joins_after": 1793337452.27
    }
   ],
   [
@@ -2133,7 +2134,8 @@
    {
     "queued": "63355.9abfd0a4",
     "text": "Never mind this one",
-    "words": "Never mind this one"
+    "words": "Never mind this one",
+    "joins_after": 1793337480.314
    }
   ],
   [

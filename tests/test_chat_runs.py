@@ -1,8 +1,7 @@
 """The recorded runs of actors (tests/chat_runs/*.json), replayed (tests/chat_replay.py): each rebuilds the gatherer as
 it stood, moment by moment, in time and with a source late; and Chat's view, made at each moment, passes the checks
-(tests/chat_check.py) -- once there is a view to make (ag_dashboard/CHAT_VIEW.md, step 2)."""
+(tests/chat_check.py); and so do the views the dashboard sent as each was recorded."""
 
-import importlib.util
 import os
 import sys
 import unittest
@@ -55,17 +54,26 @@ class RecordedRunsTest(unittest.TestCase):
         sends = [a for a in run["actions"] if a["what"] == "key Enter"]
         self.assertEqual(len(sends), 3)
 
-    @unittest.skipIf(importlib.util.find_spec("ag_dashboard.chat_view") is None, "step 2: no chat_view yet")
-    def test_chat_s_view_of_each_passes_the_checks(self):              # pragma: no cover - until step 2
+    def test_chat_s_view_of_each_passes_the_checks(self):
         from ag_dashboard import chat_view
         for name in chat_replay.names():
             run = chat_replay.load(name)
             sends = tuple(a["at"] for a in run["actions"] if a["what"] == "key Enter")
             for late in [{}] + [{s: LATE} for s in chat_replay.SOURCES]:
                 with self.subTest(name, late=late):
-                    views = [(m.at, chat_view.view(m.conn, run["channel"], m.session, m.at))
+                    views = [(m.at, chat_view.view(m.conn, run["channel"], (m.session or {}).get("session"), m.at))
                              for m in chat_replay.moments(run, late=late)]
                     self.assertEqual(check(views, sends=sends), [])
+
+    def test_what_the_dashboard_streamed_passes_the_checks(self):
+        """The views the dashboard's stream sent Chat as the run went (record.py's `streamed`): as a page has them."""
+        runs = [n for n in chat_replay.names() if chat_replay.load(n).get("streamed")]
+        self.assertTrue(runs)
+        for name in runs:
+            run = chat_replay.load(name)
+            sends = tuple(a["at"] for a in run["actions"] if a["what"] == "key Enter")
+            with self.subTest(name):
+                self.assertEqual(check([(s["at"], s["view"]) for s in run["streamed"]], sends=sends), [])
 
 
 if __name__ == "__main__":

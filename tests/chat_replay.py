@@ -2,16 +2,24 @@
 it stood at each moment of the run, and the actor's session as the dashboard had it then -- for Chat's view to be made
 from at each, and the views checked (tests/chat_check.py; ag_dashboard/CHAT_VIEW.md).
 
-`moments(run, late={"record": 0.3})` replays it with one source seen later than it came, as a page sees it when one
-feed lags: the harness's own record (`RECORD`), the dashboard's (`DASHBOARD`), the rest of the conversation
-(`CONVERSATION`), the reads, the in-place tables (withdrawals, builds, checks), or the session.
+`moments(run, late={"record": 0.3})` replays it with one source stored later than it came, against the others: the
+harness's own record (`RECORD`: ag follows its file, and can be behind), the dashboard's events (`DASHBOARD`: put in by
+a process of their own), the session as the dashboard has it, or the new-task checks and builds (`checks`: ag's worker
+process). Not ag's conversation, its reads and its withdrawals: ag writes them in order, one call's after another's,
+and the hook records how a call ended after them -- one read of the gatherer finds them as they were.
 """
 
+import atexit
 import json
 import os
+import shutil
 import sqlite3
+import tempfile
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Dict, Iterator, List, Optional
+
+from harness_kit import claude
 
 RUNS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chat_runs")
 
@@ -21,7 +29,7 @@ RECORD = {"message_sent", "message_queued", "message_withdrawn", "turn_stopped",
 #: The events the dashboard keeps of what it did.
 DASHBOARD = {"chat_sent", "terminal_input", "answer_given"}
 #: The sources a run's changes come from, as `late` names them.
-SOURCES = ("record", "dashboard", "conversation", "reads", "tables", "session")
+SOURCES = ("record", "dashboard", "session", "checks")
 
 
 @dataclass
@@ -47,7 +55,7 @@ def load(name: str) -> dict:
 
 def _source(table: str, row: dict, types: Dict[int, str]) -> str:
     if table == "_reads":
-        return "reads"
+        return "conversation"
     name = types.get(row.get("event_type_id"), "")
     return "record" if name in RECORD else "dashboard" if name in DASHBOARD else "conversation"
 
@@ -58,9 +66,23 @@ def _insert(conn: sqlite3.Connection, table: str, row: dict) -> None:
                  [row[c] for c in cols])
 
 
+_SCRATCH: List[str] = []
+
+
+def _scratch() -> str:
+    """A folder for the replays' databases, removed as the process exits."""
+    if not _SCRATCH:
+        _SCRATCH.append(tempfile.mkdtemp(prefix="chat-runs-"))
+        atexit.register(shutil.rmtree, _SCRATCH[0], True)
+    return _SCRATCH[0]
+
+
 def empty(run: dict) -> sqlite3.Connection:
-    """A gatherer with the run's schema and event types, and no rows."""
-    conn = sqlite3.connect(":memory:")
+    """A gatherer with the run's schema and event types, and no rows: in a file of its own, which a cache kept by
+    database file (files.py's `_git`) tells from any other replay's."""
+    fd, path = tempfile.mkstemp(prefix="chat-run-", suffix=".db", dir=_scratch())
+    os.close(fd)
+    conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     for sql in run["schema"]:
         conn.execute(sql)
@@ -80,16 +102,34 @@ def moments(run: dict, late: Optional[Dict[str, float]] = None) -> Iterator[Mome
         raise ValueError(f"no such source: {', '.join(sorted(unknown))}")
     types = {t["event_type_id"]: t["name"] for t in run.get("event_types", [])}
     changes = []                                           # (at, order, kind, what)
+    kept = {id(row): sent for row, (_, sent) in _sent_rows(run, types)}
+    withdrawn = _withdrawn_at(run)
     for i, table in enumerate(("events", "_reads")):
         for row in run.get(table, []):
+            if id(row) in kept:                            # stored as the dashboard now stores it: its time and id
+                f = json.loads(row["payload_json"] or "{}")
+                row = dict(row, payload_json=json.dumps(dict(f, at=kept[id(row)]["at"], cid=kept[id(row)]["cid"])))
+            if types.get(row.get("event_type_id")) == "message_queued" and run.get("harness", "claude") == "claude":
+                f = json.loads(row["payload_json"] or "{}")
+                if "joins_after" not in f and isinstance(f.get("at"), (int, float)):   # Claude's record now says it
+                    row = dict(row, payload_json=json.dumps(dict(f, joins_after=f["at"] + claude.BUSY_SECONDS)))
+            if types.get(row.get("event_type_id")) == "call_failed" and row.get("p_read_id") in withdrawn:
+                # the hook now withdraws a call's events before it records the hang-up (Claude's `failed`)
+                row = dict(row, _at=max(row["_at"], withdrawn[row["p_read_id"]] + 0.0005))
             changes.append((row["_at"] + late.get(_source(table, row, types), 0.0), i, "row", (table, row)))
     for table, snaps in run.get("sampled", {}).items():
+        if table == "_withdrawn":
+            for at, change in _withdrawals(run, snaps):
+                changes.append((at, 2, "withdrawn", change))
+            continue
         for snap in snaps:
-            changes.append((snap["at"] + late.get("tables", 0.0), 2, "table", (table, snap["rows"])))
+            changes.append((snap["at"] + late.get("checks", 0.0), 2, "table", (table, snap["rows"])))
     for s in run.get("sessions", []):
         changes.append((s["at"] + late.get("session", 0.0), 3, "session", s["state"]))
+    for at, sent in _sent(run, types):
+        changes.append((at, 4, "sent", sent))
     changes.sort(key=lambda c: (c[0], c[1]))
-    conn, session, done = empty(run), None, []
+    conn, session, sent, done = empty(run), None, [], []
     actions = sorted(run.get("actions", []), key=lambda x: x["at"])
     i = 0
     while i < len(changes):
@@ -98,20 +138,93 @@ def moments(run: dict, late: Optional[Dict[str, float]] = None) -> Iterator[Mome
             _, _, kind, what = changes[i]
             if kind == "row":
                 _insert(conn, *what)
+            elif kind == "withdrawn":
+                how, row = what
+                if how == "add":
+                    _insert(conn, "_withdrawn", row)
+                else:
+                    conn.execute("DELETE FROM _withdrawn WHERE row_id = ?", (row["row_id"],))
             elif kind == "table":
                 table, rows = what
-                if table == "_withdrawn":
-                    conn.execute("DELETE FROM _withdrawn")
-                else:
-                    conn.execute(f"DELETE FROM {table} WHERE channel_key = ?", (run["channel"],))
+                conn.execute(f"DELETE FROM {table} WHERE channel_key = ?", (run["channel"],))
                 for row in rows:
                     _insert(conn, table, row)
+            elif kind == "sent":
+                sent = sent + [what]
             else:
                 session = what
             i += 1
         conn.commit()
         done = [a for a in actions if a["at"] <= at]
-        yield Moment(at, conn, session, done)
+        state = session
+        if sent:                                           # the dashboard's sends, known to it as each came
+            state = dict(session or {})
+            state["session"] = dict(state.get("session") or {}, sent=sent)
+        yield Moment(at, conn, state, done)
+
+
+def _withdrawals(run: dict, snaps: List[dict]) -> List[tuple]:
+    """The run's withdrawals and restores, each when ag made it: [(at, ("add" | "remove", row))]. The recorder sampled
+    the table; ag stamps each withdrawal (`withdrawn_at`), and restores one as it stores the conversation of the call
+    that sends it again, before that call's read is logged (ag's store.insert, `sent_again`) -- so no later than the
+    first read logged since the sample before."""
+    reads = sorted(r["_at"] for r in run.get("_reads", []))
+    out, had, before = [], {}, None
+    for snap in snaps:
+        now = {r["row_id"]: r for r in snap["rows"]}
+        for row_id, row in now.items():
+            if row_id not in had or had[row_id] != row:
+                stamp = row.get("withdrawn_at")
+                at = _seconds(stamp) if stamp else snap["at"]
+                out.append((at, ("add", row)))
+        for row_id, row in had.items():
+            if row_id not in now:
+                read = next((r for r in reads if before is not None and before < r <= snap["at"]), None)
+                out.append((read - 0.001 if read is not None else snap["at"], ("remove", row)))
+        had, before = now, snap["at"]
+    return out
+
+
+def _withdrawn_at(run: dict) -> Dict[int, float]:
+    """When ag first withdrew each read's events (`withdrawn_at`), by read."""
+    out: Dict[int, float] = {}
+    for snap in run.get("sampled", {}).get("_withdrawn", []):
+        for r in snap["rows"]:
+            if r.get("read_id") is not None and r.get("withdrawn_at"):
+                out[r["read_id"]] = min(out.get(r["read_id"], float("inf")), _seconds(r["withdrawn_at"]))
+    return out
+
+
+def _seconds(stamp) -> float:
+    return datetime.fromisoformat(str(stamp).replace("Z", "+00:00")).timestamp()
+
+
+def _sent(run: dict, types: Dict[int, str]) -> List[tuple]:
+    """The sends from Chat as the dashboard knows them in memory (sessions.py's `send`: kept as each came, before it is
+    typed), with when it came to know each: [(at, {cid, text, at})] -- each `chat_sent` the run stored, from the page's
+    Enter that sent it (the latest before the time it has), its id as chat_view's `send_id` makes it from that time. In
+    memory, never late: what the harness then does comes after it."""
+    return [x for _, x in _sent_rows(run, types)]
+
+
+def _sent_rows(run: dict, types: Dict[int, str]) -> List[tuple]:
+    """`_sent`'s, each with its `chat_sent` row: [(row, (at, {cid, text, at}))]. The recordings stored a send's time as
+    the dashboard had it once it had typed it, and no id; the dashboard now keeps it, and stores it, from the moment it
+    came, with its id -- which the replay stores in its place."""
+    enters = sorted(a["at"] for a in run.get("actions", []) if a.get("what") == "key Enter")
+    out = []
+    for row in run.get("events", []):
+        if types.get(row["event_type_id"]) != "chat_sent":
+            continue
+        f = json.loads(row["payload_json"] or "{}")
+        if not isinstance(f.get("at"), (int, float)) or not f.get("text"):
+            continue
+        if f.get("cid"):                                   # recorded as the dashboard keeps it now
+            out.append((row, (f["at"], {"cid": f["cid"], "text": f["text"], "at": f["at"]})))
+            continue
+        came = max((e for e in enters if e <= f["at"]), default=f["at"])
+        out.append((row, (came, {"cid": "chat:%.6f" % came, "text": f["text"], "at": came})))
+    return out
 
 
 def at_end(run: dict) -> sqlite3.Connection:
