@@ -654,6 +654,8 @@ class _Term:
         self.answering = False          # an answer's keys being typed into it (`answer`)
         self.keying = 0.0               # until when a message the dashboard pastes goes into it (`_paste`)
         self.pasted = 0.0               # when it last pasted one: a stop key waits until the harness has taken it (`type`)
+        self.prompted = 0.0             # when it was started with its first message on its command line (`terminal`): a
+        #                                 stop key waits until the harness has begun that turn (`_unsent`)
         self.harness: Optional[str] = None   # the session's harness and gatherer, as it was started
         self.gatherer: Optional[str] = None
         self.boxed: Optional[str] = None     # its message box as last seen after a stop key (`_read_terminal`)
@@ -1300,6 +1302,8 @@ class Sessions:
                 t = self._start_terminal(row, cols, rows, fullscreen, None if tools else prompt)
                 if prompt:
                     t.typed = time.time()
+                    if not tools:
+                        t.prompted = t.typed
                 if tools:                            # typed in once its tools are there, not on its command line
                     threading.Thread(target=self._first_message, args=(session_id, t, prompt, tools), daemon=True).start()
             else:                                    # open already (opened meanwhile): the prompt typed into it
@@ -1593,9 +1597,41 @@ class Sessions:
         self._type_now(session_id, t, data)
 
     def _unsent(self, t: _Term) -> bool:
-        """Whether the message the dashboard last pasted is in the harness's message box still -- its Enter typed, and
-        the harness not yet started on it -- as the screen shows (`_box`: it holds something), up to HOLD_MAX after."""
-        return bool(t.pasted) and time.time() - t.pasted < HOLD_MAX and self._box(t, t.harness or "") == Box.HOLDS
+        """Whether the harness has yet to start on the message the dashboard gave it, up to HOLD_MAX after: one it pasted,
+        in the harness's message box still -- its Enter typed, the harness not on it yet -- as the screen shows (`_box`:
+        it holds something); one it started the terminal with, on its command line, while the harness starts up and
+        before the turn's first call (`_began`)."""
+        now = time.time()
+        if t.prompted and now - t.prompted < HOLD_MAX and not self._began(t):
+            return True
+        return bool(t.pasted) and now - t.pasted < HOLD_MAX and self._box(t, t.harness or "") == Box.HOLDS
+
+    def _began(self, t: _Term) -> bool:
+        """Whether the turn of the message the terminal `t` was started with has made its first call: the hook's
+        `model_call` of a turn in the session's channel since it started -- for a session of a harness that picks its own
+        id, once its first call has named it (`_find_thread`). True where that is not known (no session for it now)."""
+        with self.lock:
+            sid = next((k for k, v in self.terms.items() if v is t), None)
+        s = self._row(sid) if sid else None
+        if s is None:
+            return True
+        if picks_id(s["harness"]) and s["started_as"] == sid:
+            return False                                 # its first call has not named it yet
+        from . import data                               # here: data.py reads this module
+        conn = data._connect(s["gatherer"])
+        if conn is None:
+            return False
+        since = datetime.fromtimestamp(t.prompted, timezone.utc).isoformat()
+        try:
+            got = conn.execute(
+                f"SELECT 1 FROM events e JOIN event_types y ON y.event_type_id = e.event_type_id WHERE y.name = 'model_call' "
+                f"AND e.{data.CHANNEL} = ? AND e.inserted_at >= ? AND json_extract(e.payload_json, '$.kind') = 'turn' LIMIT 1",
+                (sid, since)).fetchone()
+        except sqlite3.Error:
+            return False
+        finally:
+            conn.close()
+        return got is not None
 
     def _type_after(self, session_id: str, t: _Term, data: str) -> None:
         end = time.time() + HOLD_MAX

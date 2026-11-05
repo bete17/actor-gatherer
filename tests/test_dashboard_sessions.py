@@ -14,6 +14,7 @@ import time
 import unittest
 import unittest.mock
 import urllib.error
+from datetime import datetime, timezone
 import urllib.parse
 import urllib.request
 
@@ -580,6 +581,50 @@ class ChatTerminalTest(SessionsBase):
             self.assertEqual(sessions.chat_mode(), "terminal", text)
         with unittest.mock.patch.object(sessions, "TERMINALS", False):  # no pseudo-terminals here
             self.assertEqual(sessions.chat_mode(), "headless")
+
+    def test_a_stop_key_after_the_message_a_terminal_starts_with_waits_for_its_turn_s_first_call(self):
+        """Esc from the page just after a message that started the terminal (its first prompt, on the command line):
+        while the harness starts up, it lets the key go by -- the key waits until the turn's first call (`_began`)."""
+        sid = self.s.create("g", self.work)["session_id"]
+        began = []
+        with unittest.mock.patch.object(self.s, "_began", side_effect=lambda t: len(began) > 0):
+            self.s.send(sid, "hello")
+            self.until(lambda: "fake terminal" in self.screen(sid))
+            self.s.type(sid, "\x1b")
+            time.sleep(0.3)
+            self.assertNotIn("[got ESC]", self.screen(sid))              # held: no call yet
+            began.append(True)
+            self.until(lambda: "[got ESC]" in self.screen(sid))
+
+    def test_its_turn_has_begun_once_its_first_call_is_recorded(self):
+        sid = self.s.create("g", self.work)["session_id"]
+        self.s.send(sid, "hello")
+        self.until(lambda: "fake terminal" in self.screen(sid))
+        t = self.s.terms[sid]
+        db = os.path.join(self.tmp.name, "calls.db")
+        conn = sqlite3.connect(db)
+        conn.executescript("CREATE TABLE event_types (event_type_id INTEGER PRIMARY KEY, name TEXT);"
+                           "CREATE TABLE events (row_id INTEGER PRIMARY KEY, event_type_id INT, payload_json TEXT, "
+                           "p_channel TEXT, inserted_at TEXT); INSERT INTO event_types VALUES (1, 'model_call');")
+        conn.commit()
+
+        def called(kind, at):
+            conn.execute("INSERT INTO events (event_type_id, payload_json, p_channel, inserted_at) VALUES (1, ?, ?, ?)",
+                         (json.dumps({"kind": kind}), sid, datetime.fromtimestamp(at, timezone.utc).isoformat()))
+            conn.commit()
+
+        def opened(_):
+            got = sqlite3.connect(db)
+            got.row_factory = sqlite3.Row
+            return got
+        with unittest.mock.patch.object(data, "_connect", side_effect=opened):
+            self.assertFalse(self.s._began(t))                           # no call yet
+            called("turn", t.prompted - 5)                               # one of before it started
+            called("other", t.prompted + 0.5)                            # a side call is no turn's
+            self.assertFalse(self.s._began(t))
+            called("turn", t.prompted + 0.9)
+            self.assertTrue(self.s._began(t))
+        conn.close()
 
     def test_a_message_opens_its_terminal_with_the_message_as_its_first_prompt(self):
         sid = self.s.create("g", self.work)["session_id"]

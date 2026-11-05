@@ -67,7 +67,8 @@ reads.
    - **Esc waits until the harness has the message.** Typed 0.35 s after a first message, Esc reached Claude Code
      before it had submitted the message, and it let the key go by and answered; Chat said "Interrupting…" meanwhile.
      A stop key now waits while the terminal's message box still holds the message the dashboard pasted
-     (sessions.py's `_unsent`, at most HOLD_MAX).
+     (sessions.py's `_unsent`, at most HOLD_MAX); and, a terminal the message started (its first prompt, on the command
+     line), until the turn's first call is recorded (`_began`): Claude Code starting up lets Esc go by too.
    - **Esc before the harness recorded anything.** Codex stopped before the first call of a new session -- the call
      that makes its thread -- so nothing was recorded, and the turn stayed "opening". With a stop key typed after the
      message (the session's `stopped_at`), the terminal's box decides (`_stop_on`): empty, the opening is stopped
