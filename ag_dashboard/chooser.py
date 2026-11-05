@@ -1,6 +1,6 @@
 """The system's own Open dialog -- Finder's on macOS, zenity's or kdialog's on Linux -- opened by the dashboard on the
 machine it runs on, for the Editor: a page's own file picker never says where a file is on disk, and the Editor opens
-files by their paths.
+files by their paths. And the system's file manager, showing a file the Editor cannot open where it is (`reveal`).
 
 Only for a page on this same machine (the routes check): the dialog opens on this machine's screen, not the reader's."""
 
@@ -103,3 +103,29 @@ def choose(what: str, start: str) -> Optional[str]:
     if not got:
         return None
     return got.rstrip("/") or "/"
+
+
+# A file shown where it is, in the system's file manager -- Finder's window with it selected on macOS (`open -R`), its
+# folder opened on Linux (xdg-open, with a display) -- for a file the Editor shows but cannot open: the reader opens it
+# from there. Nothing is opened in an app here, so a file that is a program is never run.
+def shower() -> Optional[str]:
+    """What the page calls it: "Finder", or "the file manager"; None, none here."""
+    if sys.platform == "darwin":
+        return "Finder" if shutil.which("open") else None
+    if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+        return None
+    return "the file manager" if shutil.which("xdg-open") else None
+
+
+def reveal(path: str) -> None:
+    """`path` shown in the file manager (shower), at once: not waited on."""
+    if shower() is None:
+        raise ChooseError("This machine has no file manager the dashboard can open")
+    if not os.path.isabs(path) or not os.path.exists(path):
+        raise ChooseError(f"{path} does not exist")
+    argv = ["open", "-R", path] if sys.platform == "darwin" else ["xdg-open", os.path.dirname(path) or "/"]
+    try:
+        subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True)
+    except OSError as exc:
+        raise ChooseError(f"It did not open: {exc}") from None
