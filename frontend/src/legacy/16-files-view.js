@@ -596,6 +596,8 @@ function interrupt(info) {
   post("/api/terminal/input", { session_id: info.session.session_id, data: "\u001b" })
     .catch((err) => { state.interrupting = null; setLive(`Not interrupted: ${err.message}`); });
   keepingPlace(renderMain);
+  // a turn this page opened and the session has not had: looked at again once Esc has had its time (sentHereNow's `gone`)
+  if (sentHere.some((m) => m.key === k && m.opens)) setTimeout(() => keepingPlace(renderMain), ESC_GONE_MS + 100);
   return true;
 }
 const INTERRUPTING_MS = 10000;                      // "Interrupting…" shown at most this long, if the turn goes on
@@ -603,13 +605,29 @@ const isInterrupting = () => !!state.interrupting && !!state.selected && state.i
   && Date.now() - state.interrupting.at < INTERRUPTING_MS;
 // What waits to reach the agent, at the latest turn's end, faded (pendingTalk): src/features/chat/Pending.tsx now, from
 // heard() and sentHereNow().
-// What was sent from here to the selected actor and the session has not recorded yet (`h`: heard(info)): those it has, dropped.
-function sentHereNow(h) {
-  const k = state.selected && key(...state.selected);
-  for (let i = sentHere.length - 1; i >= 0; i--)
-    if (sentHere[i].key === k && heardCount(h, sentHere[i].text) > sentHere[i].base) sentHere.splice(i, 1);
+// What was sent from here to the selected actor and the session has not recorded yet (`h`: heard(info)): those it has, dropped
+// -- and kept a minute in hadHere, so the server's own copy of the same send (its `chat_sent`, typed `chat`) is not shown
+// pending after it (Pending.tsx's `had`): the server tells a message had by when ag stored it, and a message sent again
+// after Esc took it back is kept where it was first stored, at its first time -- "not had" until Claude Code's record says.
+const hadHere = [], HAD_MS = 60000;
+// A message sent from here to open a turn (`opens`) that Esc took back before ag stored it -- the server's `taken_back`
+// says it; or, Esc sent after it, the actor idle and nothing of it heard ESC_GONE_MS on (it never reached ag) -- is gone:
+// the turn it opened is not drawn on.
+const ESC_GONE_MS = 2500;
+function sentHereNow(h, info) {
+  const k = state.selected && key(...state.selected), now = Date.now();
+  const tb = info && info.taken_back, esc = state.interrupting && state.interrupting.key === k ? state.interrupting.at : null;
+  const gone = (m) => m.opens && ((tb && sameWords(tb.text, m.text) && (tb.at || 0) >= m.at / 1000 - 1)
+    || (esc !== null && esc > m.at && now - esc > ESC_GONE_MS && !!info && !["running", "asking"].includes(info.status)));
+  for (let i = sentHere.length - 1; i >= 0; i--) {
+    if (sentHere[i].key !== k) continue;
+    if (heardCount(h, sentHere[i].text) > sentHere[i].base) hadHere.push(...sentHere.splice(i, 1));
+    else if (gone(sentHere[i])) sentHere.splice(i, 1);
+  }
+  for (let i = hadHere.length - 1; i >= 0; i--) if (now - hadHere[i].at > HAD_MS) hadHere.splice(i, 1);
   return sentHere.filter((m) => m.key === k);
 }
+const hadNow = () => { const k = state.selected && key(...state.selected); return hadHere.filter((m) => m.key === k); };
 // The turns Claude Code has started and ag has not stored yet, each by its first message as Claude Code recorded it when
 // it went to the model (the agent's `typed`, data.py's: sent, not as part of the turn it was written in; data.py's
 // _unstored leaves out those ag has stored) -- for an actor, the selected one's (opened()); the conversation draws each
@@ -626,7 +644,7 @@ function talkFeed(info, session, running, writable, held, afresh) {
   const h = heard(info), interrupts = canInterrupt(info);
   return { key: key(...state.selected), gatherer: state.selected[0], files: state.files, data: state.files.data,
     picked: state.files.turn, home: state.home, info, session, running, status: turnStatus(info)[0], writable, held,
-    canInterrupt: interrupts, interrupting: isInterrupting(), heard: h, mine: sentHereNow(h), sideFolded, earlierTurns,
+    canInterrupt: interrupts, interrupting: isInterrupting(), heard: h, mine: sentHereNow(h, info), had: hadNow(), sideFolded, earlierTurns,
     terminalView: CHAT_VIEWS.has("terminal"), afresh };
 }
 // What the conversation calls of this page (src/features/chat/types.ts's ChatHost), until those parts move too: the actor's

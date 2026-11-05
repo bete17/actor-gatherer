@@ -1445,7 +1445,7 @@ function actorStatus({ info, running }, show) {
   const [st0, word0] = statusOf(info);
   // working: its turn, or a message sent from here that has yet to open one -- for a while: not seen for long, its terminal
   // may be asking something first (pendingTalk), and the status says so
-  const mine = sentHereNow(heard(info)), unseen = !running && mine.some((m) => Date.now() - m.at > UNSEEN_MS);
+  const mine = sentHereNow(heard(info), info), unseen = !running && mine.some((m) => Date.now() - m.at > UNSEEN_MS);
   // the latest turn, as loaded -- none while a message sent from here waits to open the next: its numbers are not that one's
   const t = d && d.turns.length && d.turn === d.turns.length - 1 && !(mine.length && !running) ? d.turns[d.turn] : null;
   const live = running || (mine.length > 0 && !unseen);

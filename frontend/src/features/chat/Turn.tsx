@@ -9,7 +9,7 @@ import { plural } from "../../core/format";
 import { StrokeIcon } from "../../core/ui/Icon";
 import { bashOutput, Bubble, SentBubble } from "./Bubble";
 import { useChat } from "./context";
-import { joinedOf, Pending, waiting } from "./Pending";
+import { joinedOf, Pending, seenKey, useGrowing, waiting } from "./Pending";
 import { keepTurn } from "./pull";
 import { drawn, LastCall, Reply } from "./Reply";
 import { useTurns } from "./store";
@@ -86,10 +86,19 @@ export function Turn({ t, place }: { t: TurnData; place: TurnPlace }) {
   // what waits to reach the agent: at the latest turn's end, unless the session opened a turn since (drawn there)
   const waits = latest && !place.opened ? waiting(feed, host) : null;
   const joined = latest ? joinedOf(feed.heard) : [];
+  // the latest, drawn in the place of the turn opening it was a moment ago: growing in on from where that one was
+  const grow = useGrowing(latest ? seenKey(feed, host, t.text) : "");
   return (
     <>
       <div
-        className={"fl-turn" + (on ? " on" : "") + (whole ? "" : " folded") + (whole && !atFirst ? " shown" : "")}
+        className={
+          "fl-turn" +
+          (on ? " on" : "") +
+          (whole ? "" : " folded") +
+          (whole && !atFirst ? " shown" : "") +
+          (grow ? " fl-in" : "")
+        }
+        style={grow ?? undefined}
         id={`fl-turn-${t.n}`}
       >
         <div className="fl-head">
