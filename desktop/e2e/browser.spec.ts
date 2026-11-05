@@ -29,6 +29,9 @@ const DIALOGS = `<!doctype html><title>Dialogs</title><h1>Dialogs</h1>
 <a id="d" href="notes.txt" download>Download the notes</a><p id="out"></p>`;
 const POPUP = `<!doctype html><title>Popup</title><p>Signing you in…</p>
 <script>setTimeout(() => { window.opener.postMessage('signed in', '*'); setTimeout(() => window.close(), 300); }, 300);</script>`;
+// red from edge to edge: drawn whole, a picture of it is red at its far corner too
+const RED = `<!doctype html><title>Red</title><body style="margin:0;background:#fff">
+<div style="position:fixed;inset:0;background:rgb(255,0,0)"></div><p style="position:relative">Red</p>`;
 
 let scratch = "";
 let home = "";
@@ -156,7 +159,7 @@ test.beforeAll(async () => {
   // No harness started by a view (headless chat); a model set, so no Settings panel opens over a fresh home's page.
   writeFileSync(path.join(home, "config.toml"), '[dashboard]\nchat = "headless"\n\n[policies.llm]\nmodel = "claude-code/haiku"\n');
   for (const [name, text] of [["index.html", SHOP], ["login.html", LOGIN], ["popup.html", POPUP], ["dialogs.html", DIALOGS],
-    ["notes.txt", "the notes\n"]])
+    ["red.html", RED], ["notes.txt", "the notes\n"]])
     writeFileSync(path.join(root, name), text);
   siteServer = http.createServer((req, res) => {
     const name = (req.url || "/").split("?")[0].replace(/^\/$/, "/index.html").slice(1);
@@ -410,6 +413,78 @@ test("a page's dialogs, find, downloads and permission asks", async () => {
     expect(JSON.parse(readFileSync(path.join(home, "desktop", "permissions.json"), "utf8"))).toEqual({
       [`${new URL(site).origin} notifications`]: true,
     });
+  } finally {
+    await app.close();
+  }
+});
+
+// ---- a page no pane shows ----
+
+/** The color at (fx, fy) of the shown page `url`, as the window draws it. */
+const colorOf = (app: ElectronApplication, url: string, fx: number, fy: number) =>
+  app.evaluate(
+    async ({ BrowserWindow }, [u, x, y]) => {
+      const v = BrowserWindow.getAllWindows()[0].contentView.children.find(
+        (c) => c.getVisible() && (c as Electron.WebContentsView).webContents.getURL() === u,
+      );
+      if (!v) return null;
+      const img = await (v as Electron.WebContentsView).webContents.capturePage();
+      const { width, height } = img.getSize(), bmp = img.toBitmap();
+      const i = (Math.floor(height * (y as number)) * width + Math.floor(width * (x as number))) * 4;
+      return [bmp[i + 2], bmp[i + 1], bmp[i]]; // (BGRA)
+    },
+    [url, fx, fy] as const,
+  );
+
+test("a tab the agent opens while its pane shows something else: at the pane's size, drawn whole, pictured", async () => {
+  const { app, page } = await launch();
+  try {
+    expect((await ask(`/browser/w/${key}/nav`, { url: site })).done).toBe(site);
+    await refOnce('button "Pay"');
+    const pane = (await page.locator(".bw-stage").first().boundingBox())!;
+    await page.getByRole("button", { name: "Chat", exact: true }).click();
+    await until(async () => (await pagesOf(app)).every((p) => !p.visible));
+
+    const red = `${site}red.html`;
+    expect((await tool("tabs", { action: "new", url: red, expect: [{ js: "document.title === 'Shop'", why: "the shop" }] })).error)
+      .toBe(false);
+    const here = [{ js: "document.title === 'Red'", why: "the red page" }];
+    // laid out at the pane's size, not 0 x 0 (a page hidden in the window has none)
+    const [w, h] = JSON.parse((await tool("evaluate", { expression: "[innerWidth, innerHeight]", says: "its size", expect: here })).text);
+    expect(w).toBe(Math.floor(pane.width));
+    expect(Math.abs(h - pane.height)).toBeLessThan(60);
+    // the agent's screenshot of it, at half scale for a 2x screen, leaves it drawn at its own
+    expect((await tool("screenshot", {})).error).toBe(false);
+
+    // shown while a menu of the dashboard's covers the pane: a picture of the page, not a blank
+    await page.evaluate(() => {
+      const d = document.createElement("div");
+      d.id = "e2e-cover";
+      Object.assign(d.style, { position: "fixed", left: "0", right: "0", bottom: "0", height: "40%", background: "#333", zIndex: "50" });
+      document.body.append(d);
+    });
+    await page.getByRole("button", { name: "Browser", exact: true }).click();
+    const still = page.locator(".bw-stage > img").first();
+    await until(async () => ((await still.getAttribute("src")) || "").length > 1000);
+    const pixel = await still.evaluate(async (img: HTMLImageElement) => {
+      await img.decode();
+      const c = document.createElement("canvas");
+      c.width = img.naturalWidth;
+      c.height = img.naturalHeight;
+      const g = c.getContext("2d")!;
+      g.drawImage(img, 0, 0);
+      return [...g.getImageData(Math.floor(c.width * 0.9), Math.floor(c.height * 0.9), 1, 1).data.slice(0, 3)];
+    });
+    expect(pixel).toEqual([255, 0, 0]);
+
+    // uncovered: the page itself over the pane, red to its far corner
+    await page.evaluate(() => document.getElementById("e2e-cover")?.remove());
+    await until(async () => (await pagesOf(app)).some((p) => p.url === red && p.visible));
+    await until(async () => JSON.stringify(await colorOf(app, red, 0.95, 0.95)) === "[255,0,0]", 10_000);
+
+    // (its tab closed: the next test's Browser has one tab, as before)
+    expect((await tool("tabs", { action: "close", index: 2, expect: [{ tab: 2, js: "document.title === 'Red'", why: "the red tab" }] })).error)
+      .toBe(false);
   } finally {
     await app.close();
   }

@@ -905,12 +905,13 @@ class Chrome:
         self.browsers.revive()
         return conn
 
-    def new_target(self, cdp: Cdp) -> str:
-        """A new tab for a Browser: in the ag app, a native page of its own; in its own Chrome, a page; in the user's,
-        one hidden from their tab strip (Chrome renders it all the same), else in a window of its own, minimized, out
-        of their way."""
+    def new_target(self, cdp: Cdp, size: Optional[Tuple[int, int]] = None) -> str:
+        """A new tab for a Browser: in the ag app, a native page of its own, laid out at `size` (its view's) while no
+        pane shows it; in its own Chrome, a page; in the user's, one hidden from their tab strip (Chrome renders it all
+        the same), else in a window of its own, minimized, out of their way."""
         if cdp.mode == "app":
-            return cdp.call("Target.createTarget", {"url": "about:blank"})["targetId"]
+            sized = {"width": size[0], "height": size[1]} if size else {}
+            return cdp.call("Target.createTarget", {"url": "about:blank", **sized})["targetId"]
         if cdp.mode != "mine":                           # a window of its own: sized to its view, for its video
             return cdp.call("Target.createTarget", {"url": "about:blank", "newWindow": True})["targetId"]
         try:
@@ -1209,7 +1210,7 @@ class Browser:
         adopted = target
         with browser_video.WINDOWS if cdp.mode == "own" else _NO_LOCK:   # (its windows: browser_video.py)
             if target is None:
-                target = self.chrome.new_target(cdp)
+                target = self.chrome.new_target(cdp, self.viewport[:2])
             session = cdp.call("Target.attachToTarget", {"targetId": target, "flatten": True})["sessionId"]
         self.browsers.owner[target] = self.key
         self.browsers.owner[session] = self.key

@@ -118,6 +118,13 @@ The prototype's relay, made permanent and turned around: the app opens no port o
   prototype matched by address, which breaks with two tabs on the same page.
 - The app puts that view there and hides the rest, and follows each report: resizing, splits, the Editor opening
   above, switching views or actors.
+- A hidden page is laid out at its pane's size (or, for a tab no pane has shown yet, the size ag asks for in
+  `Target.createTarget`: its view's) by DevTools emulation (`Emulation.setDeviceMetricsOverride` on its own
+  connection), taken off when it is shown. A hidden page has no size of its own until it has been shown: a tab the
+  agent opened while its pane showed something else would be laid out at 0 x 0 for the agent's tools, and Chrome would
+  leave a screenshot's clip scale (ag's are at 1/dpr) on it, drawing it at half size when shown. Emulation lays the
+  page out without drawing it: nothing hidden costs more than before. Keeping hidden pages drawn outside the window
+  would do it too, at a few percent of a core for each animating page.
 - In the app, the Browser view takes only the stream's state, not its frames.
 - The same Browser opened in an ordinary browser (another tab, another computer) keeps streaming: the server
   screencasts from the app's view. To be checked: a hidden view may draw too rarely for that.
@@ -128,7 +135,10 @@ A native view is drawn above the page's HTML, so anything the dashboard draws ov
 
 - **Menus and popovers that overlap the pane** (the activity list, Settings, hover cards, dialogs): the preload sees
   something of the dashboard's at points of the pane (`elementFromPoint`), and the app swaps the view for a still
-  picture of it (`capturePage`, shown in the pane's own image) until the overlay closes.
+  picture of it (`capturePage`, shown in the pane's own image) until the overlay closes. A page hidden when its pane
+  is covered (a tab switched to under a menu) has nothing drawn to capture, or only an old drawing: its picture is
+  Chrome's own (`Page.captureScreenshot`, which draws the page for it). A page that leaves its pane drops its picture,
+  so a tab switched back to under the overlay gets its own, not the other tab's.
 - **The agent's cues** (its outline, about to act, acting, done or not; its pointer and the ripple of a click; the key
   cap; the scroll arrow): drawn in the page itself by `CUES_JS` (browser.py), which ag adds to each page in a world of
   its own, as UI_JS is in its own Chrome, told what to draw as the Browser's state changes (`_draw_cues`). Its marks are

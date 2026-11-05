@@ -143,6 +143,14 @@ class AppModeTest(AppHome):
         self.assertTrue(first.closed)
         self.assertIs(self.bs.chrome.cdp(), second.conn)
 
+    def test_a_new_page_is_asked_for_at_its_views_size(self):
+        # (laid out at it while no pane shows it, not at 0 x 0: the app sizes a hidden page by emulation)
+        app = FakeApp(self.bs.chrome)
+        self.b.resize(900, 600, 2)
+        self.b.live()
+        made = [p for m, p, _ in app.sent if m == "Target.createTarget"]
+        self.assertEqual(made, [{"url": "about:blank", "width": 900, "height": 600}])
+
 
 class OverThePageTest(AppHome):
     """What the dashboard draws over the screen elsewhere, in the app's page (CUES_JS); Pick by Chrome's inspector;
