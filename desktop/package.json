@@ -1,0 +1,22 @@
+{
+  "name": "ag-desktop",
+  "private": true,
+  "description": "The ag desktop app (desktop/DESIGN.md): the dashboard in a window of its own",
+  "type": "module",
+  "main": "dist/main.js",
+  "packageManager": "pnpm@12.16.1",
+  "scripts": {
+    "postinstall": "install-electron",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "tsc -p tsconfig.build.json && electron .",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --experimental-strip-types --no-warnings test/*.test.ts",
+    "e2e": "tsc -p tsconfig.build.json && playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.1",
+    "@types/node": "^22.20.5",
+    "electron": "45.0.0",
+    "typescript": "~6.0.3"
+  }
+}
