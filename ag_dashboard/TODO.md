@@ -179,11 +179,18 @@ Not covered yet:
 - [ ] **Each request sets the manager up again:** `Manager.init` opens a connection and runs the schema's setup, and a
   new manager runs it again on its first use (`_conn`): about 60 ms an op, 5-6 ops a model call (measured before the
   lanes).
-- [ ] **`history.rows` reads the whole events table**: its `(p_channel = ? OR p_channel IS NULL)` can't use the index
-  (0.07-0.5 s a read in making_ag).
-- [ ] **The watch's raw part reaches back to the oldest of every channel's latest reads** (row 374 of 24.7k in
-  making_ag): one idle channel keeps nearly the whole history in it. Only channels read lately would cut the first
-  watch from 1.4 s to 0.12 s, but a change to a file named only by an idle channel would go unreported.
+- [x] **`history.rows` read the whole events table**: its `(p_channel = ? OR p_channel IS NULL)` couldn't use the index
+  (0.07-0.5 s a read in making_ag). `store.rows` now asks `ifnull(p_channel, '') IN (?, '')`, the index's own terms:
+  41 channels' histories in 1.6 s instead of 10.4 s, the same rows.
+- [x] **The watch's raw part reached back to the oldest of every channel's latest reads** (row 374 of 190k in
+  making_ag): one idle channel kept nearly the whole history in it -- 81 MB, searched again on every read once it
+  outgrew the names memo (64 MB, 2026-11-02): 5.5 s a read, and Esc showed in Chat that late. Now a read's watch is its
+  own conversation's (`store.own_raw_texts`), polled from its own mark (`own_mark`), so an idle channel's files are
+  caught up on its next read rather than missed: 0.15 s a read on a copy of making_ag (with the index above).
+- [x] **A session's first read after a build adopted it slowly**: `adopt` -> `other_tasks` reads every other channel's
+  history, 11-15 s on a copy of making_ag, and Esc waited for it. With the index, 1.2 s; and a hang-up (`Read.stopped`)
+  stops it between channels -- the read answers with the context it had, the build left ready for the next read.
+  Still reading every other channel's whole history to locate its tasks: rows grow with the gatherer.
 - [ ] **A user message's read still waits for its task-boundary check** (sync_seconds), by choice: 3.2 s on average
   in making_ag, and 2 of 102 checks found a new task. Lanes keep it to the session.
 - [ ] **A plugin poller holding something tied to the thread that made it** (a sqlite connection opened in its

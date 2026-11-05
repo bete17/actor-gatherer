@@ -14,7 +14,8 @@ differs between policies, what the context is, to its `Policy`
 It also brings in events from outside the conversation: its POLLERS
 (`ag.ag_interface.Poller`). When it reads, it first asks each poller for what
 happened since it last asked -- the mark kept per gatherer and per poller in
-`_polls` -- and stores what they return with only the properties the poller
+`_polls`, and for a poller that follows the conversation (`Poller.watch`) per
+conversation too -- and stores what they return with only the properties the poller
 declares (`Poller.properties`), none of which a read gives, so every read
 sees them and the policy builds the context from them too.
 `insert` only stores.
@@ -24,6 +25,7 @@ policy's, else tiktoken; a policy without one is given it, so both count
 alike.
 """
 
+import json
 import os
 import sqlite3
 import threading
@@ -61,6 +63,12 @@ def polling(name: str) -> threading.Lock:
     """The lock for polls of the poller `name`."""
     with _POLLING_LOCK:
         return _POLLING.setdefault(name, threading.Lock())
+
+
+def own_mark(name: str, properties: dict) -> str:
+    """The `_polls` mark of the poller `name` for one conversation (`store.own_properties`): its name, then the
+    conversation's properties."""
+    return f"{name} {json.dumps(properties, sort_keys=True, ensure_ascii=False, default=str)}"
 
 
 class Manager(ContextManager):
@@ -210,11 +218,11 @@ class Manager(ContextManager):
         for poller in pollers:
             self.add_poller(poller)
 
-    def poll(self, gatherer_id: str) -> int:
+    def poll(self, gatherer_id: str, properties: Optional[dict] = None) -> int:
         """Ask every poller for what happened since it was last asked for
         this gatherer, and store it, with the properties the poller sets. Returns
         how many events were newly stored. `read` does this before the
-        policy builds the context; a harness may also call it at a moment of
+        policy builds the context, for its own conversation (`properties`); a harness may also call it at a moment of
         its own choosing.
 
         Only the properties the poller declares (`properties`: e.g. its id),
@@ -223,12 +231,17 @@ class Manager(ContextManager):
         properties it does not name or that are unset, although the poll
         mark is the gatherer's and only one read found it.
 
-        Right before it is asked, a poller is told what the conversation's raw part says
-        (`Poller.watch`: the texts of the events the channels were last sent verbatim, and of
-        those since): one that only looks at what the conversation refers to takes it from there.
+        Right before it is asked, a poller that follows the conversation (one with its own `Poller.watch`) is told what
+        the conversation's raw part says: the texts of the events the read's conversation was last sent verbatim, and
+        of its events since (`store.own_raw_texts`) -- so it costs what that one conversation says, however big the
+        gatherer has grown. Such a poller keeps a mark per conversation (`own_mark`): what it found for one, by the
+        files that one names, is no other's to have missed. A call with no conversation (`properties` none of the
+        gatherer's, or none given) tells it the whole gatherer's raw part (`store.raw_texts`), on its one mark.
 
         A poller's `since` is its mark in `_polls`, or None the first time it
-        is asked for this gatherer: there is no earlier moment, and each
+        is asked for this gatherer (for a conversation that followed: its first own mark is the poller's shared
+        one, if the conversation has read before -- marked while the poller's marks were the gatherer's alone):
+        there is no earlier moment, and each
         poller decides what that means (the file poller returns nothing). The mark is taken before the poller
         runs, so nothing that happens while it runs is lost (a duplicate is
         harmless). One poller is asked by one thread at a time, from its mark to the next (`polling`):
@@ -244,16 +257,32 @@ class Manager(ContextManager):
         names = {t.id: t.name for t in types}
         stored = 0
         watching = [p for p in self.pollers if getattr(type(p), "watch", Poller.watch) is not Poller.watch]
-        texts = store.raw_texts(conn) if watching else []        # what the conversation's raw part says
+        own = store.own_properties(conn, properties) if watching else {}
+        latest = store.latest_read(conn, own) if own else None
+        if not watching:
+            texts = []
+        elif own:
+            texts = store.own_raw_texts(conn, own, latest=latest)       # what this conversation's raw part says
+        else:
+            texts = store.raw_texts(conn)                                # every conversation's
         for poller in self.pollers:
             with polling(poller.name):
-                stored += self._poll(conn, gatherer_id, poller, types, names, texts if poller in watching else None)
+                if poller in watching and own:
+                    stored += self._poll(conn, gatherer_id, poller, types, names, texts, own_mark(poller.name, own),
+                                         poller.name if latest is not None else None)
+                else:
+                    stored += self._poll(conn, gatherer_id, poller, types, names, texts if poller in watching else None)
         return stored
 
-    def _poll(self, conn, gatherer_id: str, poller: Poller, types, names: dict, texts: Optional[list]) -> int:
-        """`poll`, for one poller: told `texts` first, unless None. How many events were newly stored."""
+    def _poll(self, conn, gatherer_id: str, poller: Poller, types, names: dict, texts: Optional[list],
+              mark: Optional[str] = None, first: Optional[str] = None) -> int:
+        """`poll`, for one poller: told `texts` first, unless None; from its `mark` in `_polls` (its name, unless
+        given) -- or, the first time, the mark `first` -- to the next. How many events were newly stored."""
         stored = 0
-        since = store.polled_at(conn, poller.name)
+        mark = mark or poller.name
+        since = store.polled_at(conn, mark)
+        if since is None and first is not None:
+            since = store.polled_at(conn, first)
         now = time.time()
         try:
             if texts is not None:
@@ -262,7 +291,7 @@ class Manager(ContextManager):
         except Exception as exc:  # noqa: BLE001 - an outside source must not break a read
             warn(f"poller {poller.name!r} failed: {exc!r}")
             return 0
-        store.mark_polled(conn, poller.name, now)
+        store.mark_polled(conn, mark, now)
         last = None
         for event in events:
             if names.get(event.type_id) not in poller.outputs:
@@ -308,7 +337,7 @@ class Manager(ContextManager):
         the harness has given up on the call (`Read.stopped`)."""
         if not os.path.exists(db_path(gatherer_id)):
             return Context(), None
-        self.poll(gatherer_id)
+        self.poll(gatherer_id, properties)
         conn = self._conn(gatherer_id)
         ids = [store.record_preamble(conn, p["name"], p["text"], self.tokenizer) for p in preamble or ()]
         ctx = self.policy.read(Store(conn, gatherer_id), Read(gatherer_id, dict(properties or {}), row_id, limit,

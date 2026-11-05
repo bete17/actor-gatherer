@@ -4,7 +4,8 @@
     properties  Spec, spec (what each type declares), property_values
     events      row_of, insert, insert_many, locate; Row, rows, read; high_water
     made items  make_item (each item once: made_sha), made_items
-    read log    Ref, record_read, read_items, last_read, basis_opened
+    read log    Ref, record_read, read_items, last_read, latest_read, basis_opened
+    raw part    raw_texts (the gatherer's), own_properties, own_raw_texts (one conversation's)
     counts      counted_rows, uncounted, record_counts
     polls       polled_at, mark_polled
     old tables  old_tables, mark_migrated
@@ -182,8 +183,8 @@ def _filter(names: List[str], alias: str, match: Optional[Dict[str, Any]], diffe
             parts.append("1" if value is None or unset_matches else "0")
         elif value is None:
             parts.append(f"{col} IS NULL")
-        elif unset_matches:
-            parts.append(f"({col} = ? OR {col} IS NULL)")
+        elif unset_matches:                        # the value, or unset: in the unique index's own terms (`_same`), so
+            parts.append(f"ifnull({col}, '') IN (?, '')")    # a channel's rows are found by it, not by reading them all
             params.append(value)
         else:
             parts.append(f"{col} = ?")
@@ -668,10 +669,12 @@ def preamble_tokens(conn: sqlite3.Connection, parts) -> int:
 
 
 def raw_texts(conn: sqlite3.Connection, skip_types: Iterable[str] = ("environment_update", "context_stream")) -> List[str]:
-    """The texts of the conversation's raw part: the events each set of properties' latest read sent
+    """The texts of the WHOLE gatherer's raw part: the events each set of properties' latest read sent
     verbatim (its stored rows), and every event since the earliest of those reads -- all of them,
     before any read -- the events of `skip_types` (the pollers') left out, and those with no text:
-    an opaque blob (a model's encrypted reasoning), whose payload names nothing a reader could."""
+    an opaque blob (a model's encrypted reasoning), whose payload names nothing a reader could.
+    One conversation that has not read for long makes it nearly every event: a read of one
+    conversation looks at its own (`own_raw_texts`)."""
     names = property_names(conn)
     group = f" GROUP BY {', '.join(property_column(n) for n in names)}" if names else ""
     latest = conn.execute(f"SELECT read_id, row_id FROM _reads WHERE read_id IN "
@@ -686,6 +689,47 @@ def raw_texts(conn: sqlite3.Connection, skip_types: Iterable[str] = ("environmen
         f"(SELECT row_id FROM _read_items WHERE read_id IN ({marks}) AND row_id IS NOT NULL)) ORDER BY e.row_id",
         (*skip, since, *reads)).fetchall()
     return [text for (text,) in rows]
+
+
+def own_properties(conn: sqlite3.Connection, properties: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Those of a read's `properties` that tell one conversation from another: the ones the gatherer has a column
+    for, set. {} when none is: a read of no conversation in particular."""
+    names = property_names(conn)
+    return {n: v for n, v in (properties or {}).items() if n in names and v is not None}
+
+
+def latest_read(conn: sqlite3.Connection, properties: Dict[str, Any]) -> Optional[Tuple[int, Optional[int]]]:
+    """(read_id, the row it responded to) of the newest read with these properties (the others any), or None."""
+    row = conn.execute(f"SELECT read_id, row_id FROM _reads WHERE {_same(list(properties))}1 "
+                       f"ORDER BY read_id DESC LIMIT 1", _unset_is_empty(properties.values())).fetchone()
+    return (row[0], row[1]) if row else None
+
+
+def own_raw_texts(conn: sqlite3.Connection, properties: Dict[str, Any],
+                  skip_types: Iterable[str] = ("environment_update", "context_stream"),
+                  latest: Optional[Tuple[int, Optional[int]]] = None) -> List[str]:
+    """The texts of ONE conversation's raw part, the reads with `properties` (`own_properties`): the events its
+    newest read (`latest`, else looked up) sent verbatim, and the events since that its reads see (its own, and
+    those with its properties unset); all it sees, before any read. Left out, as by `raw_texts`: the events of
+    `skip_types` and those with no text. What one call's conversation names, however much else the gatherer holds."""
+    skip = list(skip_types)
+    latest = latest if latest is not None else latest_read(conn, properties)
+    after, sent = 0, []
+    if latest is not None:
+        after = latest[1] or 0
+        sent = [r for r, _ in read_items(conn, latest[0]) if r is not None]
+    kinds = f"t.name NOT IN ({','.join('?' * len(skip))}) AND " if skip else ""
+    found: Dict[int, str] = {}
+    for i in range(0, len(sent), 500):
+        chunk = sent[i:i + 500]
+        found.update(conn.execute(
+            f"SELECT e.row_id, e.text FROM {_FROM} WHERE {kinds}e.text IS NOT NULL AND "
+            f"e.row_id IN ({','.join('?' * len(chunk))})", (*skip, *chunk)).fetchall())
+    theirs = "".join(f"ifnull(e.{property_column(n)}, '') IN (?, '') AND " for n in properties)   # unset: everyone's
+    found.update(conn.execute(
+        f"SELECT e.row_id, e.text FROM {_FROM} WHERE {theirs}{kinds}e.text IS NOT NULL AND e.row_id > ?",
+        (*properties.values(), *skip, after)).fetchall())
+    return [found[r] for r in sorted(found)]
 
 
 def record_real_tokens(conn: sqlite3.Connection, read_id: int, tokens: int) -> bool:

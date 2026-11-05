@@ -13,6 +13,7 @@ from contextlib import redirect_stderr
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from ag.ag_harness import Event, EventType, Manager, Poller  # noqa: E402
+from ag.ag_harness.manager import own_mark  # noqa: E402
 from ag.ag_interface.policy import Context, Policy  # noqa: E402
 from ag.ag_pollers import FileChangePoller  # noqa: E402
 from ag.ag_pollers import file_changes  # noqa: E402
@@ -239,6 +240,115 @@ class ManagerPollingTest(Base):
         self.m.add_poller(ticker)
         self.m.bulk_load("p", [self.note(1)], properties=ch(None))
         self.assertEqual(ticker.asked, [])
+
+
+class OwnConversationTest(Base):
+    """A poller that follows the conversation is told the read's conversation alone, and keeps a mark for it."""
+
+    class Sent(Plain):
+        """Plain, its read logging the rows it sent verbatim, as a policy's does."""
+
+        def read(self, conn, read):
+            rows = store.rows(conn, match=read.properties)
+            return Context([r.payload for r in rows], [store.Ref(r.row_id, None) for r in rows], None)
+
+    def setUp(self):
+        super().setUp()
+        self.m = Manager(self.Sent())
+        self.m.init("p")
+
+    def say(self, n, channel, text):
+        return self.m.insert("p", on(Event(1, {"text": text}, id=f"n{n}", text=text), channel))
+
+    def marks(self):
+        return dict(self.m._conn("p").execute("SELECT name, polled_at FROM _polls").fetchall())
+
+    def test_a_read_s_poller_is_told_its_own_conversation_only(self):
+        watcher = Watcher()
+        self.m.add_poller(watcher)
+        self.say(1, "a", "a edits a.py")
+        self.say(2, "b", "b edits b.py")
+        self.m.insert("p", on(Event(self.tick, {"n": 1}, id="t1", text="everyone's tick"), None))
+        self.m.read("p", 3, properties=ch("a"))
+        self.assertEqual(watcher.told[-1], ["a edits a.py", "everyone's tick"])   # not b's: its own, and the shared
+        self.m.read("p", 3, properties=ch("b"))
+        self.assertEqual(watcher.told[-1], ["b edits b.py", "everyone's tick"])
+
+    def test_however_much_the_other_conversations_say(self):
+        watcher = Watcher()
+        self.m.add_poller(watcher)
+        words = "see src/other.py " * 64                                           # ~1 KB each
+        for n in range(400):
+            self.m.insert("p", on(Event(1, {"text": "x"}, id=f"o{n}", text=words, tokens=1), "other"))
+        self.say(1, "a", "a edits a.py")
+        self.m.read("p", 401, properties=ch("a"))
+        self.assertEqual(watcher.told[-1], ["a edits a.py"])                        # not the 400 KB the others said
+
+    def test_a_conversation_s_raw_part_is_what_its_last_read_sent_and_since(self):
+        conn = self.m._conn("p")
+        for n, channel in ((1, "c"), (2, "c"), (3, "d"), (4, "c"), (5, "c")):
+            self.say(n, channel, f"text {n}")
+        store.record_read(conn, ch("c"), [store.Ref(2, None), store.Ref(3, None)], manager="plain", row_id=4)
+        self.assertEqual(store.own_raw_texts(conn, {"channel": "c"}), ["text 2", "text 3", "text 5"])   # sent; since
+        self.assertEqual(store.own_raw_texts(conn, {"channel": "d"}), ["text 3"])  # no read yet: all it sees
+        self.assertEqual(store.own_properties(conn, {"channel": None, "nope": "x"}), {})
+        self.assertEqual(store.own_properties(conn, ch("c")), {"channel": "c"})
+
+    def test_each_conversation_keeps_its_own_mark(self):
+        watcher = Watcher()
+        self.m.add_poller(watcher)
+        self.say(1, "a", "a.py")
+        self.say(2, "b", "b.py")
+        self.m.read("p", 1, properties=ch("a"))
+        self.m.read("p", 2, properties=ch("b"))
+        self.assertEqual([since for since, _ in watcher.asked], [None, None])      # each one's first: nothing before
+        marks = self.marks()
+        a, b = (own_mark("watcher", {"channel": c}) for c in ("a", "b"))
+        self.assertEqual(set(marks), {a, b})                                       # not the gatherer's one
+        self.m.read("p", 1, properties=ch("a"))
+        self.assertEqual(watcher.asked[-1][0], marks[a])                            # a's own, not b's later one
+
+    def test_a_conversation_that_read_before_starts_from_the_poller_s_one_mark(self):
+        watcher = Watcher()
+        self.m.add_poller(watcher)
+        conn = self.m._conn("p")
+        self.say(1, "a", "a.py")
+        store.record_read(conn, ch("a"), [store.Ref(1, None)], manager="plain", row_id=1)   # before marks were its own
+        store.mark_polled(conn, "watcher", 1234.5)
+        self.say(2, "a", "more")
+        self.m.read("p", 2, properties=ch("a"))
+        self.assertEqual(watcher.asked[-1][0], 1234.5)                              # from where every read left off
+        self.say(3, "b", "b.py")
+        self.m.read("p", 3, properties=ch("b"))
+        self.assertIsNone(watcher.asked[-1][0])                                     # a new one: from now
+
+    def test_without_a_conversation_the_whole_gatherer_on_its_one_mark(self):
+        watcher = Watcher()
+        self.m.add_poller(watcher)
+        self.say(1, "a", "a.py")
+        self.say(2, "b", "b.py")
+        self.m.poll("p")
+        self.assertEqual(watcher.told[-1], ["a.py", "b.py"])
+        self.assertEqual(set(self.marks()), {"watcher"})
+
+    def test_a_change_two_conversations_find_is_stored_once(self):
+        root = os.path.join(self.tmp.name, "work")
+        os.makedirs(root)
+        path = os.path.join(root, "notes.md")
+        with open(path, "w") as fh:
+            fh.write("x")
+        self.m.add_event_type("p", EventType("environment_update", (Property("poller"), Property("cwd"))))
+        self.m.add_poller(FileChangePoller(root))
+        self.say(1, "a", "I wrote notes.md")
+        self.say(2, "b", "and I read notes.md")
+        self.m.read("p", 1, properties=ch("a"))                                     # first polls: nothing yet
+        self.m.read("p", 2, properties=ch("b"))
+        later = time.time() + 5
+        os.utime(path, (later, later))
+        self.m.read("p", 2, properties=ch("a"))
+        self.m.read("p", 2, properties=ch("b"))
+        found = [r for r in store.rows(self.m._conn("p")) if r.type.name == "environment_update"]
+        self.assertEqual([r.payload["subject"] for r in found], ["notes.md"])        # found by both, kept once
 
 
 class FileWatchTest(unittest.TestCase):

@@ -1124,6 +1124,30 @@ class RequestedTest(Base):
         self.read()
         self.assertEqual(store.last_read(self.m._conn("s"), ch("c1"))["basis"], str(build_id))
 
+    def test_a_hang_up_as_it_is_adopted_leaves_it_to_the_next_read(self):
+        """Adopting reads every other channel's history -- seconds in a big gatherer -- so a call the harness hung up
+        on (Esc) stops it there: the read answers with the context it had, and the build stays ready for the next."""
+        self.put(PREAMBLE + conversation(6))
+        self.put(conversation(3), channel="c2")                             # another channel, with tasks of its own
+        self.run_build("s", "c2")
+        self.read()
+        self.policy.jobs = None
+        conn = self.m._conn("s")
+        before = store.last_read(conn, ch("c1"))["basis"]
+        self.policy.jobs = Recording(lambda *a: None)
+        build_id = self.ask(0)["started"]
+        self.policy.build("s", ch("c1"), build_id)
+        self.policy.jobs = None
+        self.put([agent("a", 60), user("next", 61)])
+        asked = []
+        self.m.read_logged("s", store.high_water(conn), properties=ch("c1"),
+                           stopped=lambda: asked.append(1) or True)          # Esc while it adopts
+        self.assertTrue(asked)                                              # it looked
+        self.assertEqual(store.last_read(conn, ch("c1"))["basis"], before)
+        self.assertEqual(tables.get_build(conn, build_id)["status"], "ready")   # not settled: still to adopt
+        self.read()
+        self.assertEqual(store.last_read(conn, ch("c1"))["basis"], str(build_id))
+
     def test_a_join_splits_nothing_so_its_messages_still_count(self):
         self.put(PREAMBLE + conversation(12))
         conn = self.m._conn("s")
