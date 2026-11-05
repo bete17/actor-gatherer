@@ -312,6 +312,19 @@ const bwStop = (b) => bwPost(b, "stop", {}).catch(bwSay(b));
 if (!SNAPSHOT) document.addEventListener("visibilitychange", () => {
   for (const b of bwAll.values()) if (b.es) bwPost(b, "watch", { page: BW_PAGE, visible: !document.hidden }).catch(() => {});
 });
+// The Browsers' pages shown in this page's theme, as one's own Chrome shows them in the system's (browser.py's
+// `set_scheme`): told once the home says there are Browsers, on each change of the theme, and when the page is looked at
+// again (another page, in another theme, may have told its own meanwhile).
+let bwScheme = "";
+function bwTellScheme(again = false) {
+  if (SNAPSHOT || PANE || !state.home || !state.home.browser) return;
+  const s = shownTheme();
+  if (s === bwScheme && !again) return;
+  bwScheme = s;
+  post("/api/browser/scheme", { scheme: s }).catch(() => { bwScheme = ""; });
+}
+window.addEventListener("ag-theme", () => bwTellScheme());
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") bwTellScheme(true); });
 // What the agent did (browser.py's `show`: the state's `actions`), as the user is told it: the latest in a line under
 // the page -- while it acts, what it does now -- which opens to the last ten, with their times; one of them hovered,
 // outlined again where its element is now (`where`), if it is still on the page. Each new one flashes the element it

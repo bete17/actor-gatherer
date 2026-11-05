@@ -30,8 +30,10 @@
 .bw-tabs .t .x { border: 0; background: none; color: inherit; padding: 0 3px; cursor: pointer; border-radius: 4px; line-height: 1; }
 .bw-tabs .t .x:hover { background: var(--wash); }
 .bw-tabs .add { border: 0; background: none; color: var(--muted); cursor: pointer; padding: 2px 8px; }
-.bw-stage { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; background: #fff; outline: none;
-  cursor: var(--bw-cursor, default); touch-action: none; }   /* the page's pointer shape (bwUiDraw) */
+/* under the page, what Chrome paints behind one in the theme its pages are shown in (Canvas: the page's own theme, which
+   they follow -- bwTellScheme); the page's pointer shape (bwUiDraw) */
+.bw-stage { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; background: Canvas; outline: none;
+  cursor: var(--bw-cursor, default); touch-action: none; }
 .bw-stage:focus-visible { box-shadow: inset 0 0 0 2px color-mix(in srgb, #2563EB 50%, transparent); }
 .bw-stage.picking { cursor: crosshair; }
 .bw-stage img, .bw-stage canvas.screen { position: absolute; left: 0; top: 0; display: block; user-select: none; -webkit-user-drag: none; pointer-events: none; }

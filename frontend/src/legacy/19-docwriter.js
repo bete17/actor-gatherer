@@ -75,9 +75,8 @@ function dwTell(only = null) {
     try { f.contentWindow.postMessage({ kind: "ag-actor", actor, theme: dwTheme() }, location.origin); } catch (e) { /* not up yet */ }
   }
 }
-// The page's theme as shown, light or dark: DocWriter's page takes it on, at its start and each time it changes.
-const dwTheme = () => document.documentElement.dataset.theme
-  || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+// DocWriter's page takes on the page's theme (shownTheme), at its start and each time it changes.
+const dwTheme = shownTheme;
 window.addEventListener("ag-theme", () => dwTell());
 window.addEventListener("message", (ev) => {
   if (ev.origin !== location.origin || !ev.data || ev.data.kind !== "ag-actor?") return;
