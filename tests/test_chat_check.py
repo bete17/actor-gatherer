@@ -50,7 +50,14 @@ class ChecksTest(unittest.TestCase):
     def test_a_send_in_two_places(self):
         v = view(ONE, "working", waiting=[{"text": "hello", "cid": "a"}])
         got = check([(100.0, v)])
-        self.assertEqual(got, ["+0.00s: send a in 2 places: turn 0, waiting"])
+        self.assertEqual(got, ["+0.00s: send a in 2 places: turn 0, waiting",
+                               "+0.00s: waiting, and in the latest turn already: 'hello'"])
+
+    def test_a_message_waiting_that_the_latest_turn_holds_already(self):
+        held = [(0, "hello", {"cid": "a", "began": 100.0, "more": [{"text": "and  this"}]})]
+        got = check([(100.0, view(held, "working", waiting=[{"text": "and this", "how": "queued"}]))])
+        self.assertEqual(got, ["+0.00s: waiting, and in the latest turn already: 'and this'"])
+        self.assertEqual(check([(100.0, view(held, "working", waiting=[{"text": "and that", "how": "queued"}]))]), [])
 
     def test_a_turn_taken_back_may_go_and_no_other(self):
         back = view([], "idle", turn=None, taken_back={"text": "hello", "cid": "a"})

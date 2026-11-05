@@ -1,7 +1,7 @@
 # Chat from one view: plan
 
-Status: branch `chat-view`. Steps 1-3 built (2026-11-05): the view is made on the server and pushed to the page as
-`chat` on its stream, sends carry an id; the page does not draw it yet (step 4).
+Status: branch `chat-view`. Steps 1-4 built (2026-11-05): the view is made on the server and pushed to the page as
+`chat` on its stream, sends carry an id, and Chat draws from the view. Step 5 (old server paths out) is next.
 
 ## Why
 
@@ -108,7 +108,17 @@ reads.
    runs and 3 Codex runs (a send; Esc before any words, and after its words began, each then the same words again),
    recorded again with the fixes above.
 3. Sends with a `cid`; the view's links. Done on the server (the page sends none yet: the dashboard makes one).
-4. The page draws the view (React); the legacy pieces above removed.
+4. The page draws the view (React); the legacy pieces above removed. Done:
+   - The page keeps the latest view per actor (`state.chatView`, from the stream's `chat`, or a pane's `actor` event,
+     which carries its actor's), and its own sends by id (`chatSends`) until the view has the id (bridge's `cidsOf`).
+   - `features/chat/view.ts` reads it: the turns, the opening turn (the view's, or a send from here to an actor not at
+     work), the state, what waits. Chat draws from it alone; before a view has come, the turns of `/api/files` with no
+     state. `/api/files` stays for the files and commands at the left.
+   - Gone: `heard()`, `heardCount`, `sentHereNow`, `turnsBegan`, the page's 15 s "not seen" timer (the view's
+     `unseen`), the word-matching of sends. The actor list's "running before ag stored it" (`opened`), Esc's "can
+     interrupt" and the chat minimized under the Editor read the same view.
+   - Two changes to what the reader sees: a message sent to an actor not at work opens its turn at once (no "Pending");
+     "not seen by the session yet" is said on that turn, where "Working…" would be.
 5. The old server paths for Chat removed; the actor list's status from the same view; DESIGN.md updated.
 
 Still to record: a question answered from Chat, Antigravity runs, Codex's held and mid-turn messages (record.py keeps

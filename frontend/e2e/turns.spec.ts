@@ -2,7 +2,7 @@
 // earlier messages behind a +, the latest reply folded, the earlier turns pulled in as the reader scrolls up past the
 // top, a turn's notes and its latest call, and the folds kept across views and started over for another actor.
 import type { Page } from "@playwright/test";
-import { expect, streamsAsRequests, test } from "./test";
+import { chatAs, expect, test } from "./test";
 import { CLAUDE, CODEX, masks, openActor } from "./home";
 
 const talk = (page: Page) => page.locator("#main .fl-talk");
@@ -201,34 +201,30 @@ test("shows the latest turn over: the actor done under it", async ({ page }) => 
 });
 
 test("shows the actor at work once the stream says so, while its conversation's load is held up", async ({ page }) => {
-  // the browser's connections all taken by streams: a load the page asks for waits for one to close (here: never);
-  // the stream, open already, says the actor runs -- said once, as a stream open all along would: the page draws
-  // again as a stream opens, so after it, it fails to (a stream that ends is tried again at once)
-  let held = false,
-    said = false;
+  // the page's loads held up (a browser's connections all taken by streams: here, never answered); the stream, open
+  // already, says the actor works -- in the view it sends (chat_view.py's), which needs no load to be drawn
+  let held = false;
   await page.route("**/api/files?*", (route) => (held ? undefined : route.continue()));
-  await streamsAsRequests(page);
-  await page.route("**/api/stream*", async (route) => {
-    if (!held || said) return route.abort(); // until then: the page as it loaded
-    said = true;
-    const home = await (await route.fetch({ url: new URL("/api/home", route.request().url()).href })).json();
-    for (const g of home.gatherers)
-      for (const a of g.agents) Object.assign(a, { status: "running", running: true, turn_over: false });
-    await route.fulfill({ contentType: "text/event-stream", body: `event: home\ndata: ${JSON.stringify(home)}\n\n` });
-  });
+  const chat = await chatAs(page, (v) =>
+    held ? { ...v, current: { ...(v.current as object), state: "working" } } : v,
+  );
   await openActor(page, CLAUDE);
   await expect(talk(page).locator(".fl-turn.on .fl-finished .now")).toHaveText("Done");
   await page.waitForTimeout(300); // the actor's own loads over: their draw is not what shows it at work
-  held = true; // the stream's next try (EventSource tries again by itself) has it
+  held = true;
+  chat.again();
   await expect(talk(page).locator(".fl-working:not(.fl-finished) .now")).toHaveText("Working…", { timeout: 10_000 });
   await expect(talk(page).locator(":scope > .fl-done")).toHaveCount(0);
 });
 
 test("draws the actor's first turn once stored, where the actor waved hello", async ({ page }) => {
-  // the actor's files with no turn stored yet, until `stored`
+  // the actor's files, and what Chat shows of it (the stream's view), with no turn stored yet, until `stored`
   let stored = false;
   await page.route("**/api/files?*", (route) =>
     stored ? route.continue() : route.fulfill({ json: { turns: [], turn: null, files: [], commands: [], home: "" } }),
+  );
+  const chat = await chatAs(page, (v) =>
+    stored ? v : { ...v, turns: [], opening: null, current: { state: "idle", turn: null }, waiting: [] },
   );
   // what the page says of its updates, each time it says it: a draw that failed says "Not updated", until the next
   const said: string[] = [];
@@ -266,6 +262,7 @@ test("draws the actor's first turn once stored, where the actor waved hello", as
   expect(kept).toEqual([true, true]);
   // stored: Chat picked again loads it, and draws it in place of the hello
   stored = true;
+  chat.again();
   await page.locator("#controls").getByRole("button", { name: "Chat" }).click();
   await expect(page.locator("#main .fl-grid .fl-talk .fl-turn.on")).toContainText("probe-greet");
   expect(await drawn(page)).toEqual(range(10, 14));

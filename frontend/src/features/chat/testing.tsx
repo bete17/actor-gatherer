@@ -3,7 +3,7 @@
 // (mount.tsx's drawTurns), into #main.
 import { act } from "@testing-library/react";
 import { drawTurns } from "./mount";
-import type { Actor, ChatFeed, ChatHost, Envelope, Turn } from "./types";
+import type { Actor, ChatFeed, ChatHost, ChatView, Current, Envelope, Turn } from "./types";
 
 /** When the turns of the tests were stored, in seconds. */
 export const AT = 1790874000;
@@ -88,6 +88,29 @@ export const turn = (n: number, over: Partial<Turn> = {}): Turn => ({
   ...over,
 });
 
+/** The server's view of a conversation of `turns` (chat_view.py's): its latest turn done, unless `over` says otherwise. */
+export const chatView = (turns: Turn[], over: Partial<ChatView> = {}): ChatView => ({
+  turns,
+  opening: null,
+  current: turns.length ? { state: "done", turn: turns.length - 1 } : { state: "idle", turn: null },
+  waiting: [],
+  taken_back: null,
+  ...over,
+});
+
+/** The latest of `turns` in `state` (and what else `over` says of it). */
+export const now = (turns: Turn[], state: Current["state"], over: Partial<Current> = {}): Current => ({
+  state,
+  turn: turns.length ? turns.length - 1 : null,
+  ...over,
+});
+
+/** A feed's turns, as the page's files feed and the server's view both have them: the latest shown. */
+export const withTurns = (turns: Turn[], over: Partial<ChatView> = {}): Partial<ChatFeed> => ({
+  data: { turns, turn: turns.length ? turns.length - 1 : null, home: "/home/u" },
+  view: chatView(turns, over),
+});
+
 export const ACTOR: Actor = {
   channel: "c1",
   harness: "h1",
@@ -131,11 +154,9 @@ export function testPage(turns: Turn[], over: Partial<ChatFeed> = {}) {
     home: { home: "/h", now: AT, gatherers: [{ name: "g", agents: [info] }], harness_info: {} },
     info,
     session: { status: "terminal" },
-    running: false,
-    status: "idle",
+    view: chatView(turns),
     writable: true,
     held: "",
-    heard: { stored: [], typed: [], queued: [] },
     mine: [],
     interrupting: false,
     canInterrupt: false,

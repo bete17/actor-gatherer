@@ -264,9 +264,19 @@ def view(conn, channel: str, session: Optional[dict] = None, now: Optional[float
         p = next((p for p in fresh if not any(_said(p["text"]) == _said(s["text"]) for s in sends)), None)
         if p is not None:
             opening = {"text": p["text"], "cid": None, "began": p["sent"], "seen": True, "unseen": False}
-    for q in held:
+    shown = _messages(turns)
+    for q in held:                                       # held by the harness -- not one stored since it was queued, which
+        if any(_said(text) == _said(q["text"]) and at is not None and q.get("queued") is not None   # it has sent, its
+               and at >= q["queued"] - SENT_BEFORE for _, text, at in shown):                      # record yet to say
+            continue
         s = next((s for s in pending if _said(s["text"]) == _said(q["text"])), None)
         waiting.append({"text": q["text"], "cid": s["cid"] if s else None, "how": "queued"})
+    # held, sent with its turn's end, not stored yet: waits on
+    for m in data.meanwhile(conn, channel):
+        if m["sent"] is not None and m["sent"] > stored - SENT_BEFORE and not any(
+                _said(text) == _said(m["text"]) and at is not None and at >= m["sent"] - SENT_BEFORE for _, text, at in shown):
+            s = next((s for s in pending if _said(s["text"]) == _said(m["text"])), None)
+            waiting.append({"text": m["text"], "cid": s["cid"] if s else None, "how": "queued"})
     for text in (session or {}).get("queued") or []:
         waiting.append({"text": text, "cid": None, "how": "dashboard"})
     current = _state(conn, channel, tables, turns, opening, held, session, backs)

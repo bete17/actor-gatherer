@@ -45,10 +45,10 @@ def check(views: List[Tuple[float, dict]], sends: Tuple[float, ...] = (), blink:
           settled: bool = True) -> List[str]:
     """The problems in `views` ((at, view), in order): a turn over for a blink between two moments it is at work --
     the same turn, or the next with no message sent meanwhile (`sends`: when the run sent one; stopped, it is over); a
-    send in two places at once; a turn that changes or goes from the middle of the conversation, or goes from its end
-    other than taken back; the current state not the latest turn's; a turn's `began` moving (a turn taken back and
-    sent again begins again); and, the run settled (`settled`: its last view, nothing at work), a send not yet sorted
-    out -- still opening, or waiting from Chat."""
+    send in two places at once; something waiting that the latest turn holds already; a turn that changes or goes from
+    the middle of the conversation, or goes from its end other than taken back; the current state not the latest
+    turn's; a turn's `began` moving (a turn taken back and sent again begins again); and, the run settled (`settled`:
+    its last view, nothing at work), a send not yet sorted out -- still opening, or waiting from Chat."""
     out: List[str] = []
     began: Dict[Tuple[int, str], float] = {}
     work: Optional[Tuple[float, object]] = None           # (since, the turn) the latest at work
@@ -59,10 +59,15 @@ def check(views: List[Tuple[float, dict]], sends: Tuple[float, ...] = (), blink:
         when = f"{at - t0:+.2f}s"
         cur = v.get("current") or {}
         state, turn = cur.get("state"), cur.get("turn")
-        # a send in one place at a time
+        # a send in one place at a time; nothing waits that the latest turn holds already
         for cid, places in _cids(v).items():
             if len(places) > 1:
                 out.append(f"{when}: send {cid} in {len(places)} places: {', '.join(places)}")
+        latest = (v.get("turns") or [{}])[-1]
+        held = {" ".join(str(m.get("text", "")).split()) for m in [latest, *latest.get("more", [])]}
+        for w in v.get("waiting", []):
+            if " ".join(str(w.get("text", "")).split()) in held - {""}:
+                out.append(f"{when}: waiting, and in the latest turn already: {w.get('text')!r}")
         # the current state is the latest turn's
         turns = _turns(v)
         latest = "opening" if v.get("opening") else (turns[-1][0] if turns else None)

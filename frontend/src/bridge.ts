@@ -19,6 +19,7 @@ import {
 import { escapeHtml } from "./core/ui/html";
 import { markdown, unplanned } from "./core/ui/md";
 import { drawTurns } from "./features/chat/mount";
+import { cidsOf } from "./features/chat/view";
 import { useTurns } from "./features/chat/store";
 import { useSettings } from "./features/settings/store";
 
@@ -59,7 +60,7 @@ const agNext = Object.freeze({
   /** Chat's turns (src/legacy/16-files-view.js's filesRender): drawn from the feed it hands over, into the actor's own
    * node, which it puts in its view; what they call of the page, its host (features/chat/types.ts). The setting "Chat's
    * earlier turns" picked (02-data.js): every turn as it has them, the clicks against it dropped. */
-  chat: Object.freeze({ draw: drawTurns, clearFlips: () => useTurns.getState().clearFlips() }),
+  chat: Object.freeze({ draw: drawTurns, clearFlips: () => useTurns.getState().clearFlips(), cidsOf }),
 });
 
 declare global {

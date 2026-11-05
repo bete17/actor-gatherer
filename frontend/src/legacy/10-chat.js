@@ -93,29 +93,27 @@ function chatCard(info) {
     // in the session's terminal, and may never come back as a message -- not shown pending; the terminal shown once
     // the session has one (its own, or one the message opened)
     const slash = t.startsWith("/");
-    // else shown at once, pending, until the session's own record of it shows (sentHere); `ran`: typed into a terminal
-    // open already, at its message box (sessions.py's `send`) -- not one it opens, which may ask first (canInterrupt)
-    const mine = slash ? null : { key: key(...state.selected), text: t, base: heardCount(heard(info), t), at: Date.now(),
-      ran: !!(info.session && info.session.terminal) };
+    // else shown at once, by its id (`cid`), until the server's view of the conversation has it (chatSends, a moment
+    // later: the dashboard keeps it from the moment it comes); `ran`: typed into a terminal open already, at its message
+    // box (sessions.py's `send`) -- not one it opens, which may ask first (canInterrupt)
+    const cid = "page:" + (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    const mine = slash ? null : { key: key(...state.selected), cid, text: t, at: Date.now(), ran: !!(info.session && info.session.terminal) };
     const box = document.getElementById("composer-text"), was = box ? box.value : "";
-    if (mine) sentHere.push(mine);
+    if (mine) chatSends.push(mine);
     if (box) { box.value = ""; fitBox(box); }
     keepDraft(draft, "");
-    if (mine) {
-      keepingPlace(renderMain); talkToEnd();
-      setTimeout(() => { if (sentHere.includes(mine)) keepingPlace(renderMain); }, UNSEEN_MS + 100);
-    }
+    if (mine) { keepingPlace(renderMain); talkToEnd(); }
     // a terminal the message opens (sessions.py's `send`): the Terminal view's screen, at its size if it was drawn
     const opens = { fullscreen: fullscreenFor(info), ...(term.sid === info.channel && term.opened ? { cols: term.xterm.cols, rows: term.xterm.rows } : {}) };
     try {
-      const got = await post("/api/send", info.session ? { session_id: s.session_id, text: t, ...opens }
-        : { gatherer: state.selected[0], channel: state.selected[1], text: t, ...opens });
+      const got = await post("/api/send", info.session ? { session_id: s.session_id, text: t, cid, ...opens }
+        : { gatherer: state.selected[0], channel: state.selected[1], text: t, cid, ...opens });
       if (slash && got && got.terminal && CHAT_VIEWS.has("terminal")) { await setChatView("terminal"); return true; }
       if (state.paused || !state.stream) await refresh(); else { await loadChat(); render(); }
       chatToEnd();
       return true;
     } catch (e) {
-      if (mine && sentHere.includes(mine)) sentHere.splice(sentHere.indexOf(mine), 1);
+      if (mine && chatSends.includes(mine)) chatSends.splice(chatSends.indexOf(mine), 1);
       // not sent: back as the actor's draft, unless something new was typed for it meanwhile
       if (!drafts()[draft]) {
         keepDraft(draft, was);

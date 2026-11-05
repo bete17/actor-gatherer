@@ -74,7 +74,3 @@ export const useTurns = create<TurnsState>()((set, get) => ({
   setFirst: (first) => set({ first }),
   setShown: (shown) => set({ shown }),
 }));
-
-/** When each turn the session opened before ag stored it began: by the actor and its first message's words (the host's
- * typedAs), so the turn ag stores from it counts from when it was sent. */
-export const turnsBegan = new Map<string, number>();

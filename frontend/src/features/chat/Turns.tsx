@@ -3,53 +3,46 @@
 // before the latest folded as the setting "Chat's earlier turns" has them -- all but the latest two the agent answered in
 // (a message, a thought or a call), and any after them it has yet to answer: the one before those two folds once a newer
 // turn has its first answer; never by the actor's status, nor by a message sent and not yet stored, so a turn is not
-// folded and shown again as the next starts. Then the turns the session has opened that ag has not stored yet.
+// folded and shown again as the next starts. Then the turn a message opened that is not stored yet. What each shows of
+// its state -- at work, done, stopped -- is the server's view's (view.ts), one moment's for all of them.
 import { useLayoutEffect } from "react";
 import { plural } from "../../core/format";
 import { useChat } from "./context";
-import { OpenedTurn, openings, waiting } from "./Pending";
+import { OpenedTurn } from "./Pending";
 import { drawn } from "./pull";
-import { turnsBegan, useTurns } from "./store";
+import { useTurns } from "./store";
 import { Turn, type TurnPlace } from "./Turn";
 import type { Turn as TurnData } from "./types";
-
-const DONE = ["idle", "finished", "closed"];
+import { currentOf, nowWords, openingOf, pickedOf, turnsOf } from "./view";
 
 export function Turns({ interrupting }: { interrupting: boolean }) {
-  const { feed, host, folds } = useChat();
-  const d = feed.data,
-    last = d.turns.length - 1,
-    info = feed.info;
-  const opens = openings(feed.heard);
-  // a message on its way to the agent (sent from here, queued in its session): the turn it opens begins, so the
-  // latest is not shown done meanwhile -- until the page hears the actor runs, the status still says idle
-  const coming = waiting(feed, host) !== null;
+  const { feed, folds } = useChat();
+  const turns = turnsOf(feed),
+    last = turns.length - 1,
+    cur = currentOf(feed),
+    opening = openingOf(feed);
   const first = folds.first ?? 0;
-  const answered = d.turns.filter((t) => (t.replies || []).length || t.calls).map((t) => t.n);
+  const answered = turns.filter((t) => (t.replies || []).length || t.calls).map((t) => t.n);
   const foldsAt = answered.length < 2 ? 0 : answered[answered.length - 2]; // the turns before this one fold
   const placeOf = (t: TurnData): TurnPlace => {
-    const live = feed.running && !opens.length && t.n === last;
+    const latest = t.n === last && !opening;
+    const live = latest && cur?.state === "working"; // asking: what it asks shows, not the actor at work
     return {
       live,
-      done: !live && t.n === last && !opens.length && !coming && DONE.includes(feed.status),
+      done: latest && (cur?.state === "done" || cur?.state === "stopped"),
       folds: foldsAt,
-      opened: opens.length > 0,
-      began: live ? turnsBegan.get(feed.key + "\u0000" + host.typedAs(t.text).slice(0, 200)) : undefined,
+      opened: !!opening,
+      began: live ? (t.began ?? t.at ?? undefined) : undefined,
       // a call under way is drawn above, as the turn's latest call: the line under it only says the agent works
-      now: !live
-        ? ""
-        : interrupting
-          ? "Interrupting…"
-          : info.failing
-            ? "Retrying…"
-            : t.now && t.now.kind === "thinking"
-              ? "Thinking…"
-              : "Working…",
+      now: live ? nowWords(cur, t, interrupting) : "",
+      failing: live ? (cur?.failing ?? null) : null,
+      stopped: t.stopped || (t.n === last && cur?.state === "stopped" ? (cur.stopped ?? null) : null),
     };
   };
+  const picked = pickedOf(feed, turns);
   // the turn shown brought into view, once each time one is shown: the latest at its end, one picked at its top
   useLayoutEffect(() => {
-    const at = `${feed.key}:${d.turn}`;
+    const at = `${feed.key}:${picked}`;
     if (useTurns.getState().shown === at) return;
     requestAnimationFrame(() => {
       if (useTurns.getState().shown === at) return; // already (keepTurn: kept where the reader had it)
@@ -63,12 +56,10 @@ export function Turns({ interrupting }: { interrupting: boolean }) {
   return (
     <>
       {first ? <div className="fl-earlier">{`${plural(first, "earlier turn")} · scroll up for more`}</div> : null}
-      {d.turns.slice(first).map((t) => (
+      {turns.slice(first).map((t) => (
         <Turn key={t.n} t={t} place={placeOf(t)} />
       ))}
-      {opens.map((q, i) => (
-        <OpenedTurn key={`opened-${i}`} q={q} latest={i === opens.length - 1} interrupting={interrupting} />
-      ))}
+      {opening ? <OpenedTurn o={opening} interrupting={interrupting} /> : null}
     </>
   );
 }

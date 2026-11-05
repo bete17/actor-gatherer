@@ -8,6 +8,7 @@ import { useChat } from "./context";
 import { Html } from "./Hosted";
 import { useTurns } from "./store";
 import type { Reply as ReplyData, Turn } from "./types";
+import { currentOf } from "./view";
 
 /** The harness's own notes in a turn (files.py's `_note`), each a line among the messages, folded to it. */
 export const NOTED: Record<string, string> = {
@@ -75,7 +76,7 @@ export function LastCall({ t, live }: { t: Turn; live: boolean }) {
       ? ["ok", "Ran:"]
       : live
         ? ["run", "Running:"]
-        : feed.status === "asking"
+        : currentOf(feed)?.state === "asking"
           ? ["wait", "Waiting for you:"]
           : ["stop", "Stopped:"];
   return (

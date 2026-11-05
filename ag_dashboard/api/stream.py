@@ -44,7 +44,7 @@ def stream(srv: Parts, gatherer: Optional[str] = None, channel: Optional[str] = 
     user writing to it as it works, a question answered in its terminal, Esc) among them, as ag's hook records it --
     and every KEEPALIVE seconds a comment, or `home` if the time alone changed it (Running/Idle). `also` (JSON
     [[G2, C2], ...]): the page's other actors, its other panes, each sent the same way as `actor` {gatherer, channel,
-    agent}: one stream for all a page shows, as a browser keeps few open."""
+    agent, chat}: one stream for all a page shows, as a browser keeps few open."""
     others = pairs(also)
     watch = srv.hub.watch(gatherer, channel, others)
     sent, gone = {}, threading.Event()
@@ -78,7 +78,8 @@ def stream(srv: Parts, gatherer: Optional[str] = None, channel: Optional[str] = 
             out.append(("chat", "chat", chat_of(gatherer, channel)))
         for i in sorted(changed):
             g, c = others[i]
-            out.append(("actor", ("actor", g, c), {"gatherer": g, "channel": c, "agent": agent_of(g, c)}))
+            out.append(("actor", ("actor", g, c), {"gatherer": g, "channel": c, "agent": agent_of(g, c),
+                                                   "chat": chat_of(g, c)}))
         chunks = []
         for name, kept, value in out:
             sig = signature(value)
