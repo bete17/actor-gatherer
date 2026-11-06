@@ -9,6 +9,9 @@ test("opens a second actor beside the first, and closes it", async ({ page }) =>
   await page.locator("#agents button.agent", { hasText: CLAUDE }).click({ modifiers: [beside] });
   const panes = page.locator("#panes > .pane");
   await expect(panes).toHaveCount(2);
+  // the pointer off the actor clicked: its hover card not drawn over the panes
+  await page.mouse.move(700, 700);
+  await expect(page.locator("#actor-card")).toBeHidden();
   await expect(page).toHaveScreenshot("panes-two.png", { mask: masks(page) });
   // each pane beside the first is the page again in a frame (until step A6), its × inside it
   await panes.nth(1).frameLocator("iframe").locator("#pane-close").click();
