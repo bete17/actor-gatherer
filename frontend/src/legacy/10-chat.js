@@ -206,9 +206,12 @@ function askingNote(info, answerable = true) {
     ...((harnessInfo(ask.harness || (state.home || {}).harness_default) || {}).ask_says || {}) };
   const qs = ask.questions || [];
   const s = info.session || {};
-  // the dashboard's terminal, and nothing typed into it since it asked: answered from here
+  // the dashboard's terminal, and nothing typed into it since it asked: answered from here -- not where its terminal
+  // was opened again since and its harness does not ask again (`asks_shown_again`): no dialog there to type into
   const touched = !!(s.terminal && s.typed && s.typed >= ask.at);
-  const here = answerable && !SNAPSHOT && !!s.terminal && !touched;
+  const reopened = !!(s.terminal && s.since && ask.at && s.since > ask.at
+    && (harnessInfo(ask.harness || info.harness) || {}).asks_shown_again === false);
+  const here = answerable && !SNAPSHOT && !!s.terminal && !touched && !reopened;
   const sent = info.answer && info.answer.call === ask.call ? info.answer : null;
   const who = info.harness ? harnessName(info.harness) : "The agent";
   const what = ask.kind === "plan" ? `${who} has a plan for you to ${says.plan_verb}`
@@ -274,6 +277,7 @@ function askingNote(info, answerable = true) {
         : `Typing your answer into the terminal: ${sent.summary}`]
       : d.error ? ["err", d.error]
       : !here ? ["", touched ? "Something was typed into its terminal since it asked: finish answering there."
+        : reopened ? `Its terminal was opened again since it asked, and ${who} does not ask it there again: answer in a message.`
         : SNAPSHOT ? "Answered in the terminal that runs the session."
         : !answerable && s.terminal ? "Answer it in Chat, or in the terminal." : "Answer it in the terminal that runs the session."]
       : [null, null];
