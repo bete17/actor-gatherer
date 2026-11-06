@@ -1,7 +1,8 @@
 """Chat's view (ag_dashboard/chat_view.py) where no recorded run reaches: a turn opening that a key typed into the
 terminal stopped before the harness recorded anything of it -- a codex session's first message, stopped before the call
-that makes its thread -- as the terminal's message box shows it after; and a session whose process ended (its
-`ended`), before a turn, as it worked, or after it was over."""
+that makes its thread -- as the terminal's message box shows it after; a session whose process ended (its `ended`),
+before a turn, as it worked, or after it was over; and whether a hang-up took its message back, recorded by a hook
+before it said (`_took`)."""
 import os
 import sys
 import unittest
@@ -80,6 +81,38 @@ class EndedSessionTest(unittest.TestCase):
     def test_an_end_after_the_turn_was_over_leaves_it_done(self):
         self.assertEqual(self.views(60.0)[-1][1:], ("done", None))
 
+
+class TookBackTest(unittest.TestCase):
+    """`_took`: a hang-up (Esc) at 10.0 on the call of row 5, "Hello", stored at 9.0."""
+
+    SHOWN = [(5, "Hello", 9.0)]
+
+    def took(self, takes_back=True, shown=SHOWN, prompts=(), words="Hello", **b):
+        hang_up = dict({"read": 1, "row": 5, "reached": "nothing", "withdrawn": None, "at": 10.0}, **b)
+        return chat_view._took(hang_up, words, list(shown), list(prompts), takes_back)
+
+    def test_as_the_hook_says(self):
+        self.assertTrue(self.took(withdrawn=True))
+        self.assertFalse(self.took(withdrawn=False))
+        self.assertFalse(self.took(withdrawn=True, reached="text"))     # its words had come: the harness keeps it
+        self.assertFalse(self.took(withdrawn=True, words=None))         # no user's message of its own
+
+    def test_an_older_hook_hid_what_it_withdrew(self):
+        for takes_back in (True, False):
+            self.assertTrue(self.took(takes_back=takes_back, shown=[]))
+            self.assertFalse(self.took(takes_back=takes_back, shown=[], reached="text"))
+
+    def test_shown_by_an_older_hook_it_goes_by_the_harness_sending_it_again(self):
+        again = [{"text": "Hello", "sent": 9.0}, {"text": "Hello", "sent": 12.0}]
+        for reached in ("nothing", None):
+            self.assertTrue(self.took(reached=reached, prompts=again))   # ag kept its row for the message sent again
+            self.assertFalse(self.took(reached=reached, prompts=again[:1]))   # a later call of its turn, a side call
+            self.assertFalse(self.took(reached=reached, prompts=again, shown=self.SHOWN + [(8, "Hello", 12.1)]))
+            self.assertFalse(self.took(reached=reached, prompts=[{"text": "Bye", "sent": 12.0}]))
+        self.assertFalse(self.took(reached="text", prompts=again))       # its words had come: the harness keeps it
+
+    def test_shown_by_an_older_hook_of_a_harness_that_keeps_it_it_is_not_taken_back(self):
+        self.assertFalse(self.took(takes_back=False, prompts=[{"text": "Hello", "sent": 12.0}]))
 
 if __name__ == "__main__":
     unittest.main()

@@ -19,6 +19,9 @@ AT_WORK = {"opening", "working", "asking"}
 OVER = {"done", "idle"}
 #: A turn over between two at work counts as a blink if it lasts less than this (seconds).
 BLINK_SECONDS = 1.5
+#: A turn's start moving by less than this (seconds) is none a reader sees, its timer counting whole seconds: a message
+#: typed into its terminal, stored by ag a few hundredths of a second after the harness's record says it was sent.
+STEADY_SECONDS = 0.25
 
 
 def _turns(v: dict) -> List[Tuple[int, str]]:
@@ -47,8 +50,9 @@ def check(views: List[Tuple[float, dict]], sends: Tuple[float, ...] = (), blink:
     the same turn, or the next with no message sent meanwhile (`sends`: when the run sent one; stopped, it is over); a
     send in two places at once; something waiting that the latest turn holds already; a turn that changes or goes from
     the middle of the conversation, or goes from its end other than taken back; the current state not the latest
-    turn's; a turn's `began` moving (a turn taken back and sent again begins again); and, the run settled (`settled`:
-    its last view, nothing at work), a send not yet sorted out -- still opening, or waiting from Chat."""
+    turn's; a turn's `began` moving (by STEADY_SECONDS or more; a turn taken back and sent again begins again); and,
+    the run settled (`settled`: its last view, nothing at work), a send not yet sorted out -- still opening, or waiting
+    from Chat."""
     out: List[str] = []
     began: Dict[Tuple[int, str], float] = {}
     work: Optional[Tuple[float, object]] = None           # (since, the turn) the latest at work
@@ -90,7 +94,7 @@ def check(views: List[Tuple[float, dict]], sends: Tuple[float, ...] = (), blink:
         for t in v.get("turns", []):
             k = (t["n"], t["text"])
             if t.get("began") is not None:
-                if k in began and abs(began[k] - t["began"]) > 1e-6:
+                if k in began and abs(began[k] - t["began"]) >= STEADY_SECONDS:
                     out.append(f"{when}: turn {t['n']} began at {began[k]}, now {t['began']}")
                 began.setdefault(k, t["began"])
         # no blink: over, then at work again, for the same turn or the next, within `blink`

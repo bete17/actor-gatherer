@@ -93,9 +93,11 @@ def empty(run: dict) -> sqlite3.Connection:
     return conn
 
 
-def moments(run: dict, late: Optional[Dict[str, float]] = None) -> Iterator[Moment]:
+def moments(run: dict, late: Optional[Dict[str, float]] = None, typed: bool = False) -> Iterator[Moment]:
     """Each moment something changed in the run, in order -- a row stored, a table's rows changed in place, the session
-    changed -- with the gatherer built up to it. `late`: {source (SOURCES): seconds} it is seen after it came."""
+    changed -- with the gatherer built up to it. `late`: {source (SOURCES): seconds} it is seen after it came. `typed`:
+    as if each message had been typed into its terminal, not sent from Chat -- no send kept (`chat_sent`, the session's
+    `sent`); the harness's record of each is the same."""
     late = late or {}
     unknown = set(late) - set(SOURCES)
     if unknown:
@@ -106,6 +108,8 @@ def moments(run: dict, late: Optional[Dict[str, float]] = None) -> Iterator[Mome
     withdrawn = _withdrawn_at(run)
     for i, table in enumerate(("events", "_reads")):
         for row in run.get(table, []):
+            if typed and types.get(row.get("event_type_id")) == "chat_sent":
+                continue
             if id(row) in kept:                            # stored as the dashboard now stores it: its time and id
                 f = json.loads(row["payload_json"] or "{}")
                 row = dict(row, payload_json=json.dumps(dict(f, at=kept[id(row)]["at"], cid=kept[id(row)]["cid"])))
@@ -126,7 +130,7 @@ def moments(run: dict, late: Optional[Dict[str, float]] = None) -> Iterator[Mome
             changes.append((snap["at"] + late.get("checks", 0.0), 2, "table", (table, snap["rows"])))
     for s in run.get("sessions", []):
         changes.append((s["at"] + late.get("session", 0.0), 3, "session", s["state"]))
-    for at, sent in _sent(run, types):
+    for at, sent in ([] if typed else _sent(run, types)):
         changes.append((at, 4, "sent", sent))
     changes.sort(key=lambda c: (c[0], c[1]))
     conn, session, sent, done = empty(run), None, [], []
@@ -157,6 +161,8 @@ def moments(run: dict, late: Optional[Dict[str, float]] = None) -> Iterator[Mome
         conn.commit()
         done = [a for a in actions if a["at"] <= at]
         state = session
+        if typed and (session or {}).get("session"):     # none kept by the dashboard either
+            state = dict(session, session=dict(session["session"], sent=[]))
         if sent:                                           # the dashboard's sends, known to it as each came
             state = dict(session or {})
             state["session"] = dict(state.get("session") or {}, sent=sent)
