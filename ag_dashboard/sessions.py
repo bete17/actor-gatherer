@@ -207,7 +207,7 @@ def stored() -> List[dict]:
 OUTER_TERMINAL = ("TMUX", "TMUX_PANE", "STY", "TERM_PROGRAM", "TERM_PROGRAM_VERSION", "TERM_SESSION_ID", "WINDOWID",
                   "VTE_VERSION", "KITTY_WINDOW_ID", "WEZTERM_PANE", "ITERM_SESSION_ID")   # the dashboard's own terminal: not the page's
 TERM_KEEP = 512 * 1024             # how much of a terminal's output is kept, for a page that comes back
-THREAD_POLL = 1.0                  # how often a new codex terminal's thread is looked for in the gatherer
+THREAD_POLL = 0.25                 # how often a new codex (or agy) terminal's thread is looked for in the gatherer
 PASTE_ENTER = 0.15                 # after a message is pasted into a terminal, how long before its Enter
 CLEAR_GAP = 0.2                    # after Claude Code's input box is emptied (Ctrl+C), how long before a message is pasted
 STOP_KEYS = ("\x1b", "\x03")       # keys that stop a turn: Esc, Ctrl+C
@@ -357,16 +357,41 @@ def _session_harness(gatherer: str, session_id: str) -> str:
     return got if got in HARNESSES else harness_kit.DEFAULT
 
 
-def _thread_of(gatherer: str, pid: int, known) -> Optional[str]:
-    """The codex thread a process (a terminal's) works in, as the gatherer's calls say: the channel of the
-    first call that names a directory -- codex's side calls, a title for the thread, name none -- is not
-    among `known` (the sessions the table has), and came from `pid`: its run is `pid` (codex's launcher
-    names the run by the process ag runs in, which the terminal started and codex then is), or the process
-    that made it is `pid` or runs under it (where that can be told: Linux's /proc)."""
+def _top_row(gatherer: str) -> int:
+    """The row of the gatherer's newest event: 0 for none, or no database yet."""
+    conn = _gatherer_db(gatherer)
+    if conn is None:
+        return 0
+    try:
+        return conn.execute("SELECT max(row_id) FROM events").fetchone()[0] or 0
+    except sqlite3.Error:
+        return 0
+    finally:
+        conn.close()
+
+
+def _thread_of(gatherer: str, pid: int, known, after: int = 0) -> Optional[str]:
+    """The thread a process (a terminal's) works in -- codex's thread, agy's conversation -- as the gatherer says, not
+    among `known` (the sessions the table has): the channel of a turn's call from the run `pid`, stored after the row
+    `after` (its `model_call`, recorded as the call comes in, before ag reads for it: the launcher names the run by the
+    process ag runs in, which the terminal started and the harness then is); else, from a hook from before, the channel
+    of a call ag has read that names a directory -- side calls, a title for the thread, name none -- and came from
+    `pid`: its run is `pid`, or the process that made it is `pid` or runs under it (where that can be told: Linux's
+    /proc). ag logs a read once it has read for the call, which may take seconds."""
     conn = _gatherer_db(gatherer)
     if conn is None:
         return None
     try:
+        try:
+            for (channel,) in conn.execute(
+                    "SELECT e.p_channel FROM events e WHERE e.event_type_id = (SELECT event_type_id FROM event_types "
+                    "WHERE name = 'model_call') AND e.row_id > ? AND json_extract(e.payload_json, '$.run') = ? "
+                    "AND json_extract(e.payload_json, '$.kind') = 'turn' ORDER BY e.row_id DESC LIMIT 20",
+                    (after, str(pid))):
+                if channel and channel not in known:
+                    return channel
+        except sqlite3.Error:                    # a gatherer from before events
+            pass
         has_run = "run" in {r[1] for r in conn.execute("PRAGMA table_info(_reads)")}
         for channel, by, run in conn.execute(
                 f"SELECT p_channel, pid, {'run' if has_run else 'NULL'} FROM _reads WHERE (pid IS NOT NULL"
@@ -656,6 +681,7 @@ class _Term:
         self.pasted = 0.0               # when it last pasted one: a stop key waits until the harness has taken it (`type`)
         self.prompted = 0.0             # when it was started with its first message on its command line (`terminal`): a
         #                                 stop key waits until the harness has begun that turn (`_unsent`)
+        self.named = 0.0                # when its first call named its session (`_find_thread`: a harness that picks its own id)
         self.harness: Optional[str] = None   # the session's harness and gatherer, as it was started
         self.gatherer: Optional[str] = None
         self.boxed: Optional[str] = None     # its message box as last seen after a stop key (`_read_terminal`)
@@ -1455,16 +1481,18 @@ class Sessions:
         self._gone(t)                                # its end recorded by its reader, which takes the lock
 
     def _find_thread(self, session_id: str, gatherer: str, t: _Term) -> None:
-        """A new codex terminal's thread, looked for in the gatherer's calls each second while it runs:
-        the session renamed to it once found."""
+        """A new codex (or agy) terminal's thread, looked for in the gatherer's calls every THREAD_POLL seconds while
+        it runs, among those stored since it started: the session renamed to it once found."""
+        after = _top_row(gatherer)
         while t.exited is None:
             with self.lock:
                 if self.terms.get(session_id) is not t:
                     session_id = next((k for k, v in self.terms.items() if v is t), None)
                     if session_id is None:
                         return
-                found = _thread_of(gatherer, t.pid, {x["session_id"] for x in stored()})
+                found = _thread_of(gatherer, t.pid, {x["session_id"] for x in stored()}, after)
                 if found:
+                    t.named = time.time()
                     self._rename(session_id, found)
                     s = self._row(found)
                     if s is not None and not s["turns"]:
@@ -1608,9 +1636,11 @@ class Sessions:
         return bool(t.pasted) and now - t.pasted < HOLD_MAX and self._box(t, t.harness or "") == Box.HOLDS
 
     def _began(self, t: _Term) -> bool:
-        """Whether the turn of the message the terminal `t` was started with has made its first call: the hook's
-        `model_call` of a turn in the session's channel since it started -- for a session of a harness that picks its own
-        id, once its first call has named it (`_find_thread`). True where that is not known (no session for it now)."""
+        """Whether the harness has begun the turn of the message the terminal `t` was started with, so a stop key stops
+        it: the turn's first call has come in -- the hook's `model_call` of a turn in the session's channel since the
+        terminal started, recorded as the call comes in, before ag reads for it (seconds, on a busy gatherer); for a
+        new session of a harness that picks its own id, once that call has named it (`_find_thread`). True where that
+        is not known (no session for it now)."""
         with self.lock:
             sid = next((k for k, v in self.terms.items() if v is t), None)
         s = self._row(sid) if sid else None
@@ -1618,6 +1648,8 @@ class Sessions:
             return True
         if picks_id(s["harness"]) and s["started_as"] == sid:
             return False                                 # its first call has not named it yet
+        if t.named >= t.prompted > 0:
+            return True                                  # named by its turn's first call
         from . import data                               # here: data.py reads this module
         conn = data._connect(s["gatherer"])
         if conn is None:
@@ -1626,8 +1658,8 @@ class Sessions:
         try:
             got = conn.execute(
                 f"SELECT 1 FROM events e JOIN event_types y ON y.event_type_id = e.event_type_id WHERE y.name = 'model_call' "
-                f"AND e.{data.CHANNEL} = ? AND e.inserted_at >= ? AND json_extract(e.payload_json, '$.kind') = 'turn' LIMIT 1",
-                (sid, since)).fetchone()
+                f"AND ifnull(e.{data.CHANNEL}, '') = ? AND e.inserted_at >= ? "
+                f"AND json_extract(e.payload_json, '$.kind') = 'turn' LIMIT 1", (sid, since)).fetchone()
         except sqlite3.Error:
             return False
         finally:

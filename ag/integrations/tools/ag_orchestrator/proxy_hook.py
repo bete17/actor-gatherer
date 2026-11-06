@@ -1,7 +1,7 @@
 """What a proxy hook does for every harness (the Claude Code and codex hooks build on it): once the hook server has a
 call's answer, as it streams and once whole, the answer is recorded as events of the session -- each complete part
 (`reply_part`), then its end (`reply_end`) -- and a call that failed as `call_failed`; every call it sees is recorded as
-`model_call` (records.py). A side call whose answer is the session's recap or name is the subclass's to read
+`model_call` (records.py) -- a turn's as it comes in, before ag reads for it (`calling`). A side call whose answer is the session's recap or name is the subclass's to read
 (`side_answered`). From each call of a session on, the harness's own record of it is followed (`following`,
 session_files.py): what it says that no call carries recorded as it is written. What an answer asks the user, and what
 a call's new pieces say of background tasks, are recorded too (`derive`: harness_kit's `derived`), each once, by the
@@ -65,6 +65,16 @@ class ProxyHook:
         their absence as none."""
         self.keep(self.recorded(gatherer, channel, [model_call(call.kind, self.harness.name, call.version, read_id,
                                                                {"derives": True, **detail})]))
+
+    async def calling(self, request, gatherer: str, channel: str, call: Call) -> None:
+        """A turn's call recorded as it comes in (`model_call`), before ag reads for it -- which can take seconds, as it
+        waits for a build -- with the run it came from (`request.run`, the URL's /r/: the process a dashboard's terminal
+        started), where known: what tells a reader the harness has begun its turn (a key that stops it now stops it),
+        and which session a new process works in (a codex thread, an agy conversation). Awaited, in the session's own
+        lane at ag's server: so it is stored before the read begins, and a new gatherer's database is made by one lane,
+        not two at once."""
+        await self.recorded(gatherer, channel, [model_call(call.kind, self.harness.name, call.version, None,
+                                                           {"derives": True, "run": getattr(request, "run", None)})])
 
     def derive(self, gatherer: str, channel: str, parts: List[Part], history: Optional[list] = None,
                asks: bool = True) -> None:

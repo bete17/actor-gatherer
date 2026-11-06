@@ -3,7 +3,9 @@ gatherer beside the conversation's, which no policy groups, so they never reach 
 (the dashboard) reads them in place of asking the harness, or a table of ag's own:
 
     model_call    every call the hook sees, side calls included: what it is (`kind`: harness_kit's CallKind), the
-                  harness and its version as it says; `read_id`, the read a turn's context came from
+                  harness and its version as it says; a turn's recorded as it comes in, before ag reads for it, with
+                  `run`, the harness's run it came from as its launcher named it (the URL's /r/: the process a
+                  dashboard's terminal started), where known; `read_id`, the read a call's context came from, where given
     reply_part    one complete part of an answer, as the conversation event it will be once a call carries it back
                   (`answer_id`: the provider's id for the answer); the same part is stored once
     reply_end     the answer is whole: why it stopped (`stop`: end_turn, tool_use, ...); `answer_id`, `read_id`
