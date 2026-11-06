@@ -17,7 +17,8 @@ moment, so its parts never disagree.
 
 The state follows what the conversation and the harness's record say, in order (`_state`): a turn is at work from its
 message on; it is over when its answer ends it (data.py's `turn_over`) -- unless the harness holds a message for its end,
-which it goes on with; stopped when Esc or an error stopped it (its record, or a hang-up after its words came); asking
+which it goes on with; stopped when Esc or an error stopped it (its record, or a hang-up after its words came), or its
+session's process ended while it ran (the session's `ended`, later than the turn began); asking
 while it waits on the user. No time decides a state but a send not seen for UNSEEN_SECONDS.
 
 A send from Chat is linked to the message it became once, in order (`_links`): the stored message of its words after
@@ -198,7 +199,9 @@ def _stop_on(opening: Optional[dict], session: Optional[dict]) -> tuple:
 
 def _state(conn, channel: str, tables: set, turns: List[dict], opening: Optional[dict], held: List[dict],
            session: Optional[dict], backs: List[dict]) -> dict:
-    """The latest turn's state (module doc): from what its record says it stopped on, else its newest call -- hung up on
+    """The latest turn's state (module doc): from what its record says it stopped on, else the session's process ending
+    after it began, before it was over (closed: an end before it, a process since run again, is not this turn's), else
+    its newest call -- hung up on
     after its answer had begun: stopped (the harness keeps the turn, interrupted); before, on the message of a turn
     taken back: the turn before it, over -- else whether its answer ended it (data.py's `turn_over`)."""
     out = {"state": IDLE, "turn": None, "doing": None, "failing": None, "asking": None, "stopped": None}
@@ -212,8 +215,9 @@ def _state(conn, channel: str, tables: set, turns: List[dict], opening: Optional
     out["turn"] = latest["n"]
     if latest.get("stopped"):
         return dict(out, state=STOPPED, stopped=latest["stopped"])
-    if session is not None and session.get("ended"):
-        return dict(out, state=STOPPED, stopped={"kind": "closed"})
+    ended = (session or {}).get("ended") or 0.0          # the session's last process ended then: kept as it runs again
+    if ended > (latest.get("began") or 0.0) and not (_over(conn, channel, tables) and not held):
+        return dict(out, state=STOPPED, stopped={"kind": "closed"})   # it ended as this turn worked: cut off there
     newest = (data._newest_reads(conn, channel, 1) or [None])[0]
     hung = backs[-1] if backs and newest is not None and backs[-1]["read"] == newest["read_id"] else None
     if hung is not None and (latest.get("began") or 0.0) > hung["at"]:
