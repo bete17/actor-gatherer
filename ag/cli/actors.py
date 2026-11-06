@@ -8,9 +8,10 @@ the dashboard that runs them (ag_dashboard/coordination.py), over its local API 
     ag actors send <actor> <message>    a message to the actor (`gatherer`: the gatherer agent; - for the message: read
                                         from stdin), which it gets in its conversation now -- as a new turn, or in the
                                         one it is running -- saying who it is from
-    ag actors new [--like A] [--cwd D] [--harness H] [--model M] [--name N] [--docwriter | --browser | --branch [--approve]] <message>
+    ag actors new [--like A] [--cwd D] [--harness H] [--model M] [--name N] [--folder F] [--docwriter | --browser | --branch [--approve]] <message>
                                         a new actor in the gatherer, started with the message: in D, on H and M, as given,
-                                        else as actor A has them, else as this one. --docwriter: a DocWriter's actor,
+                                        else as actor A has them, else as this one; in the dashboard's list, in folder F
+                                        (a path, made if new). --docwriter: a DocWriter's actor,
                                         writing with the user on D's documents in DocWriter, in the dashboard, where its
                                         edits are proposals the user accepts or rejects. --branch: on a branch of its own,
                                         in a new git worktree of the repository D is in, what it changes there merged
@@ -19,13 +20,18 @@ the dashboard that runs them (ag_dashboard/coordination.py), over its local API 
     ag actors when <actor> [--note T]   an update in this actor's conversation once the actor is done (with T, said back)
     ag actors watches | unwatch <n>     what this actor asked to be told and has not been; one of them dropped
     ag actors save <actor> [--folder F | --no-folder]
-                                        the actor saved for later, as the bookmark in the dashboard's list saves one: in
-                                        folder F of the gatherer's Saved list (made if new), or in none (--no-folder),
-                                        else in the one it was in
-    ag actors unsave <actor>            no longer saved (nor in its folder)
-    ag actors folders                   the gatherer's folders of saved actors, and the actors saved in each and in none
-    ag actors folder new <F> | rename <F> <G> | delete <F>
-                                        a folder made (empty), renamed, or deleted (its actors still saved, in none)
+                                        the actor saved for later, as the bookmark in the dashboard's list saves one;
+                                        put in folder F too (made if new), or at the gatherer's top (--no-folder)
+    ag actors unsave <actor>            no longer saved (it stays in its folder)
+    ag actors folders                   the gatherer's folders, as the dashboard's list has them: the actors in each,
+                                        the folders in each, and the actors at the gatherer's top
+    ag actors folder new <F> | rename <F> <name> | move <F> <G|top> | delete <F>
+                                        a folder made (empty), renamed, put in folder G (or at the top), or deleted
+                                        (what was in it moved up into the folder it was in)
+    ag actors move <actor>... <F|top>   actors put in folder F (made if new), or at the gatherer's top
+
+A folder is named by its path: its name after those of the folders it is in, joined by "/" (`Harnesses/Codex`).
+Folders only organise the dashboard's list: an actor shares the gatherer's context whatever folder it is in.
 
 An actor is named by its id (or its first characters), its name, or `gatherer` for the gatherer agent. Who asks is the
 session the command runs in, as its harness says (CLAUDE_CODE_SESSION_ID, CODEX_THREAD_ID), else AG_ACTOR (which the
@@ -117,6 +123,7 @@ def parser() -> argparse.ArgumentParser:
     new.add_argument("--harness", choices=harness_kit.runnable(), help="the harness it runs on (default: the --like actor's, else yours)")
     new.add_argument("--model")
     new.add_argument("--name", help="its name in the dashboard")
+    new.add_argument("--folder", help="in this folder of the dashboard's list (a path, made if new)")
     new.add_argument("--docwriter", action="store_true",
                      help="a DocWriter's actor: it writes with the user on the directory's documents in DocWriter, in "
                           "the dashboard, where its edits are proposals the user accepts or rejects")
@@ -134,20 +141,25 @@ def parser() -> argparse.ArgumentParser:
     when.add_argument("--note", default="", help="what to do then: said back in the message")
     sub.add_parser("watches", help="what you asked to be told, and have not been yet")
     sub.add_parser("unwatch", help="drop one of them").add_argument("watch", type=int)
-    save = sub.add_parser("save", help="an actor saved for later, in a folder of the Saved list if given")
+    save = sub.add_parser("save", help="an actor saved for later, put in a folder too if given")
     save.add_argument("actor")
     where = save.add_mutually_exclusive_group()
-    where.add_argument("--folder", help="in this folder of the gatherer's Saved list (made if new)")
-    where.add_argument("--no-folder", dest="unfiled", action="store_true", help="in no folder, still saved")
+    where.add_argument("--folder", help="put in this folder (a path, made if new)")
+    where.add_argument("--no-folder", dest="unfiled", action="store_true", help="put at the gatherer's top, in no folder")
     sub.add_parser("unsave", help="an actor no longer saved for later").add_argument("actor")
-    sub.add_parser("folders", help="the gatherer's folders of saved actors, and what is in each")
-    folder = sub.add_parser("folder", help="a folder of saved actors made, renamed or deleted")
+    sub.add_parser("folders", help="the gatherer's folders, and what is in each")
+    move = sub.add_parser("move", help="actors put in a folder (made if new), or at the gatherer's top")
+    move.add_argument("actors", nargs="+", help="the actors, then the folder's path (or `top`)")
+    folder = sub.add_parser("folder", help="a folder made, renamed, moved or deleted")
     do = folder.add_subparsers(dest="do", required=True)
     do.add_parser("new", help="a new folder, empty").add_argument("name")
-    rename = do.add_parser("rename", help="a folder renamed, its actors in it still")
-    rename.add_argument("name")
-    rename.add_argument("to")
-    do.add_parser("delete", help="a folder deleted: its actors stay saved, in no folder").add_argument("name")
+    rename = do.add_parser("rename", help="a folder renamed, what is in it still in it")
+    rename.add_argument("name", help="its path")
+    rename.add_argument("to", help="its new name")
+    moved = do.add_parser("move", help="a folder, and all in it, put in another folder (or at the top)")
+    moved.add_argument("name", help="its path")
+    moved.add_argument("to", help="the other folder's path, or `top`")
+    do.add_parser("delete", help="a folder deleted: what was in it moves up into the folder it was in").add_argument("name")
     return ap
 
 
@@ -178,13 +190,17 @@ def main(argv: List[str]) -> int:
             if opts.unfiled:
                 body["unfiled"] = True
         if op == "folder":
-            body.update({"do": opts.do, "name": opts.name, **({"to": opts.to} if opts.do == "rename" else {})})
+            body.update({"do": opts.do, "name": opts.name, **({"to": opts.to} if opts.do in ("rename", "move") else {})})
+        if op == "move":
+            if len(opts.actors) < 2:
+                raise ActorsError("move which actors where? `ag actors move <actor>... <folder|top>`")
+            body.update({"refs": opts.actors[:-1], "folder": opts.actors[-1]})
         if op == "who":
             body["path"] = os.path.abspath(os.path.expanduser(opts.file))
         if op in ("send", "new"):
             body["text"] = _words(opts.message)
         if op == "new":
-            body.update({k: getattr(opts, k) for k in ("like", "cwd", "harness", "model", "name") if getattr(opts, k)})
+            body.update({k: getattr(opts, k) for k in ("like", "cwd", "harness", "model", "name", "folder") if getattr(opts, k)})
             if body.get("cwd"):
                 body["cwd"] = os.path.abspath(os.path.expanduser(body["cwd"]))
             for flag in ("docwriter", "browser", "branch", "approve"):
@@ -217,7 +233,7 @@ def _who(a: dict) -> str:
     """An actor in a line: its id, its name, whether it is the gatherer agent or the asker, its status, harness, place."""
     marks = [m for m in ("the gatherer agent" if a.get("gatherer_agent") else None, "a DocWriter" if a.get("docwriter") else None,
                          "a Browser" if a.get("browser") else None,
-                         'saved in "%s"' % a["folder"] if a.get("folder") else "saved" if a.get("saved") else None,
+                         "saved" if a.get("saved") else None, 'in "%s"' % a["folder"] if a.get("folder") else None,
                          "you" if a.get("you") else None) if m]
     name = ' "%s"' % a["name"] if a.get("name") and not a.get("gatherer_agent") else ""
     what = ", ".join(x for x in (a.get("status"), a.get("harness")) if x)
@@ -283,7 +299,8 @@ def shown(op: str, got: dict) -> str:
             return (f"Started actor {a['id']} ({a.get('harness')},{_place(a.get('cwd'))}) with your message, on its own "
                     f"branch {b['branch']} of {_short(b['project'])}. The dashboard merges what it "
                     f"changes there into that checkout,{merged}; nothing is committed.")
-        return f"Started actor {a['id']} ({a.get('harness')},{_place(a.get('cwd'))}) with your message."
+        return f"Started actor {a['id']} ({a.get('harness')},{_place(a.get('cwd'))}) with your message" \
+            + (f', in the folder "{a["folder"]}".' if a.get("folder") else ".")
     if op == "when":
         t = got["target"]
         return (f"Watch {got['watch']}: an update comes in your conversation once actor {t['id']} is done"
@@ -298,21 +315,34 @@ def shown(op: str, got: dict) -> str:
     if op in ("save", "unsave"):
         a = got["actor"]
         who = "Actor %s" % a["id"] + (' ("%s")' % a["name"] if a.get("name") else "")
+        where = 'in the folder "%s"' % a["folder"] if a.get("folder") else "at the gatherer's top"
         if not a.get("saved"):
-            return f"{who} is no longer saved."
-        return f"{who} is saved for later, " + ('in the folder "%s".' % a["folder"] if a.get("folder") else "in no folder.")
+            return f"{who} is no longer saved ({where})."
+        return f"{who} is saved for later, {where}."
+    if op == "move":
+        where = 'in the folder "%s"' % got["folder"] if got.get("folder") else "at the gatherer's top"
+        return "\n".join([f"Now {where}:"] + [f"- {_who({**a, 'folder': None})}" for a in got["actors"]])
     if op in ("folders", "folder"):
         lines = []
         if op == "folder":
             lines.append({"new": 'Folder "{name}" made.', "rename": 'Folder "{name}" renamed "{to}".',
-                          "delete": 'Folder "{name}" deleted: its actors are still saved, in no folder.'}[got["done"]].format(**got))
-        lines.append(f"Saved actors of the gatherer {got['gatherer']}:" if got["folders"] or got["unfiled"]
-                     else f"The gatherer {got['gatherer']} has no saved actors and no folders.")
-        for f in got["folders"]:
-            lines.append(f'- folder "{f["name"]}"' + ("" if f["actors"] else " (empty)"))
-            lines += [f"    {_who({**a, 'saved': False, 'folder': None})}" for a in f["actors"]]
-        if got["unfiled"]:
-            lines.append("- in no folder")
-            lines += [f"    {_who({**a, 'saved': False})}" for a in got["unfiled"]]
+                          "move": 'Folder "{name}" put in "{to}".' if got.get("to") else 'Folder "{name}" put at the top.',
+                          "delete": 'Folder "{name}" deleted: what was in it moved up a level.'}[got["done"]].format(**got))
+        if not got["folders"] and not got["actors"] and not got["closed"]:
+            lines.append(f"The gatherer {got['gatherer']} has no folders, and no actors but the gatherer agent.")
+            return "\n".join(lines)
+        lines.append(f"Folders of the gatherer {got['gatherer']}:" if got["folders"] else f"The gatherer {got['gatherer']} has no folders.")
+
+        def tree(node: dict, depth: int) -> None:
+            pad = "  " * depth
+            for f in node["folders"]:
+                closed = f" ({f['closed']} closed)" if f["closed"] else ""
+                lines.append(f'{pad}- folder "{f["path"]}"' + ("" if f["actors"] or f["folders"] or f["closed"] else " (empty)") + closed)
+                lines.extend(f"{pad}    {_who({**a, 'folder': None})}" for a in f["actors"])
+                tree(f, depth + 1)
+        tree(got, 0)
+        if got["actors"] or got["closed"]:
+            lines.append("- at the gatherer's top" + (f" ({got['closed']} closed)" if got["closed"] else ""))
+            lines.extend(f"    {_who({**a, 'folder': None})}" for a in got["actors"])
         return "\n".join(lines)
     return json.dumps(got, indent=2)

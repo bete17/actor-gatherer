@@ -139,7 +139,7 @@ def actors_op(crew: coordination.Coordination, op: str, body: dict):
         return crew.send(me, s("ref"), s("text"))
     if op == "new":
         return crew.new(me, s("text"), opt("cwd"), opt("harness"), opt("model"), opt("like"), opt("name"),
-                        branch=bool(body.get("branch")), approve=bool(body.get("approve")),
+                        branch=bool(body.get("branch")), approve=bool(body.get("approve")), folder=opt("folder"),
                         **{a.name: bool(body.get(a.name)) for a in apps.APPS})
     if op == "when":
         return crew.when(me, s("ref"), s("note"))
@@ -155,8 +155,11 @@ def actors_op(crew: coordination.Coordination, op: str, body: dict):
         return crew.folders(me)
     if op == "folder":
         return crew.folder(me, s("do"), s("name"), s("to"))
+    if op == "move":
+        refs = body.get("refs")
+        return crew.move(me, [str(r) for r in refs] if isinstance(refs, list) else [], s("folder"))
     raise coordination.CoordinationError(f"no `ag actors {op}`: one of list, show, who, send, new, when, watches, unwatch, "
-                                         "save, unsave, folders, folder")
+                                         "save, unsave, folders, folder, move")
 
 
 @router.post("/api/actors/{op:path}")
@@ -164,7 +167,8 @@ def actors(srv: Parts, op: str, body: Body) -> Response:
     """{actor, ...}: what an actor's `ag actors <op>` asks (coordination.py; `actor`, its id) -> what it answers; an
     error's text for the command to print (400).
 
-    list {all?}, show {ref}, who {path}, send {ref, text}, new {text, cwd?, harness?, model?, like?, name?,
+    list {all?}, show {ref}, who {path}, send {ref, text}, new {text, cwd?, harness?, model?, like?, name?, folder?,
     <app>? (apps.py: docwriter?, browser?), branch?, approve?}, when {ref, note?}, watches, unwatch {watch},
-    save {ref, folder?, unfiled?}, unsave {ref}, folders, folder {do: new | rename | delete, name, to?}."""
+    save {ref, folder?, unfiled?}, unsave {ref}, folders, folder {do: new | rename | move | delete, name, to?},
+    move {refs, folder} (folders: by path, "top" or none for the gatherer's top)."""
     return answer(actors_op(srv.crew, op, body))

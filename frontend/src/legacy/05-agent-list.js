@@ -76,8 +76,8 @@ async function setHidden(g, hide) {
   redrawList();
 }
 // Actors saved for later, kept by the server (saved.py, `home.saved`: {gatherer: {channel: when}}) so every
-// dashboard on this home shows the same. One saved is listed under Saved in its gatherer once it is closed, not
-// with the closed ones; while open it is listed by its status (idle among the idle), its bookmark filled. It keeps
+// dashboard on this home shows the same. One saved is listed in its folder's saved line once it is closed, not with
+// the closed ones; while open it is listed by its status (idle among the idle), its bookmark filled. It keeps
 // its gatherer from being hidden for having had nothing for a week. The channel it was saved as: a codex
 // session's, renamed to its thread since, its first.
 const savedAs = (gname, a) => {
@@ -89,7 +89,6 @@ async function setSaved(gname, a, save) {
   const kept = { ...((state.home.saved || {})[gname] || {}) };
   if (save) kept[channel] = new Date().toISOString(); else delete kept[channel];
   state.home.saved = { ...(state.home.saved || {}), [gname]: kept };
-  if (!save) folderGuess(gname, (_, mine) => { for (const n of Object.keys(mine)) mine[n] = mine[n].filter((c) => c !== channel); });
   renderAgents();
   if (SNAPSHOT) return;                            // a snapshot has no server: this page only
   const asked = homesTaken;
@@ -97,80 +96,242 @@ async function setSaved(gname, a, save) {
   catch (err) { setLive(`Not saved: ${err.message}`); }
   redrawList();
 }
-// The folders of a gatherer's saved actors, kept by the server till deleted, empty or not (saved.py,
-// `home.saved_folders`: {gatherer: {folder: [the channels in it, as saved]}}). A saved actor is in one or in none:
-// once closed, it is listed in it under Saved -- each folder a fold of its own, folded till opened, kept in this
-// browser -- and while open, by its status, its folder named beside its bookmark. An actor is put in one by
-// dragging its row onto the folder's line (saved too, if it was not), and out of it onto the Saved line; the bookmark
-// saves one in none. A folder is made from the Saved line, renamed and deleted from its own (deleted, its actors stay
-// saved, in none) -- and all of it by the gatherer agent too (`ag actors save --folder`, `ag actors folder`).
+// FOLDERS (folders.py, `home.folders`: {gatherer: {folders: [{id, parent, name}], filed: {channel: folder id}}}), kept by
+// the server so every dashboard on this home shows the same: the list as a tree, each gatherer its top folder. An actor is
+// in one folder, or at its gatherer's top (one filed in a folder deleted since: at the top); a folder in another, or at
+// the top. Each gatherer's and each folder's BOX (boxRows) lists, in this order: its folders, by name; its actors open,
+// the newest first -- each staying in its place whatever its status does, under no heading (its dot says it; a folder's
+// line counts those wanting the reader, stopped on an error, running); its terminals ("N terminals"), its saved actors
+// once closed ("N saved") and its other closed ones ("N closed"), each folded till opened, as before folders. A folder is folded till opened (kept in this browser);
+// folded, its actors open in a pane stay in view under it. Folders only organise the list: what a gatherer's actors
+// share of one another's context is the gatherer's, whatever folder each is in.
 const FOLDER_CHARS = 60;
-const foldersOf = (gname) => (state.home.saved_folders || {})[gname] || {};
 const byName = (x, y) => x.localeCompare(y, undefined, { sensitivity: "base" }) || (x < y ? -1 : x > y ? 1 : 0);
-const folderNames = (gname) => Object.keys(foldersOf(gname)).sort(byName);
-const sameFolder = (mine, name) => Object.keys(mine).find((n) => n.toLowerCase() === String(name).toLowerCase());
+const treeOf = (gname) => (state.home.folders || {})[gname] || { folders: [], filed: {} };
+const folderById = (gname, id) => id === null || id === undefined ? null : treeOf(gname).folders.find((f) => f.id === id) || null;
+// the folder a folder is in: its id, or null for the gatherer's top (one gone: the top)
+const parentOf = (gname, f) => folderById(gname, f.parent) ? f.parent : null;
+const kidFolders = (gname, id) => treeOf(gname).folders.filter((f) => parentOf(gname, f) === id);
+// The channel the actor is filed as (its own, or the one it was started under, as savedAs finds it); null: in none
+const filedAs = (gname, a) => {
+  const filed = treeOf(gname).filed;
+  return a.channel in filed ? a.channel : a.session && a.session.started_as in filed ? a.session.started_as : null;
+};
+// The folder the actor is in: its id, or null for its gatherer's top
 function folderOf(gname, a) {
-  const key = savedAs(gname, a), mine = foldersOf(gname);
-  return key ? Object.keys(mine).find((n) => mine[n].includes(key)) || null : null;
+  const at = filedAs(gname, a), id = at ? treeOf(gname).filed[at] : null;
+  return folderById(gname, id) ? id : null;
 }
-const FOLDERS_KEY = "ag-dashboard-folders-shown";
-const foldersShown = (() => {
-  try { const v = JSON.parse(localStorage.getItem(FOLDERS_KEY)); if (Array.isArray(v)) return new Set(v); } catch (e) { /* none kept */ }
+// Whether folder `id` is folder `inside`, or in it at any depth
+function within(gname, id, inside) {
+  for (let f = folderById(gname, id), n = 0; f && n < 500; f = folderById(gname, f.parent), n++) if (f.id === inside) return true;
+  return false;
+}
+// A folder's path: its name after those of the folders it is in
+function folderPath(gname, id, sep = " / ") {
+  const names = [], seen = new Set();
+  for (let f = folderById(gname, id); f && !seen.has(f.id); f = folderById(gname, f.parent)) { seen.add(f.id); names.unshift(f.name); }
+  return names.join(sep);
+}
+// The actors (not the gatherer agent) in folder `id`, or in a folder in it
+const actorsWithin = (g, id) => g.agents.filter((a) => {
+  if (isCoordinator(a)) return false;
+  const at = folderOf(g.name, a);
+  return at !== null && within(g.name, at, id);
+});
+// Those of them open in a pane: in view under the folder while it is folded
+const inPane = (g, a) => openActors().some((sel) => isAt(sel, g.name, a.channel));
+const openIn = (g, id) => actorsWithin(g, id).filter((a) => inPane(g, a));
+// What a folder holds, its folders' too: how many actors wait on the reader, stopped on an error, run; how many are
+// open, saved (closed), closed
+function folderTally(g, id) {
+  const t = { asking: 0, error: 0, running: 0, open: 0, saved: 0, closed: 0 };
+  for (const a of actorsWithin(g, id)) {
+    const group = groupOf(g, a);
+    if (group === "Saved") t.saved++; else if (group === "Closed") t.closed++; else t.open++;
+    if (group === "Waiting for you") t.asking++; else if (group === "Error") t.error++; else if (group === "Running") t.running++;
+  }
+  return t;
+}
+// Each folder open or not (its key: its gatherer, its id), kept in this browser; a folder made, or one an actor is put
+// in, opened
+const FOLDERS_OPEN_KEY = "ag-dashboard-folders-open";
+const foldersOpen = (() => {
+  try { const v = JSON.parse(localStorage.getItem(FOLDERS_OPEN_KEY)); if (Array.isArray(v)) return new Set(v); } catch (e) { /* none kept */ }
   return new Set();
 })();
-const folderKey = (gname, name) => `${gname}\u0000${String(name).toLowerCase()}`;
-function showFolder(gname, name, open) {
-  const k = folderKey(gname, name);
-  if (open) foldersShown.add(k); else foldersShown.delete(k);
-  try { localStorage.setItem(FOLDERS_KEY, JSON.stringify([...foldersShown])); } catch (e) { /* kept for this page only */ }
+const folderKey = (gname, id) => `${gname}\u0000${id}`;
+const isOpenFolder = (gname, id) => foldersOpen.has(folderKey(gname, id));
+function showFolder(gname, id, open) {
+  if (id === null) return;
+  const k = folderKey(gname, id);
+  if (open) foldersOpen.add(k); else foldersOpen.delete(k);
+  try { localStorage.setItem(FOLDERS_OPEN_KEY, JSON.stringify([...foldersOpen])); } catch (e) { /* kept for this page only */ }
 }
-function toggleFolder(gname, name) {
-  showFolder(gname, name, !foldersShown.has(folderKey(gname, name)));
+function toggleFolder(gname, id) {
+  showFolder(gname, id, !isOpenFolder(gname, id));
   renderAgents();
 }
-// the page's own copy changed as the server will change it (`change(saved of the gatherer, its folders)`), so the
-// list shows it at once; the server's answer, or the next home, has the last word (whichever is newer: takeHome)
-function folderGuess(gname, change) {
-  const saved = structuredClone(state.home.saved || {}), folders = structuredClone(state.home.saved_folders || {});
-  change(saved[gname] = saved[gname] || {}, folders[gname] = folders[gname] || {});
-  state.home.saved = saved; state.home.saved_folders = folders;
+// A box's folds (Closed, Saved, Terminals) open or not, by its key: a gatherer's top by its name (as before folders), a
+// folder's by its gatherer and id
+const boxKey = (gname, id) => id === null ? gname : `${gname}\u0000f${id}`;
+// A name for a new folder in `parent` none beside it has: `base`, else `base 2`, ...
+function freeName(gname, parent, base) {
+  const taken = new Set(kidFolders(gname, parent).map((f) => f.name.toLowerCase()));
+  let name = base;
+  for (let n = 2; taken.has(name.toLowerCase()); n++) name = `${base} ${n}`;
+  return name;
 }
-async function folderPost(gname, body, change) {
-  const before = [state.home.saved, state.home.saved_folders];
-  folderGuess(gname, change);
+// The page's own copy changed as the server will change it (`change(the gatherer's tree)`), so the list shows it at
+// once; the server's answer, or the next home, has the last word (whichever is newer: takeHome). -> the answer, or null.
+async function folderPost(gname, body, change = null) {
+  const before = state.home.folders;
+  if (change) {
+    const all = structuredClone(state.home.folders || {});
+    change(all[gname] = all[gname] || { folders: [], filed: {} });
+    state.home.folders = all;
+  }
   renderAgents();
-  if (SNAPSHOT) return;                            // a snapshot has no server: this page only
+  if (SNAPSHOT) return null;                       // a snapshot has no server: this page only
   const asked = homesTaken;
   try {
-    const got = await post("/api/saved/folders", { gatherer: gname, ...body });
-    if (!homeSince(asked)) { state.home.saved = got.saved; state.home.saved_folders = got.folders; }
+    const got = await post("/api/folders", { gatherer: gname, ...body });
+    if (!homeSince(asked)) state.home.folders = got.folders;
+    return got;
   } catch (err) {
-    if (!homeSince(asked)) [state.home.saved, state.home.saved_folders] = before;
+    if (!homeSince(asked)) state.home.folders = before;
     setLive(`Not done: ${err.message}`);
+    return null;
+  } finally { redrawList(); }
+}
+// Actors put in folder `id` (null: their gatherer's top), by the channels they are filed as (or will be): it opened
+function fileActors(gname, actors, id) {
+  const channels = actors.map((a) => filedAs(gname, a) || a.channel);
+  if (!channels.length) return null;
+  showFolder(gname, id, true);
+  return folderPost(gname, { do: "file", channels, folder: id }, (tree) => {
+    for (const c of channels) { if (id === null) delete tree.filed[c]; else tree.filed[c] = id; }
+  });
+}
+// A folder made in `parent` (null: the gatherer's top), opened -- drawn once the server has made it (its id is the
+// server's) -> the answer ({made: its id}), or null
+async function makeFolder(gname, name, parent) {
+  showFolder(gname, parent, true);
+  const got = await folderPost(gname, { do: "new", name, parent });
+  if (got && got.made !== undefined) { showFolder(gname, got.made, true); renderAgents(); }
+  return got;
+}
+const renameFolder = (gname, id, to) => folderPost(gname, { do: "rename", id, to }, (tree) => {
+  const f = tree.folders.find((x) => x.id === id);
+  if (f) f.name = to;
+});
+function moveFolder(gname, id, parent) {
+  showFolder(gname, parent, true);
+  return folderPost(gname, { do: "move", id, parent }, (tree) => {
+    const f = tree.folders.find((x) => x.id === id);
+    if (f) f.parent = parent;
+  });
+}
+// A folder deleted: what was in it -- its actors, its folders -- moved up into the one it was in
+const deleteFolder = (gname, id) => folderPost(gname, { do: "delete", id }, (tree) => {
+  const f = tree.folders.find((x) => x.id === id);
+  if (!f) return;
+  const up = tree.folders.some((x) => x.id === f.parent) ? f.parent : null;
+  for (const x of tree.folders) if (x.parent === id) x.parent = up;
+  for (const [c, at] of Object.entries(tree.filed)) if (at === id) { if (up === null) delete tree.filed[c]; else tree.filed[c] = up; }
+  tree.folders = tree.folders.filter((x) => x.id !== id);
+});
+// Where the next actor started from the list goes: the folder whose "+ actor" or "+ ⋯" was pressed last, or its gatherer's
+// top (null) -- set by each start button as it is pressed (startButtons; railNew, railMore in the rail's cards). Once started, the actor is filed
+// there (fileStarted), as the server answers with its id; a terminal is opened there (startShell, `shellFolder`).
+let startIn = { g: "", folder: null };
+const aimStart = (gname, id) => { startIn = { g: gname, folder: id }; };
+async function fileStarted(gname, id) {
+  const fid = startIn.g === gname ? startIn.folder : null;
+  if (fid === null || !id || !folderById(gname, fid)) return;
+  showFolder(gname, fid, true);
+  await folderPost(gname, { do: "file", channels: [id], folder: fid }, (tree) => { tree.filed[id] = fid; });
+}
+const shellFolder = (gname) => startIn.g === gname && folderById(gname, startIn.folder) ? startIn.folder : null;
+// SELECTING several actors of one gatherer, to move them at once (or save, or close them): Shift+click adds an actor to
+// the selection, or takes it out (⌘/Ctrl+click opens one beside the one shown). One selected is only tinted; from two,
+// each has a check on its avatar, and a bar under the list (renderPickBar) offers Move to…, Save, Close. Dragging a
+// selected actor drags them all. A selection is of one gatherer, as actors never leave theirs; Esc, or ✕, clears it.
+const picks = { g: null, cs: new Set() };
+const picked = (g, a) => picks.g === g.name && picks.cs.has(a.channel);
+function togglePick(g, a) {
+  if (picks.g !== g.name) { picks.g = g.name; picks.cs = new Set(); }
+  if (picks.cs.has(a.channel)) picks.cs.delete(a.channel); else picks.cs.add(a.channel);
+  if (!picks.cs.size) picks.g = null;
+  renderAgents();
+}
+function clearPicks(draw = true) {
+  if (!picks.g) return;
+  picks.g = null; picks.cs = new Set();
+  if (draw) renderAgents();
+}
+// [its gatherer, the actors selected] as the home has them now (one gone since: left out)
+function pickedActors() {
+  const g = picks.g && state.home.gatherers.find((x) => x.name === picks.g);
+  return g ? [g, g.agents.filter((a) => picks.cs.has(a.channel) && !isCoordinator(a))] : [null, []];
+}
+function renderPickBar() {
+  let bar = document.getElementById("pick-bar");
+  if (!bar) {
+    bar = el("div", { id: "pick-bar", class: "pick-bar", role: "toolbar", "aria-label": "Selected actors" });
+    document.getElementById("agents").after(bar);
   }
-  redrawList();
+  const [g, list] = pickedActors();
+  bar.hidden = SNAPSHOT || list.length < 2;
+  if (bar.hidden) { bar.replaceChildren(); return; }
+  const allSaved = list.every((a) => savedAs(g.name, a));
+  bar.replaceChildren(
+    el("span", { class: "n", text: `${list.length} selected` }),
+    el("button", { type: "button", class: "pb", "data-pop": "picks:move", "aria-haspopup": "menu", "aria-expanded": String(rowPop.key === "picks:move"),
+      title: `Put them in a folder of ${titleOf(g)}, or at its top`, onclick: (ev) => openMoveMenu(g, list, ev.currentTarget) },
+      strokeIcon(ICONS.folder, 14), "Move to…"),
+    el("button", { type: "button", class: "pb", title: allSaved ? "Unsave them all" : "Save them all for later",
+      onclick: () => savePicks(g, list, !allSaved) }, saveIcon(allSaved), allSaved ? "Unsave" : "Save"),
+    el("button", { type: "button", class: "pb", title: "Close them all: their processes ended, even mid-turn",
+      onclick: () => closePicks(g, list) }, closeIcon(), "Close"),
+    el("button", { type: "button", class: "pb x", title: "Clear the selection (Esc)", "aria-label": "Clear the selection", onclick: () => clearPicks() }, "✕"));
 }
-// the actor saved, in `folder` (null: in none)
-function fileActor(gname, a, folder) {
-  const key = savedAs(gname, a) || a.channel;
-  return folderPost(gname, { do: "file", channel: key, name: folder || "" }, (saved, mine) => {
-    if (!saved[key]) saved[key] = new Date().toISOString();
-    for (const n of Object.keys(mine)) mine[n] = mine[n].filter((c) => c !== key);
-    if (folder) (mine[sameFolder(mine, folder) || folder] ||= []).push(key);
-  });
+// "Move to…": the gatherer's top, each of its folders as a tree, or a new folder (at the top, then named in its line)
+function openMoveMenu(g, list, button) {
+  const items = [{ mark: el("span", { class: "top-mark" }, strokeIcon(ICONS.folder, 16)), text: `Top of ${titleOf(g)}`, run: () => movePicks(g, list, null) }];
+  const walk = (id, depth) => {
+    for (const f of kidFolders(g.name, id)) {
+      items.push({ icon: ICONS.folder, text: f.name, depth, run: () => movePicks(g, list, f.id) });
+      walk(f.id, depth + 1);
+    }
+  };
+  walk(null, 1);
+  items.push({ icon: ICONS.folderNew, text: "New folder…", note: "made at the top, the selected actors put in it: name it next",
+    run: async () => {
+      const got = await makeFolder(g.name, freeName(g.name, null, "New folder"), null);
+      if (got && got.made !== undefined) { await movePicks(g, list, got.made); startFolderEdit(g.name, got.made); }
+    } });
+  openPop("picks:move", button, popMenu(`Move ${list.length} actors to`, items));
 }
-const makeFolder = (gname, name) => folderPost(gname, { do: "new", name }, (_, mine) => { if (!sameFolder(mine, name)) mine[name] = []; });
-function renameFolder(gname, name, to) {
-  if (foldersShown.has(folderKey(gname, name))) { showFolder(gname, name, false); showFolder(gname, to, true); }
-  return folderPost(gname, { do: "rename", name, to }, (_, mine) => {
-    const was = sameFolder(mine, name), other = sameFolder(mine, to);
-    if (!was || (other && other !== was)) return;
-    const list = mine[was];
-    delete mine[was];
-    mine[to] = list;
-  });
+function movePicks(g, list, id) {
+  clearPicks(false);
+  return fileActors(g.name, list, id);
 }
-const deleteFolder = (gname, name) => folderPost(gname, { do: "delete", name }, (_, mine) => { delete mine[sameFolder(mine, name)]; });
+async function savePicks(g, list, save) {
+  for (const a of list) if (!!savedAs(g.name, a) !== save) await setSaved(g.name, a, save);
+}
+async function closePicks(g, list) {
+  clearPicks();
+  for (const a of list) {
+    if (closable(a)) await closeSession(a);
+    else if (discardable(a)) await discardSession(g, a);
+  }
+}
+document.addEventListener("keydown", (ev) => {
+  if (ev.key !== "Escape" || !picks.g || rowPop.el || ev.defaultPrevented) return;
+  if (ev.target.closest && ev.target.closest("input, textarea, [contenteditable], .xterm")) return;
+  clearPicks();
+});
 // Choices this browser kept before the server did: handed to the server once, then dropped here.
 async function moveHidingToServer() {
   let v = null;
@@ -182,22 +343,19 @@ async function moveHidingToServer() {
   try { localStorage.removeItem(HIDDEN_KEY); } catch (e) { /* stays; the server's choices win */ }
   renderAgents();
 }
-// A gatherer's actors as the list has them: its gatherer agent (isCoordinator), apart from the groups, the actor the reader
-// arranges the others through; and each group that has any (GROUPS), in that order -- the closed newest first, so drawn
-// first; from then on, each group in the order its actors were last in (keepOrder) -- and its shells, oldest first, just
-// above the closed actors (SHELLS). The rail (renderRail) has them so too.
-function listGroups(g) {
-  const crew = g.agents.find(isCoordinator);
-  const groups = GROUPS.map((name) => [name, g.agents.filter((a) => a !== crew && groupOf(g, a) === name)])
-    .filter(([name, list]) => list.length || (name === "Saved" && hasSaved(g)));   // Saved: with its folders, if none in it
-  for (const [name, list] of groups) if (name === "Closed") list.sort((x, y) => (y.last || 0) - (x.last || 0));
-  keepOrder(g.name, groups);
-  const shells = (state.home.shells || []).filter((s) => s.gatherer === g.name);
-  if (shells.length) {
-    const at = groups.findIndex(([name]) => name === "Closed");
-    groups.splice(at < 0 ? groups.length : at, 0, [SHELLS, shells]);
-  }
-  return { crew, groups };
+// A gatherer's or a folder's actors as its box lists them (FOLDERS): [group, list] for each that has any -- its actors
+// open ("Open"), the newest first, whatever their status; then its shells, the oldest first (SHELLS), its saved actors
+// once closed ("Saved"), its other closed ones, the newest first ("Closed"). `id`: the folder; null, the gatherer's top.
+// The rail (railBox) has them so too.
+const OPEN = "Open";
+function boxGroups(g, id) {
+  const mine = g.agents.filter((a) => !isCoordinator(a) && folderOf(g.name, a) === id);
+  const latest = (x, y) => (y.last || 0) - (x.last || 0);
+  const groups = [[OPEN, mine.filter((a) => !["Saved", "Closed"].includes(groupOf(g, a))).sort((x, y) => (y.created || 0) - (x.created || 0))]];
+  const shells = (state.home.shells || []).filter((s) => s.gatherer === g.name && (folderById(g.name, s.folder) ? s.folder : null) === id);
+  groups.push([SHELLS, shells], ["Saved", mine.filter((a) => groupOf(g, a) === "Saved").sort(latest)],
+    ["Closed", mine.filter((a) => groupOf(g, a) === "Closed").sort(latest)]);
+  return groups.filter(([, list]) => list.length);
 }
 // how many of its actors wait on the user, how many stopped on an error, and how many run now; nothing while none does
 function gathererCounts(g) {
@@ -226,46 +384,32 @@ function renderAgents() {
   else if (!shown.length) aside.append(el("div", { class: "servers", text: "Every gatherer is hidden." }));
   for (const g of shown) {
     const open = !collapsed.has(g.name);
-    const { crew, groups } = listGroups(g);
-    const box = el("div", { class: "gatherer" },
-      el("div", { class: "gatherer-row", "data-key": g.name },
+    const crew = g.agents.find(isCoordinator);
+    const box = el("div", { class: "gatherer" + (picks.g === g.name && picks.cs.size > 1 ? " picking" : "") },
+      dropOn(el("div", { class: "gatherer-row", "data-key": g.name },
         el("button", { class: "name", type: "button", "aria-expanded": open ? "true" : "false", onclick: () => toggleGatherer(g.name),
           title: g.policy ? `${g.name} · policy ${g.policy}` : g.name },
-          el("span", { class: "caret", text: "▶" }), state.renaming && isAt([state.renaming.g, state.renaming.c], g.name, null) ? null
+          el("span", { class: "caret", text: "▶" }),
+          el("span", { class: "gmark", "aria-hidden": "true" }, strokeIcon(open ? ICONS.folderOpen : ICONS.folder, 15)),   // the top folder
+          state.renaming && isAt([state.renaming.g, state.renaming.c], g.name, null) ? null
             : el("span", { class: "gname", text: titleOf(g) })),
         state.renaming && isAt([state.renaming.g, state.renaming.c], g.name, null) ? nameBox() : null,
-        SNAPSHOT ? null : el("button", { class: "act rename", type: "button", title: `Rename ${titleOf(g)}`, "aria-label": `Rename ${titleOf(g)}`,
-          onclick: () => retitle(g) }, strokeIcon("M10.6 2.6l2.8 2.8-7.9 7.9-3.4.6.6-3.4zM9.1 4.1l2.8 2.8", 14)),
-        el("button", { class: "act hide", type: "button", title: `Hide ${g.name}`, "aria-label": `Hide ${g.name}`, onclick: () => setHidden(g, true) },
-          hideIcon()),
+        SNAPSHOT ? null : crewButton(g),                 // its gatherer agent, just after its name
         // how many of its actors wait on the user, how many stopped on an error, and how many run now; nothing while none does
-        el("span", { class: "fill", onclick: () => toggleGatherer(g.name) }, ...gathererCounts(g)),
-        ...(SNAPSHOT ? [] : startButtons(g))));
+        // -- and over them while it is hovered (or in focus), in a folder's line's order: "+ actor", "+ ⋯", a new folder,
+        // rename, and hide (a folder's: delete)
+        el("span", { class: "fill", onclick: () => toggleGatherer(g.name) }, ...gathererCounts(g),
+          el("span", { class: "g-acts", onclick: (ev) => ev.stopPropagation() }, ...(SNAPSHOT ? [] : startButtons(g)),
+            SNAPSHOT ? null : el("button", { class: "act newfolder", type: "button", title: `New folder in ${titleOf(g)}`,
+              "aria-label": `New folder in ${titleOf(g)}`, onclick: () => startFolderEdit(g.name, null, null) }, strokeIcon(ICONS.folderNew, 14)),
+            SNAPSHOT ? null : el("button", { class: "act rename", type: "button", title: `Rename ${titleOf(g)}`, "aria-label": `Rename ${titleOf(g)}`,
+              onclick: () => retitle(g) }, strokeIcon("M10.6 2.6l2.8 2.8-7.9 7.9-3.4.6.6-3.4zM9.1 4.1l2.8 2.8", 14)),
+            el("button", { class: "act hide", type: "button", title: `Hide ${g.name}`, "aria-label": `Hide ${g.name}`, onclick: () => setHidden(g, true) },
+              hideIcon())))), g, null, () => { if (collapsed.has(g.name)) toggleGatherer(g.name); }));
     if (state.adding && state.adding.gatherer === g.name) box.append(newForm());
     if (g.error) box.append(el("div", { class: "servers", text: `Database unreadable: ${g.error}` }));
     if (open && crew && !crewHidden.has(g.name)) box.append(agentRow(g, crew, CREW_GROUP));
-    for (const [name, list] of open ? groups : []) {
-      if (name === SHELLS) {
-        const shown = foldOpen[name].has(g.name);
-        box.append(el("button", { class: "agent-group", type: "button", "aria-expanded": shown ? "true" : "false", "data-key": `${g.name}/${name}`,
-          title: shown ? "Hide the terminals" : "Show the terminals", onclick: () => toggleFold(name, g.name) },
-          `${shown ? "▾" : "▸"} ${plural(list.length, "terminal")}`));
-        for (const s of shown ? list : []) box.append(shellRow(g, s));
-        continue;
-      }
-      if (name === "Saved") { box.append(...savedSection(g, list)); continue; }
-      if (name in FOLD_KEYS) {
-        const shown = foldOpen[name].has(g.name), what = name.toLowerCase();
-        const selected = list.filter((a) => openActors().some((sel) => isAt(sel, g.name, a.channel)));
-        box.append(el("button", { class: "agent-group", type: "button", "aria-expanded": shown ? "true" : "false", "data-key": `${g.name}/${name}`,
-          title: shown ? `Hide ${what} actors` : `Show ${what} actors`, onclick: () => toggleFold(name, g.name) },
-          `${shown ? "▾" : "▸"} ${list.length} ${what}`));
-        for (const a of shown ? list : selected) box.append(agentRow(g, a, name));
-        continue;
-      }
-      if (groups.length > 1) box.append(el("div", { class: "agent-group", "data-key": `${g.name}/${name}`, text: name }));
-      for (const a of list) box.append(agentRow(g, a, name));
-    }
+    if (open) box.append(...boxRows(g, null));
     aside.append(box);
   }
   if (hidden.length) {
@@ -285,10 +429,8 @@ function renderAgents() {
   else if (typing) { nameInput.focus({ preventScroll: true }); nameInput.setSelectionRange(...typing); }
   if (state.folderEdit && !(folderInput && folderInput.isConnected)) { state.folderEdit = null; folderInput = null; }   // folded away
   else if (folderTyping) { folderInput.focus({ preventScroll: true }); folderInput.setSelectionRange(...folderTyping); }
-  if (listDrag) {                                    // drawn again mid-drag: the row dragged, still shown as it
-    const row = aside.querySelector(`[data-key="${CSS.escape(`${listDrag.g}/${listDrag.c}`)}"]`);
-    if (row) row.classList.add("dragging");
-  }
+  markDragged();                                     // drawn again mid-drag: what is dragged, still shown as it
+  renderPickBar();
   const servers = state.home.hook_servers || [];     // in the dashboard's panel (the header's button)
   document.getElementById("servers").textContent = servers.length
     ? servers.map((s) => `:${s.port} → ${s.upstream}`).join("\n") : "None running.";
@@ -327,7 +469,7 @@ const crewLine = (env) => env.from === "update" ? `${env.name || `Actor ${crewId
 const isCoordinator = (a) => !!a && a.role === "coordinator";
 function agentRow(g, a, group) {
   const [cls, label] = statusOf(a);
-  const saved = !!savedAs(g.name, a), folder = saved ? folderOf(g.name, a) : null;
+  const pk = picked(g, a);
   const current = isAt(focusedActor(), g.name, a.channel);
   const open = !current && openActors().some((sel) => isAt(sel, g.name, a.channel));
   const size = a.real_tokens ?? a.sent_tokens;
@@ -338,17 +480,20 @@ function agentRow(g, a, group) {
     onclick: (ev) => { if (ev.metaKey || ev.ctrlKey || ev.shiftKey) return; ev.stopPropagation(); startRename(g, a); } };
   const env = envelope(a.last_user_message);         // a message from another actor: who from, and its words
   const asked = env ? crewLine(env) : a.last_user_message;
-  const row = el(naming ? "div" : "button", { class: "agent" + (naming ? " renaming" : "") + (isCoordinator(a) ? " coordinator" : ""),
+  const row = el(naming ? "div" : "button", { class: "agent" + (naming ? " renaming" : "") + (isCoordinator(a) ? " coordinator" : "") + (pk ? " picked" : ""),
     ...(naming ? {} : { type: "button" }),
     "aria-current": current ? "true" : "false", "data-key": `${g.name}/${a.channel}`, "data-group": group,
     ...(open ? { "data-open": "true" } : {}), ...(naming ? {} : { "data-card": key(g.name, a.channel) }),
     // hovered, the card (actorCard) says who it is; where there is no hovering, its title
     ...(HOVERS.matches ? {} : { title: `${harnessName(a.harness)} · ${label} · ${a.channel}${a.cwd ? "\n" + a.cwd : ""}`
       + (asked && named ? `\nAsked: ${firstLine(asked, 300)}` : "") + (a.recap && a.recap.text ? `\nRecap, ${ago(a.recap.at)}: ${a.recap.text}` : "")
-      + (SNAPSHOT ? "" : `\n${BESIDE_KEY}+click: open beside the one shown`) }),
-    ...(naming ? {} : { onclick: (ev) => pick(g.name, a.channel, ev), oncontextmenu: (ev) => pickBeside(g.name, a.channel, ev),
+      + (SNAPSHOT ? "" : `\n${BESIDE_KEY}+click: open beside the one shown${isCoordinator(a) ? "" : "\nShift+click: select it, to move several"}`) }),
+    ...(naming ? {} : { onclick: (ev) => {
+      if (ev.shiftKey && !SNAPSHOT && !isCoordinator(a)) { ev.preventDefault(); togglePick(g, a); return; }
+      pick(g.name, a.channel, ev);
+    }, oncontextmenu: (ev) => pickBeside(g.name, a.channel, ev),
       onkeydown: (ev) => { if (ev.key === "F2" && !SNAPSHOT) { ev.preventDefault(); startRename(g, a); } } }) },
-    actorLogo(a),
+    pickMark(g, a, actorLogo(a)),
     el("div", {},
       // just its name, else what it was last asked, on one line: what it was asked and its recap, in its title (and over
       // the whole page, the monitor's card)
@@ -356,11 +501,7 @@ function agentRow(g, a, group) {
         text: named || (asked ? firstLine(asked, 200) : isCoordinator(a) ? "Coordinates this gatherer's actors" : "No message yet") }),
       // the list is drawn again on every change: the glyph's turn set by the clock, not restarted each time
       el("div", { class: "meta" }, el("span", { class: `dot ${cls}`, "aria-label": label, style: `--spin-at: -${Date.now() % 1200}ms` }),
-        el("span", { ...(folder && group !== "Saved" ? { class: "when" } : {}),
-          text: [size !== null && size !== undefined ? `${compact(size)} tokens` : null, ago(a.last)].filter(Boolean).join(" · ") }),
-        // its folder, where it is not listed in it: open, it is listed by its status
-        folder && group !== "Saved" ? el("span", { class: "in-folder-chip", title: `Saved in the folder ${folder}: listed in it once closed` },
-          folderMark(), el("span", { text: folder })) : null,
+        el("span", { text: [size !== null && size !== undefined ? `${compact(size)} tokens` : null, ago(a.last)].filter(Boolean).join(" · ") }),
         saveButton(g, a), closeButton(g, a),
         !hasChat(a) ? null : a.chattable === false
           ? el("span", { class: "chat-icon held", title: "Open in another process: close it there to chat here" }, chatIcon(true))
@@ -369,6 +510,13 @@ function agentRow(g, a, group) {
       (a.background || []).length ? el("div", { class: "bgline", title: a.background.map((t) => `${TASK_KINDS[t.kind] || t.kind}: ${t.label || t.id}`).join("\n") },
         `${a.background.length} in background · ${a.background.map((t) => t.label || t.id).join(", ")}`) : null));
   return naming ? row : dragRow(row, g, a);
+}
+// A selected actor's check, on its avatar, once two or more are selected: a click on it leaves it out
+function pickMark(g, a, logo) {
+  if (!picked(g, a) || picks.cs.size < 2 || !(logo instanceof HTMLElement)) return logo;
+  logo.append(el("span", { class: "pick", role: "button", title: "Selected: click to leave it out", "aria-label": "Leave it out of the selection",
+    onclick: (ev) => { ev.stopPropagation(); togglePick(g, a); } }, strokeIcon("M4.25 8.25l2.5 2.5 5-5.25", 11)));
+  return logo;
 }
 // An actor's own buttons, in its row of the list and over its avatar in the rail (railActor): a press on one does only
 // what it says, not showing the actor. A span the keys reach (its row a button already), Enter or Space pressing it.
@@ -380,11 +528,11 @@ const rowButton = (cls, attrs, run, icon) => el("span", { class: cls, role: "but
 function saveButton(g, a) {
   if (isCoordinator(a)) return SNAPSHOT ? null : rowButton("save-btn", { title: "Hide the gatherer agent from the list: its face on the gatherer's row shows it again, and opens it",
     "aria-label": "Hide the gatherer agent" }, () => setCrewHidden(g.name, true), hideIcon());
-  const saved = !!savedAs(g.name, a), folder = saved ? folderOf(g.name, a) : null;
-  if (SNAPSHOT) return saved ? el("span", { class: "save-btn on", title: folder ? `Saved for later, in the folder ${folder}` : "Saved for later" }, saveIcon(true)) : null;
+  const saved = !!savedAs(g.name, a);
+  if (SNAPSHOT) return saved ? el("span", { class: "save-btn on", title: "Saved for later" }, saveIcon(true)) : null;
   return rowButton("save-btn" + (saved ? " on" : ""), { "aria-pressed": saved ? "true" : "false",
-    title: saved ? `Saved for later${folder ? `, in the folder ${folder}` : ""}: click to unsave`
-      : "Save for later: once closed, kept under Saved, at the top of its gatherer (drag it onto one of its folders to put it there)",
+    title: saved ? "Saved for later: click to unsave (it stays in its folder)"
+      : "Save for later: once closed, kept in its folder's saved line, apart from the closed ones",
     "aria-label": saved ? "Unsave" : "Save for later" }, () => setSaved(g.name, a, !saved), saveIcon(saved));
 }
 // Its ×: its process closed (closable), or, one that never started, it discarded (discardable); null: neither.
@@ -473,74 +621,99 @@ async function endRename(keep) {
   }
   redrawNamed();
 }
-// A gatherer's Saved section: its line ("N saved · K folders", folded till opened, as Closed is) -- shown while the
-// gatherer has an actor saved, open or closed, or a folder -- then, opened, its folders, each a line of its own with its
-// actors under it once opened, then the saved actors in none. Folded, the ones open in a pane stay in view. The Saved
-// line takes an actor dropped on it out of its folder; a folder's line, into it; each opens when one is held over it.
-const hasSaved = (g) => Object.keys(foldersOf(g.name)).length > 0 || g.agents.some((a) => !isCoordinator(a) && savedAs(g.name, a))
-  || !!(state.folderEdit && state.folderEdit.g === g.name);
-function savedSection(g, list) {
-  const shown = foldOpen.Saved.has(g.name), mine = foldersOf(g.name), names = folderNames(g.name);
-  const inPane = (a) => openActors().some((sel) => isAt(sel, g.name, a.channel));
-  // counted: those listed here (closed) of every one saved, those still open (listed by their status) too
-  const all = g.agents.filter((a) => !isCoordinator(a) && savedAs(g.name, a));
-  const label = `${shown ? "▾" : "▸"} ${all.length ? `${list.length} of ${all.length} saved` : "Saved"}`
-    + `${names.length ? ` · ${plural(names.length, "folder")}` : ""}`;
-  const out = [dropOn(el("button", { class: "agent-group saved-line", type: "button", "aria-expanded": shown ? "true" : "false",
-    "data-key": `${g.name}/Saved`, title: `${shown ? "Hide" : "Show"} saved actors: ${savedCount(list.length, all.length)}`,
-    onclick: () => toggleFold("Saved", g.name) },
-    el("span", { class: "label", text: label }),
-    SNAPSHOT ? null : folderAct("new", "New folder", strokeIcon(ICONS.folderNew, 13), () => startFolderEdit(g.name))),
-  g, null, () => !shown && toggleFold("Saved", g.name))];
-  const by = new Map(names.map((n) => [n, []])), loose = [], inAll = new Map(names.map((n) => [n, 0]));
-  for (const a of all) { const f = folderOf(g.name, a); if (inAll.has(f)) inAll.set(f, inAll.get(f) + 1); }
-  for (const a of list) { const f = folderOf(g.name, a); (f && by.has(f) ? by.get(f) : loose).push(a); }
-  if (!shown) return [...out, ...list.filter(inPane).map((a) => agentRow(g, a, "Saved"))];
-  const edit = state.folderEdit && state.folderEdit.g === g.name ? state.folderEdit : null;
-  if (edit && edit.name === null)
-    out.push(el("div", { class: "agent-group folder-line editing", "data-key": `${g.name}/folder\u0000new` }, folderMark(), folderBox()));
-  for (const n of names) {
-    const open = foldersShown.has(folderKey(g.name, n)), xs = by.get(n);
-    out.push(edit && edit.name === n
-      ? el("div", { class: "agent-group folder-line editing", "data-key": `${g.name}/folder\u0000${n}` }, folderMark(), folderBox())
-      : folderLine(g, n, xs.length, inAll.get(n), open));
-    for (const a of open ? xs : xs.filter(inPane)) { const row = agentRow(g, a, "Saved"); row.classList.add("in-folder"); out.push(row); }
+// A box's rows (FOLDERS): its folders -- each a line, and under it, opened, its own box, indented -- then its actors open,
+// then its folds. `id`: the folder; null, the gatherer's top.
+function boxRows(g, id) {
+  const out = [], edit = state.folderEdit;
+  if (edit && edit.g === g.name && edit.id === null && edit.parent === id)
+    out.push(el("div", { class: "folder-line editing", "data-key": `${g.name}/folder:new` }, folderMark(false), folderBox()));
+  for (const f of kidFolders(g.name, id)) {
+    out.push(folderLine(g, f));
+    if (isOpenFolder(g.name, f.id)) {
+      const rows = boxRows(g, f.id);
+      out.push(el("div", { class: "f-kids" }, ...(rows.length ? rows
+        : [el("div", { class: "f-empty", text: SNAPSHOT ? "Empty" : "Empty: drag actors here, or start one with its +" })])));
+    } else {
+      const peek = openIn(g, f.id);                  // folded: those open in a pane, in view under it
+      if (peek.length) out.push(el("div", { class: "f-kids peek" }, ...peek.map((a) => agentRow(g, a, groupOf(g, a)))));
+    }
   }
-  return [...out, ...loose.map((a) => agentRow(g, a, "Saved"))];
+  for (const [name, list] of boxGroups(g, id)) {
+    if (name in FOLD_KEYS) { out.push(...foldRows(g, id, name, list)); continue; }
+    for (const a of list) out.push(agentRow(g, a, name));
+  }
+  return out;
 }
-const folderMark = () => el("span", { class: "folder-mark", "aria-hidden": "true" }, strokeIcon(ICONS.folder, 13));
-// a small button on a line: a span, as a line is a button already
-const folderAct = (cls, title, icon, fn) => el("span", { class: `folder-act ${cls}`, role: "button", tabindex: "0", title, "aria-label": title,
-  onclick: (ev) => { ev.stopPropagation(); fn(); },
-  onkeydown: (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); ev.stopPropagation(); fn(); } } }, icon);
-// "N listed here (closed), of M saved in it: K still open, listed by their status"
-const savedCount = (n, m) => !m ? "none" : `${n} listed here (closed), of ${m} in all`
-  + (m > n ? `: ${m - n} still open, listed by ${m - n === 1 ? "its" : "their"} status` : "");
-// a folder's line: `n` of its actors listed in it (closed), of `m` in it in all
-function folderLine(g, name, n, m, open) {
-  return dropOn(el("button", { class: "agent-group folder-line", type: "button", "aria-expanded": open ? "true" : "false",
-    "data-key": `${g.name}/folder\u0000${name}`, title: `${name}: ${m ? savedCount(n, m) : "empty"}`
-      + `${SNAPSHOT ? "" : "\nDrag an actor here to put it in"}`, onclick: () => toggleFolder(g.name, name) },
-    el("span", { class: "caret", text: open ? "▾" : "▸" }), folderMark(), el("span", { class: "fname", text: name }),
-    el("span", { class: "n", text: m ? `${n} of ${m}` : "empty" }),
-    SNAPSHOT ? null : folderAct("rename", `Rename the folder ${name}`, strokeIcon(ICONS.pencil, 13), () => startFolderEdit(g.name, name)),
-    SNAPSHOT ? null : folderAct("delete", `Delete the folder ${name}: its actors stay saved, in no folder`, closeIcon(), () => deleteFolder(g.name, name))),
-  g, name, () => { if (!open) toggleFolder(g.name, name); });
+// A box's fold: its line ("▸ N closed"), and under it, once opened, its actors (or shells) -- folded, those open in a
+// pane (no shell) -- open or not kept in this browser, for each box (boxKey).
+function foldRows(g, id, name, list) {
+  const k = boxKey(g.name, id), shown = foldOpen[name].has(k), shells = name === SHELLS;
+  const line = el("button", { class: "agent-group fold-line", type: "button", "aria-expanded": shown ? "true" : "false",
+    "data-key": `${g.name}/${id === null ? "" : id}/${name}`,
+    title: shells ? (shown ? "Hide the terminals" : "Show the terminals")
+      : name === "Saved" ? `${shown ? "Hide" : "Show"} the saved actors that are closed: kept here, apart from the closed ones, till unsaved`
+      : `${shown ? "Hide" : "Show"} the closed actors`,
+    onclick: () => toggleFold(name, k) },
+    `${shown ? "▾" : "▸"} `, name === "Saved" ? el("span", { class: "fold-mark", "aria-hidden": "true" }, saveIcon(true)) : null,
+    shells ? plural(list.length, "terminal") : `${list.length} ${name.toLowerCase()}`);
+  if (shells) return [line, ...(shown ? list.map((s) => shellRow(g, s)) : [])];
+  return [line, ...(shown ? list : list.filter((a) => inPane(g, a))).map((a) => agentRow(g, a, name))];
 }
-// Naming a folder, new (`state.folderEdit.name` null) or not: a box in its line, kept through the list's redraws as the
-// actor's is (`folderInput`, `nameMoving`); Enter or leaving it keeps what is typed, Esc or nothing typed leaves it.
+const folderMark = (open) => el("span", { class: "folder-mark", "aria-hidden": "true" }, strokeIcon(open ? ICONS.folderOpen : ICONS.folder, 14));
+// a small button on a folder's line, beside its start buttons
+const folderAct = (cls, title, icon, fn) => el("button", { class: `act folder-act ${cls}`, type: "button", title, "aria-label": title,
+  onclick: (ev) => { ev.stopPropagation(); fn(); } }, icon);
+// how many of a folder's actors wait on the reader, stopped on an error, run: as a gatherer's row counts its own
+function tallyChips(t, of) {
+  const count = (k, cls, what) => k ? el("span", { class: "count" + cls, title: `${k} of ${of} ${what}` }, el("i", { "aria-hidden": "true" }), String(k)) : null;
+  return [count(t.asking, " asking", "waiting for you"), count(t.error, " error", "stopped on an error"), count(t.running, "", "running")].filter(Boolean);
+}
+const folderSays = (f, t) => `${f.name}: ${plural(t.open, "actor")} open${t.saved ? `, ${t.saved} saved` : ""}${t.closed ? `, ${t.closed} closed` : ""}`
+  + " (its folders' too)";
+// A folder's line: a button opening or folding it -- its caret, its name, how many actors it holds open (its folders'
+// too) -- and at its right how many of those wait on the reader, stopped on an error, run (a click there too opens or
+// folds it). Hovered or in focus, its buttons over those counts: "+ actor" and "+ ⋯", started in it (startButtons), a
+// folder made in it, it renamed (F2), it deleted. Dragged: put in another folder, or onto its gatherer's row, at its
+// top; actors dropped on it are put in it, and it opens when one is held over it.
+function folderLine(g, f) {
+  const open = isOpenFolder(g.name, f.id), t = folderTally(g, f.id), edit = state.folderEdit;
+  if (edit && edit.g === g.name && edit.id === f.id)
+    return el("div", { class: "folder-line editing", "data-key": `${g.name}/folder:${f.id}` }, folderMark(open), folderBox());
+  const toggle = () => toggleFolder(g.name, f.id);
+  const line = el("div", { class: "folder-line", "data-key": `${g.name}/folder:${f.id}`, "data-card": key(g.name, `folder:${f.id}`) },
+    el("button", { class: "fbtn", type: "button", "aria-expanded": open ? "true" : "false",
+      ...(HOVERS.matches ? {} : { title: folderSays(f, t) }), onclick: toggle,
+      onkeydown: (ev) => { if (ev.key === "F2" && !SNAPSHOT) { ev.preventDefault(); startFolderEdit(g.name, f.id); } } },
+      el("span", { class: "caret", "aria-hidden": "true", text: "▶" }), folderMark(open), el("span", { class: "fname", text: f.name }),
+      el("span", { class: "n", title: plural(t.open, "actor"), text: String(t.open) })),
+    el("span", { class: "fill", onclick: toggle }, ...tallyChips(t, plural(t.open, "actor")),
+      SNAPSHOT ? null : el("span", { class: "f-acts", onclick: (ev) => ev.stopPropagation() }, ...startButtons(g, f),
+        folderAct("new", `New folder in ${f.name}`, strokeIcon(ICONS.folderNew, 14), () => startFolderEdit(g.name, null, f.id)),
+        folderAct("rename", `Rename ${f.name} (F2)`, strokeIcon(ICONS.pencil, 13), () => startFolderEdit(g.name, f.id)),
+        folderAct("delete", `Delete ${f.name}: what is in it moves up a level`, closeIcon(), () => deleteFolder(g.name, f.id)))));
+  return dropOn(dragFolder(line, g, f), g, f.id, () => { if (!isOpenFolder(g.name, f.id)) toggle(); });
+}
+// Naming a folder, new (`state.folderEdit.id` null, made in its `parent`) or not: a box in its line, kept through the
+// list's redraws as the actor's is (`folderInput`, `nameMoving`); Enter or leaving it keeps what is typed, Esc or nothing
+// typed leaves it. A name another folder beside it has (whatever its case), or one with "/", is refused, and said why.
 let folderInput = null;
-function startFolderEdit(gname, name = null) {
-  state.folderEdit = { g: gname, name, value: name || "" };
+function startFolderEdit(gname, id = null, parent = null) {
+  const f = id === null ? null : folderById(gname, id);
+  state.folderEdit = { g: gname, id, parent: f ? parentOf(gname, f) : parent, value: f ? f.name : "" };
   folderInput = null;
-  if (!foldOpen.Saved.has(gname)) toggleFold("Saved", gname); else renderAgents();
+  if (collapsed.has(gname)) {
+    collapsed.delete(gname);
+    try { localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...collapsed])); } catch (e) { /* kept for this page only */ }
+  }
+  showFolder(gname, state.folderEdit.parent, true);
+  renderAgents();
   if (folderInput) { folderInput.focus(); folderInput.select(); }
 }
 function folderBox() {
   if (folderInput) return folderInput;
   const f = state.folderEdit;
   folderInput = el("input", { class: "name-box folder-box", type: "text", maxlength: String(FOLDER_CHARS), spellcheck: "false",
-    autocomplete: "off", placeholder: "Folder name", "aria-label": f.name === null ? "The new folder's name" : `Rename the folder ${f.name}` });
+    autocomplete: "off", placeholder: "Folder name", "aria-label": f.id === null ? "The new folder's name" : "The folder's name" });
   folderInput.value = f.value;
   folderInput.addEventListener("input", () => { f.value = folderInput.value; });
   folderInput.addEventListener("keydown", (ev) => {
@@ -555,35 +728,64 @@ function endFolderEdit(keep) {
   const f = state.folderEdit;
   if (!f) return;
   state.folderEdit = null; folderInput = null;
-  const text = f.value.replace(/\s+/g, " ").trim().slice(0, FOLDER_CHARS);
-  if (!keep || !text || text === f.name) { renderAgents(); return; }
-  const other = sameFolder(foldersOf(f.g), text);
-  if (other && (f.name === null || other.toLowerCase() !== f.name.toLowerCase())) {
-    setLive(`There is a folder "${other}" already`);
-    renderAgents();
-    return;
-  }
-  if (f.name === null) makeFolder(f.g, text); else renameFolder(f.g, f.name, text);
+  if (!keep || !nameFolder(f.g, f.id, f.parent, f.value)) renderAgents();
 }
-// Dragging an actor's row onto a folder's line, or the Saved line (dropOn): `listDrag`, the actor dragged, of its gatherer
-// only. While one is, the list is not drawn again (`later`, drawn once it is over) -- but to open the fold held over for
-// DROP_OPEN_MS (`force`) -- so the lines stay under the pointer. Over when its row says (dragend), or, its row drawn again
-// meanwhile, once the page has heard of the drag for DRAG_LOST_MS no more.
+// The folder `id` named `text` (`id` null: one made in `parent`), as typed in the list's box or a card's: none typed,
+// or the name it has, is nothing done; a name another folder beside it has (whatever its case), or one with "/", is
+// refused, and said why. -> whether something was done.
+function nameFolder(gname, id, parent, text) {
+  text = String(text || "").replace(/\s+/g, " ").trim().slice(0, FOLDER_CHARS);
+  const was = id === null ? null : folderById(gname, id);
+  if (!text || (was && text === was.name)) return false;
+  const other = kidFolders(gname, parent).find((x) => x.id !== id && x.name.toLowerCase() === text.toLowerCase());
+  if (text.includes("/") || other) {
+    setLive(other ? `There is a folder "${other.name}" there already` : 'A folder\'s name can\'t hold "/"');
+    return false;
+  }
+  if (was) renameFolder(gname, id, text); else makeFolder(gname, text, parent);
+  return true;
+}
+// DRAGGING an actor's row -- every selected one's, if it is selected -- or a folder's line, onto a folder's line (into
+// it) or its gatherer's row (to its top): `listDrag`, what is dragged, of its gatherer only. While one is, the list is
+// not drawn again (`later`, drawn once it is over) -- but to open the folder held over for DROP_OPEN_MS (`force`) -- so
+// the lines stay under the pointer. Over when its row says (dragend), or, its row drawn again meanwhile, once the page
+// has heard of the drag for DRAG_LOST_MS no more.
 let listDrag = null;
 const DROP_OPEN_MS = 700, DRAG_LOST_MS = 3000;
+function startDrag(ev, g, what) {
+  if (listDrag) endDrag();
+  listDrag = { g: g.name, cs: what.cs || null, folder: what.folder ?? null, later: false, force: false, seen: Date.now(), spring: null,
+    watch: setInterval(() => { if (listDrag && Date.now() - listDrag.seen > DRAG_LOST_MS) endDrag(); }, 500) };
+  ev.dataTransfer.effectAllowed = "move";
+  ev.dataTransfer.setData("text/plain", what.cs ? what.cs.join(",") : `folder:${what.folder}`);
+  if (what.cs && what.cs.length > 1) {               // several: said on what is dragged
+    const ghost = el("div", { class: "drag-ghost", text: `${what.cs.length} actors` });
+    document.body.append(ghost);
+    ev.dataTransfer.setDragImage(ghost, 14, 14);
+    setTimeout(() => ghost.remove(), 0);
+  }
+  markDragged();
+  cardHide();
+}
+// what is dragged, shown so -- again after the list is drawn mid-drag
+function markDragged() {
+  if (!listDrag) return;
+  const keys = listDrag.cs ? listDrag.cs.map((c) => `${listDrag.g}/${c}`) : [`${listDrag.g}/folder:${listDrag.folder}`];
+  for (const k of keys) for (const n of document.querySelectorAll(`#agents [data-key="${CSS.escape(k)}"]`)) n.classList.add("dragging");
+}
 function dragRow(row, g, a) {
   if (SNAPSHOT || isCoordinator(a)) return row;
   row.draggable = true;
-  row.addEventListener("dragstart", (ev) => {
-    if (listDrag) endDrag();
-    listDrag = { g: g.name, c: a.channel, later: false, force: false, seen: Date.now(), spring: null,
-      watch: setInterval(() => { if (listDrag && Date.now() - listDrag.seen > DRAG_LOST_MS) endDrag(); }, 500) };
-    ev.dataTransfer.effectAllowed = "move";
-    ev.dataTransfer.setData("text/plain", a.channel);
-    row.classList.add("dragging");
-  });
+  row.addEventListener("dragstart", (ev) => startDrag(ev, g, { cs: picked(g, a) && picks.cs.size > 1 ? [...picks.cs] : [a.channel] }));
   row.addEventListener("dragend", endDrag);
   return row;
+}
+function dragFolder(line, g, f) {
+  if (SNAPSHOT) return line;
+  line.draggable = true;
+  line.addEventListener("dragstart", (ev) => startDrag(ev, g, { folder: f.id }));
+  line.addEventListener("dragend", endDrag);
+  return line;
 }
 function endDrag() {
   const d = listDrag;
@@ -595,35 +797,47 @@ function endDrag() {
 }
 document.addEventListener("dragover", () => { if (listDrag) listDrag.seen = Date.now(); }, true);
 document.addEventListener("drop", () => { if (listDrag) setTimeout(endDrag, 0); }, true);   // anywhere: after the line's own
-// `folder`: the folder it puts an actor in (null: none, still saved); `open`, what opens when one is held over it
-function dropOn(n, g, folder, open) {
+// Whether what is dragged may go into folder `id` (null: the gatherer's top): of that gatherer; a folder, not into
+// itself nor one of its own, nor where it is; actors, one of them at least not there yet.
+function canDrop(g, id) {
+  const d = listDrag;
+  if (!d || d.g !== g.name) return false;
+  if (d.folder !== null) {
+    const f = folderById(g.name, d.folder);
+    return !!f && parentOf(g.name, f) !== id && !(id !== null && within(g.name, id, d.folder));
+  }
+  return d.cs.some((c) => { const a = g.agents.find((x) => x.channel === c); return !!a && folderOf(g.name, a) !== id; });
+}
+// `id`: the folder what is dropped on `n` goes into (null: the gatherer's top); `open`, what opens when one is held over it
+function dropOn(n, g, id, open) {
   if (SNAPSHOT) return n;
-  const mine = () => !!listDrag && listDrag.g === g.name;
   n.addEventListener("dragenter", (ev) => {
-    if (!mine()) return;
+    if (!canDrop(g, id)) return;
     ev.preventDefault();
     n.classList.add("drop-on");
     clearTimeout(listDrag.spring);
     listDrag.spring = setTimeout(() => {
-      if (!mine()) return;
+      if (!listDrag || listDrag.g !== g.name) return;
       listDrag.force = true;
       try { open(); } finally { if (listDrag) listDrag.force = false; }
     }, DROP_OPEN_MS);
   });
-  n.addEventListener("dragover", (ev) => { if (mine()) { ev.preventDefault(); ev.dataTransfer.dropEffect = "move"; } });
+  n.addEventListener("dragover", (ev) => { if (canDrop(g, id)) { ev.preventDefault(); ev.dataTransfer.dropEffect = "move"; } });
   n.addEventListener("dragleave", (ev) => {
     if (n.contains(ev.relatedTarget)) return;
     n.classList.remove("drop-on");
     if (listDrag) clearTimeout(listDrag.spring);
   });
   n.addEventListener("drop", (ev) => {
-    if (!mine()) return;
+    if (!canDrop(g, id)) return;
     ev.preventDefault();
-    const c = listDrag.c, a = (state.home.gatherers.find((x) => x.name === g.name) || { agents: [] }).agents.find((x) => x.channel === c);
-    listDrag.later = false;                          // drawn by the filing, next
+    const d = listDrag, now = state.home.gatherers.find((x) => x.name === g.name) || g;
+    d.later = false;                                 // drawn by the move, next
     endDrag();
-    if (a && (folder ? folderOf(g.name, a) !== folder : folderOf(g.name, a) || !savedAs(g.name, a))) fileActor(g.name, a, folder);
-    else renderAgents();
+    if (d.folder !== null) { moveFolder(g.name, d.folder, id); return; }
+    const actors = d.cs.map((c) => now.agents.find((x) => x.channel === c)).filter((a) => a && folderOf(g.name, a) !== id);
+    if (d.cs.length > 1) clearPicks(false);
+    fileActors(g.name, actors, id);
   });
   return n;
 }

@@ -30,7 +30,7 @@ from typing import Optional
 
 import harness_kit
 
-from . import (actions, apps, avatars, branches, coordination, data, editor, home, live, migrating, page_build, preview,
+from . import (actions, apps, avatars, branches, coordination, data, editor, folders, home, live, migrating, page_build, preview,
                saved, sessions)
 
 STATIC, INDEX = page_build.STATIC, page_build.INDEX   # frontend/'s build (vite.config.ts), built by page_build.py
@@ -183,6 +183,7 @@ class Server:
         self.migrating = migrating.start(self.hub.ring) if live_updates else None   # an older gatherer's tables, once
         self.listener = live.Listener(self.hub) if live_updates else None
         self.fallback = live.Fallback(self.hub) if live_updates else None
+        folders.ensure()                                              # its tables, saved.py's folders copied in once
         self.rest = saved.Rest(self.sessions, self.hub.shown)
         if live_updates:                     # where actors' `ag actors` reach it: its own, told; any other, by the file
             host = self.server_address[0]

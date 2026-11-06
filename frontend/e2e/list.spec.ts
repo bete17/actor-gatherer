@@ -66,7 +66,7 @@ test("the rail groups the actors by gatherer, names each, says who it is hovered
   await expect(actors).toHaveCount(2);
 });
 
-test("the rail starts a new actor in a gatherer: its harness picked beside the rail, its directory asked if it fails", async ({
+test("the rail starts a new actor from a gatherer's card: its harness picked beside the rail, its directory asked if it fails", async ({
   page,
 }) => {
   // the home as the server has it, but with two harnesses a session can be started on here, and its actors working in a
@@ -88,8 +88,12 @@ test("the rail starts a new actor in a gatherer: its harness picked beside the r
   await open(page);
   await page.locator("#agents .lb-fold").click();
   const rail = page.locator("#rail");
-  const plus = rail.locator(".r-new");
-  await expect(plus).toHaveCount(1); // one for the one gatherer, under its name
+  await expect(rail.locator("button.new-actor, button.new-more")).toHaveCount(0); // none in the rail itself: in its cards
+  await rail.locator(".r-gname").hover();
+  const card = page.locator("#actor-card.live");
+  await expect(card).toBeVisible();
+  const plus = card.locator("button.new-actor");
+  await expect(card.locator("button.new-more")).toHaveCount(1);
   await expect(plus).toHaveAttribute("aria-label", `New actor in ${GATHERER}`);
   await plus.click();
   const menu = page.locator(".row-menu[role=menu]");
@@ -166,9 +170,12 @@ test("the rail's avatars have the list's bookmark and ×, over their corners: pr
   await claude.locator(".save-btn").click();
   await expect.poll(() => saved.length).toBe(1);
   expect(saved[0]).toMatchObject({ gatherer: GATHERER, saved: true });
-  await expect(claude.locator(".save-btn.on")).toHaveCount(1); // filled, and shown with the pointer away too
+  await expect(claude.locator(".save-btn.on")).toHaveCount(1); // filled -- and, the pointer away, hidden as any's
   await page.mouse.move(700, 450);
-  await expect(claude.locator(".save-btn.on")).toHaveCSS("opacity", "1");
+  await expect(claude.locator(".save-btn.on")).toHaveCSS("opacity", "0");
+  await claude.hover(); // its card says it is saved
+  await expect(page.locator("#actor-card .c-saved")).toHaveText("Saved");
+  await page.mouse.move(700, 450);
   await expect(claude).toHaveAttribute("aria-current", "false"); // pressing it did not show the actor
   await claude.hover();
   await claude.locator(".close-btn").click();
@@ -187,7 +194,7 @@ test("shows every actor over the whole page", async ({ page }) => {
   await expect(page).toHaveScreenshot("list-over-page.png", { mask: masks(page) });
 });
 
-test("lists a saved actor by its status while open, and under Saved once closed", async ({ page }) => {
+test("lists a saved actor with the open ones while open, and in its saved line once closed", async ({ page }) => {
   // the home as the server has it, but both actors saved for later and the Codex one closed (its stream held back, so
   // the server's own home, with neither, does not replace it)
   let codexChannel = "";
@@ -208,176 +215,47 @@ test("lists a saved actor by its status while open, and under Saved once closed"
   const claude = page.locator("#agents button.agent", { hasText: CLAUDE });
   await expect(claude).toBeVisible();
   await expect(claude.locator(".save-btn.on")).toHaveCount(1); // still saved: its bookmark filled
-  // the open one among the idle (or finished), not under Saved; the closed one folded away under Saved: 1 there, of 2
-  const saved = page.locator("#agents .saved-line");
-  await expect(saved).toHaveText("▸ 1 of 2 saved");
+  // the open one listed with the open ones; the closed one in the saved line, under them, apart from the closed
+  const saved = page.locator("#agents .fold-line", { hasText: "saved" });
+  await expect(saved).toHaveText("▸ 1 saved");
+  await expect(page.locator("#agents .fold-line", { hasText: "closed" })).toHaveCount(0);
   const order = await page
     .locator("#agents .gatherer")
     .first()
     .evaluate((box) =>
-      [...box.children].map((n) =>
-        n.matches(".agent-group") ? `[${n.textContent}]` : n.getAttribute("data-key") || "",
+      [...box.querySelectorAll("button.agent, .fold-line")].map((n) =>
+        n.matches(".fold-line") ? `[${n.textContent}]` : n.getAttribute("data-key") || "",
       ),
     );
-  const at = (key: string) => order.findIndex((x) => x === key || x.endsWith("/" + key));
-  expect(at("[Idle]") >= 0 || at("[Finished]") >= 0, order.join(" | ")).toBe(true);
   const claudeKey = await claude.getAttribute("data-key");
-  expect(order.indexOf(claudeKey || "?"), order.join(" | ")).toBeGreaterThan(Math.max(at("[Idle]"), at("[Finished]")));
+  expect(order.indexOf(claudeKey || "?"), order.join(" | ")).toBeLessThan(order.indexOf("[▸ 1 saved]"));
   expect(codexChannel).not.toBe("");
   await saved.click();
-  await expect(saved).toHaveText("▾ 1 of 2 saved");
-  const codexRow = page.locator(`#agents button.agent[data-key="${GATHERER}/${codexChannel}"]`);
-  await expect(codexRow).toBeVisible();
+  await expect(saved).toHaveText("▾ 1 saved");
+  await expect(page.locator(`#agents button.agent[data-key="${GATHERER}/${codexChannel}"]`)).toBeVisible();
 });
 
-test("files saved actors in folders: made from the Saved line, filled by dragging, renamed and deleted", async ({
-  page,
-}) => {
-  await open(page);
-  type Home = {
-    gatherers: { name: string; agents: { harness?: string; channel: string }[] }[];
-    saved: Record<string, Record<string, string>>;
-    saved_folders: Record<string, Record<string, string[]>>;
-  };
-  const home = async () => (await (await page.request.get("/api/home")).json()) as Home;
-  const g = (await home()).gatherers.find((x) => x.name === GATHERER)!;
-  const channelOf = (harness: string) => g.agents.find((a) => a.harness === harness)!.channel;
-  const [claudeCh, codexCh] = [channelOf("claude"), channelOf("codex")];
-  const row = (text: string) => page.locator("#agents button.agent", { hasText: text });
-  const savedLine = page.locator("#agents .saved-line");
-  try {
-    await expect(savedLine).toHaveCount(0); // nothing saved, no folder: no Saved line
-    await row(CODEX).hover();
-    await row(CODEX).locator(".save-btn").click(); // the bookmark: saved, in no folder
-    await expect(savedLine).toHaveText("▸ 0 of 1 saved"); // idle: listed among the idle still, counted in all
-    await expect(row(CODEX).locator(".save-btn.on")).toHaveCount(1);
-    await savedLine.hover();
-    await savedLine.locator(".folder-act.new").click();
-    await expect(savedLine).toContainText("▾ 0 of 1 saved");
-    const box = page.locator("#agents .folder-box");
-    await box.fill("  Paper   revisions ");
-    await box.press("Enter");
-    const folder = page.locator("#agents .folder-line", { hasText: "Paper revisions" });
-    await expect(folder.locator(".n")).toHaveText("empty");
-    await expect(savedLine).toContainText("▾ 0 of 1 saved · 1 folder");
-    await expect.poll(async () => (await home()).saved_folders).toEqual({ [GATHERER]: { "Paper revisions": [] } });
-
-    await row(CLAUDE).dragTo(folder); // saved, and in it
-    await expect(row(CLAUDE).locator(".in-folder-chip")).toHaveText("Paper revisions"); // open: listed by its status
-    await expect(folder.locator(".n")).toHaveText("0 of 1"); // none of it listed there, of 1 in it
-    await expect(savedLine).toContainText("▾ 0 of 2 saved");
-    await expect
-      .poll(async () => (await home()).saved_folders)
-      .toEqual({ [GATHERER]: { "Paper revisions": [claudeCh] } });
-    expect(Object.keys((await home()).saved[GATHERER]).sort()).toEqual([claudeCh, codexCh].sort());
-
-    await folder.hover();
-    await folder.locator(".folder-act.rename").click();
-    await box.fill("Drafts");
-    await box.press("Enter");
-    await expect(page.locator("#agents .folder-line", { hasText: "Drafts" })).toBeVisible();
-    await expect(row(CLAUDE).locator(".in-folder-chip")).toHaveText("Drafts");
-    await expect.poll(async () => (await home()).saved_folders).toEqual({ [GATHERER]: { Drafts: [claudeCh] } });
-
-    await row(CLAUDE).dragTo(savedLine); // out of its folder, still saved
-    await expect(row(CLAUDE).locator(".in-folder-chip")).toHaveCount(0);
-    await expect(row(CLAUDE).locator(".save-btn.on")).toHaveCount(1);
-    await expect.poll(async () => (await home()).saved_folders).toEqual({ [GATHERER]: { Drafts: [] } });
-
-    const drafts = page.locator("#agents .folder-line", { hasText: "Drafts" });
-    await drafts.hover();
-    await drafts.locator(".folder-act.delete").click();
-    await expect(page.locator("#agents .folder-line")).toHaveCount(0);
-    await expect.poll(async () => (await home()).saved_folders).toEqual({}); // none left
-
-    // held over the Saved line while folded, it opens, for the folder in it to be dropped on
-    await page.request.post("/api/saved/folders", { data: { gatherer: GATHERER, do: "new", name: "Later" } });
-    await savedLine.click(); // folded
-    await expect(savedLine).toContainText("▸ 0 of 2 saved · 1 folder");
-    await row(CODEX).hover();
-    await page.mouse.down();
-    const at = await savedLine.boundingBox();
-    await page.mouse.move(at!.x + 30, at!.y + at!.height / 2, { steps: 4 });
-    await expect(savedLine).toContainText("▾ 0 of 2 saved", { timeout: 3000 });
-    const later = page.locator("#agents .folder-line", { hasText: "Later" });
-    const to = await later.boundingBox();
-    await page.mouse.move(to!.x + 40, to!.y + to!.height / 2, { steps: 4 });
-    await page.mouse.up();
-    await expect(row(CODEX).locator(".in-folder-chip")).toHaveText("Later");
-    await expect.poll(async () => (await home()).saved_folders).toEqual({ [GATHERER]: { Later: [codexCh] } });
-  } finally {
-    for (const c of [claudeCh, codexCh])
-      await page.request.post("/api/saved", { data: { gatherer: GATHERER, channel: c, saved: false } });
-    const left = ((await home()).saved_folders || {})[GATHERER] || {};
-    for (const name of Object.keys(left))
-      await page.request.post("/api/saved/folders", { data: { gatherer: GATHERER, do: "delete", name } });
-  }
-});
-
-test("an action's answer, come late, does not undo a change the stream brought meanwhile", async ({ page }) => {
-  // The page deletes a folder; its answer ({folders: {}}) comes after the stream brought a folder made since (CI's
-  // Linux machine holds an answer ~40 ms): the folder stays. The stream sends a home only when it differs from the
-  // last it sent, so an answer let undo it would have it gone till the next change.
-  await open(page);
-  const folders = async () =>
-    ((await (await page.request.get("/api/home")).json()).saved_folders || {})[GATHERER] || {};
-  const make = (name: string) =>
-    page.request.post("/api/saved/folders", { data: { gatherer: GATHERER, do: "new", name } });
-  const savedLine = page.locator("#agents .saved-line");
-  const folder = (name: string) => page.locator("#agents .folder-line", { hasText: name });
-  let release = () => {};
-  const held = new Promise<void>((r) => (release = r));
-  try {
-    await make("Old");
-    await expect(savedLine).toContainText("1 folder");
-    await savedLine.click(); // opened: its folders listed
-    await page.route("**/api/saved/folders", async (route) => {
-      const answer = await route.fetch(); // done by the server now; its answer held back
-      await held;
-      await route.fulfill({ response: answer });
-    });
-    await folder("Old").hover();
-    await folder("Old").locator(".folder-act.delete").click();
-    await expect.poll(folders).toEqual({});
-    await make("Later");
-    await expect(folder("Later")).toBeVisible(); // the stream's home
-    const answered = page.waitForResponse("**/api/saved/folders");
-    release();
-    await answered;
-    await page.waitForTimeout(300); // the answer taken
-    await expect(folder("Later")).toBeVisible();
-    await expect(savedLine).toContainText("1 folder");
-  } finally {
-    release();
-    await page.unrouteAll({ behavior: "wait" });
-    for (const name of Object.keys(await folders()))
-      await page.request.post("/api/saved/folders", { data: { gatherer: GATHERER, do: "delete", name } });
-  }
-});
-
-test("lists a closed saved actor in its folder, folded till opened", async ({ page }) => {
+test("keeps each actor in its place whatever its status: the newest first, under no heading", async ({ page }) => {
+  // the home as the server has it, but its older actor at work (its stream held back, so the server's own home does
+  // not replace it): it stays under the newer one, as it would at rest
+  let order: string[] = [];
   await page.route("**/api/home", async (route) => {
     const home = await (await route.fetch()).json();
     const g = home.gatherers.find((x: { name: string }) => x.name === GATHERER);
-    const codex = g.agents.find((a: { harness?: string }) => a.harness === "codex");
-    codex.status = "closed";
-    home.saved = { [GATHERER]: { [codex.channel]: "2026-10-01T00:00:00Z" } };
-    home.saved_folders = { [GATHERER]: { Paper: [codex.channel], Empty: [] } };
+    const agents = [...g.agents].sort(
+      (x: { created?: number }, y: { created?: number }) => (y.created || 0) - (x.created || 0),
+    );
+    agents[agents.length - 1].status = "running";
+    order = agents.map((a: { channel: string }) => `${GATHERER}/${a.channel}`);
     await route.fulfill({ json: home });
   });
   await streamsAsRequests(page);
   await page.route("**/api/stream*", (route) => route.abort());
   await open(page);
-  const savedLine = page.locator("#agents .saved-line");
-  await expect(savedLine).toHaveText("▸ 1 of 1 saved · 2 folders");
-  await savedLine.click();
-  const lines = page.locator("#agents .folder-line");
-  await expect(lines).toHaveText([/Empty\s*empty/, /Paper\s*1 of 1/]); // by name
-  const codexRow = page.locator("#agents button.agent.in-folder", { hasText: CODEX });
-  const isOpen = await codexRow.count(); // the first actor is shown, so in view under its folded folder
-  await lines.filter({ hasText: "Paper" }).click();
-  await expect(codexRow).toBeVisible();
-  await expect(codexRow.locator(".in-folder-chip")).toHaveCount(0); // listed in it: not named again
-  await lines.filter({ hasText: "Paper" }).click();
-  await expect(codexRow).toHaveCount(isOpen);
+  await expect(page.locator("#agents button.agent .dot.running")).toHaveCount(1);
+  const shown = await page
+    .locator("#agents button.agent")
+    .evaluateAll((ns) => ns.map((n) => n.getAttribute("data-key")));
+  expect(shown).toEqual(order);
+  await expect(page.locator("#agents .agent-group")).toHaveCount(0); // no "Running", no "Idle"
 });

@@ -5,19 +5,11 @@ this home shows the same ones. Table `saved`, one row per actor saved:
     gatherer, channel   the actor
     at                  when it was saved (ISO, UTC)
 
-A saved actor is never folded away with the closed ones, and its gatherer is not hidden for having
-had nothing for a week; it stays saved until the reader unsaves it.
-
-FOLDERS organise a gatherer's saved actors: table `saved_folders`, one row per folder, kept until it is
-deleted, empty or not (the reader makes one before putting anything in it, as may the gatherer agent:
-`ag actors folder new`):
-
-    gatherer, name      the folder (its name unique in its gatherer, whatever its case)
-    at                  when it was made (ISO, UTC)
-
-and `saved.folder`, the folder a saved actor is in (NULL: none). Saved (the bookmark), an actor is in
-none; filed (`file`: dragged onto a folder in the list, or `ag actors save --folder`), it is saved too.
-Unsaved, it is out of its folder; a folder deleted, its actors are in none, still saved.
+A saved actor, once closed, is listed in its folder's "saved" line (folders.py), not folded away with the
+closed ones; and its gatherer is not hidden for having had nothing for a week. It stays saved until the
+reader unsaves it. Where it is in the list is folders.py's: saving or unsaving it never moves it. (The
+folders of saved actors this module kept before -- table `saved_folders`, column `saved.folder` -- are
+folders.py's now, copied there once; they are no longer read here.)
 
 A saved actor's process is PUT AWAY (`Rest`) once it has been left unused for REST_SECONDS: the
 dashboard's own process for it -- its terminal, or its message box's agent -- ended as a restart ends
@@ -44,46 +36,16 @@ SCHEMA = """CREATE TABLE IF NOT EXISTS saved (
     gatherer TEXT NOT NULL,
     channel  TEXT NOT NULL,
     at       TEXT NOT NULL,
-    folder   TEXT,
     PRIMARY KEY (gatherer, channel)
 )"""
-FOLDERS = """CREATE TABLE IF NOT EXISTS saved_folders (
-    gatherer TEXT NOT NULL,
-    name     TEXT NOT NULL COLLATE NOCASE,
-    at       TEXT NOT NULL,
-    PRIMARY KEY (gatherer, name)
-)"""
-FOLDER_CHARS = 60               # the longest name a folder takes
-KEEP = object()                 # `choose`'s folder: left as it is
-
-
-class FolderError(ValueError):
-    """A folder that cannot be made, named or found as asked: its text says why."""
-
-
-def folder_name(text) -> str:
-    """A folder's name as given, its spaces made one and its ends trimmed; FolderError for none."""
-    name = " ".join(str(text or "").split())[:FOLDER_CHARS].strip()
-    if not name:
-        raise FolderError("which folder? Give it a name")
-    return name
 
 
 def _write() -> sqlite3.Connection:
-    """The dashboard's database, for a change: its tables made, and `saved` given `folder` if older than it."""
+    """The dashboard's database, for a change: its table made."""
     os.makedirs(os.path.dirname(sessions.db_path()), exist_ok=True)
     conn = sqlite3.connect(sessions.db_path(), timeout=8, isolation_level=None)
     conn.execute(SCHEMA)
-    conn.execute(FOLDERS)
-    if "folder" not in [r[1] for r in conn.execute("PRAGMA table_info(saved)")]:
-        conn.execute("ALTER TABLE saved ADD COLUMN folder TEXT")
     return conn
-
-
-def _named(conn: sqlite3.Connection, gatherer: str, name: str) -> Optional[str]:
-    """The folder of `gatherer` named `name`, whatever its case, as it was made; None: none is."""
-    row = conn.execute("SELECT name FROM saved_folders WHERE gatherer = ? AND name = ?", (gatherer, name)).fetchone()
-    return row[0] if row else None
 
 
 def stored() -> Dict[str, Dict[str, str]]:
@@ -102,126 +64,19 @@ def stored() -> Dict[str, Dict[str, str]]:
         conn.close()
 
 
-def folders() -> Dict[str, Dict[str, List[str]]]:
-    """{gatherer: {folder: [the channels in it, as saved]}}, every folder (by name, whatever its case), empty ones
-    too, read-only: {} when none is kept yet."""
-    if not os.path.exists(sessions.db_path()):
-        return {}
-    conn = sqlite3.connect(f"file:{sessions.db_path()}?mode=ro", uri=True, timeout=8)
-    try:
-        found: Dict[str, Dict[str, List[str]]] = {}
-        for g, name in conn.execute("SELECT gatherer, name FROM saved_folders ORDER BY gatherer, lower(name), name"):
-            found.setdefault(g, {})[name] = []
-        if "folder" in [r[1] for r in conn.execute("PRAGMA table_info(saved)")]:
-            for g, c, f in conn.execute("SELECT gatherer, channel, folder FROM saved WHERE folder IS NOT NULL ORDER BY at"):
-                found.setdefault(g, {}).setdefault(f, []).append(c)
-        return found
-    except sqlite3.Error:                # no table yet
-        return {}
-    finally:
-        conn.close()
-
-
-def kept() -> dict:
-    """What the page keeps of it: {saved: stored(), folders: folders()}."""
-    return {"saved": stored(), "folders": folders()}
-
-
-def choose(gatherer: str, channel: str, save: bool, folder=KEEP) -> Dict[str, Dict[str, str]]:
-    """The actor saved for later (`save`) or no longer: every one saved, after. Saved, in `folder` if one is given
-    (a name, made if new; None: in none), else in the one it was in, if any."""
+def choose(gatherer: str, channel: str, save: bool) -> Dict[str, Dict[str, str]]:
+    """The actor saved for later (`save`) or no longer: every one saved, after. Its folder (folders.py) is left as it is."""
     if not gatherer or not channel:
         raise ValueError("which actor?")
     conn = _write()
     try:
         if save:                         # saved again: kept from when it was first
-            conn.execute("BEGIN IMMEDIATE")
-            conn.execute("INSERT OR IGNORE INTO saved (gatherer, channel, at) VALUES (?, ?, ?)",
-                         (gatherer, channel, _now()))
-            if folder is not KEEP:
-                name = None
-                if folder is not None:
-                    name = _named(conn, gatherer, folder_name(folder))
-                    if name is None:
-                        name = folder_name(folder)
-                        conn.execute("INSERT INTO saved_folders (gatherer, name, at) VALUES (?, ?, ?)", (gatherer, name, _now()))
-                conn.execute("UPDATE saved SET folder = ? WHERE gatherer = ? AND channel = ?", (name, gatherer, channel))
-            conn.execute("COMMIT")
+            conn.execute("INSERT OR IGNORE INTO saved (gatherer, channel, at) VALUES (?, ?, ?)", (gatherer, channel, _now()))
         else:
             conn.execute("DELETE FROM saved WHERE gatherer = ? AND channel = ?", (gatherer, channel))
-    except BaseException:
-        if conn.in_transaction:
-            conn.execute("ROLLBACK")
-        raise
     finally:
         conn.close()
     return stored()
-
-
-def file(gatherer: str, channel: str, folder: Optional[str]) -> dict:
-    """The actor saved, in `folder` (made if new; None: in none) -> kept()."""
-    choose(gatherer, channel, True, folder)
-    return kept()
-
-
-def make_folder(gatherer: str, name: str) -> dict:
-    """A new folder in `gatherer`'s Saved, empty (one there already by that name, whatever its case: left as it is)
-    -> kept()."""
-    if not gatherer:
-        raise ValueError("which gatherer?")
-    name = folder_name(name)
-    conn = _write()
-    try:
-        conn.execute("INSERT OR IGNORE INTO saved_folders (gatherer, name, at) VALUES (?, ?, ?)", (gatherer, name, _now()))
-    finally:
-        conn.close()
-    return kept()
-
-
-def rename_folder(gatherer: str, name: str, to: str) -> dict:
-    """The folder `name` of `gatherer` named `to`, its actors in it still -> kept(). FolderError for no such folder,
-    or another already named `to`."""
-    to = folder_name(to)
-    conn = _write()
-    try:
-        conn.execute("BEGIN IMMEDIATE")
-        was = _named(conn, gatherer, folder_name(name))
-        if was is None:
-            raise FolderError(f'no folder "{name}" in {gatherer}')
-        other = _named(conn, gatherer, to)
-        if other is not None and other.lower() != was.lower():
-            raise FolderError(f'there is a folder "{other}" in {gatherer} already')
-        conn.execute("UPDATE saved_folders SET name = ? WHERE gatherer = ? AND name = ?", (to, gatherer, was))
-        conn.execute("UPDATE saved SET folder = ? WHERE gatherer = ? AND folder = ?", (to, gatherer, was))
-        conn.execute("COMMIT")
-    except BaseException:
-        if conn.in_transaction:
-            conn.execute("ROLLBACK")
-        raise
-    finally:
-        conn.close()
-    return kept()
-
-
-def delete_folder(gatherer: str, name: str) -> dict:
-    """The folder `name` of `gatherer` gone, its actors still saved, in none -> kept(). FolderError for no such
-    folder."""
-    conn = _write()
-    try:
-        conn.execute("BEGIN IMMEDIATE")
-        was = _named(conn, gatherer, folder_name(name))
-        if was is None:
-            raise FolderError(f'no folder "{name}" in {gatherer}')
-        conn.execute("DELETE FROM saved_folders WHERE gatherer = ? AND name = ?", (gatherer, was))
-        conn.execute("UPDATE saved SET folder = NULL WHERE gatherer = ? AND folder = ?", (gatherer, was))
-        conn.execute("COMMIT")
-    except BaseException:
-        if conn.in_transaction:
-            conn.execute("ROLLBACK")
-        raise
-    finally:
-        conn.close()
-    return kept()
 
 
 def _now() -> str:
