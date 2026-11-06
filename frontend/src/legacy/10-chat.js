@@ -503,16 +503,31 @@ function contextChips(ctx) {
   return typeChips(counts);
 }
 // A context's items, in the order the model got them: a heading for each run of one kind, and the items
-// of it the chips let through.
+// of it the chips let through. Each item's row is kept from one draw to the next while the item is the same
+// (ctxRows, by ctxKey), so one opened to read stays open, and in place, as the context grows around it.
+const ctxRows = blockCache();
+// What an item is across draws and reads: its event's row, ag's made item, or -- a preamble part, an answer no call
+// has stored yet -- its name (and time); the same name again in one context counted on.
+function ctxKey(it, seen) {
+  const base = it.row_id !== null && it.row_id !== undefined ? `r${it.row_id}`
+    : it.made_id !== null && it.made_id !== undefined ? `m${it.made_id}`
+    : `${it.group}:${it.name}:${it.at ?? ""}`;
+  const n = (seen.get(base) || 0) + 1;
+  seen.set(base, n);
+  return n > 1 ? `${base}#${n}` : base;
+}
 function contextRuns(ctx) {
   const pre = (ctx.preamble || []).reduce((n, p) => n + p.tokens, 0);
   const list = el("div", {});
+  const seen = new Map();
+  ctxRows.begin(signature(state.selected));
+  const row = (it) => ctxRows.get(ctxKey(it, seen), `${it.group}:${it.name}:${it.tokens}:${it.clipped}:${it.text.length}`, () => contextItem(it));
   if ((ctx.preamble || []).length) {                 // what the harness sent besides its messages: first, its parts if chosen
     const n = ctx.preamble.length, shown = shownTypes.has("preamble");
     list.append(el("div", { class: "run" }, el("span", { class: "key-rect", style: `background:${color(PREAMBLE)}` }), el("strong", { text: PREAMBLE }),
       el("span", { text: `${tally(n, shown ? n : 0, pre, shown ? pre : 0, "part")} · `
         + "what the harness sent besides its messages" })));
-    if (shown) for (const p of ctx.preamble) list.append(contextItem(p));
+    if (shown) for (const p of ctx.preamble) list.append(row(p));
   }
   let run = null;
   const head = (r) => {
@@ -529,7 +544,7 @@ function contextRuns(ctx) {
     run.items++; run.tokens += it.tokens;
     const listed = GATHERER.has(it.group) ? shownTypes.has("gatherer")
       : !HISTORY.has(group) || shownTypes.has(itemType(it)[0]);
-    if (listed) { run.shown++; run.shownTokens += it.tokens; list.append(contextItem(it)); }
+    if (listed) { run.shown++; run.shownTokens += it.tokens; list.append(row(it)); }
     head(run);
   }
   if (uncounted(ctx.not_counted)) {                   // what the provider counted beyond all of it
