@@ -626,6 +626,40 @@ class ChatTerminalTest(SessionsBase):
             self.assertTrue(self.s._began(t))
         conn.close()
 
+    def test_its_turn_has_begun_once_its_record_says_it_sent_the_message(self):
+        """The harness's own record of the message sent (`message_sent`, recorded as it is written) begins the turn
+        before its first call is recorded -- which waits until ag has read for it: seconds, on a busy gatherer."""
+        sid = self.s.create("g", self.work)["session_id"]
+        self.s.send(sid, "hello")
+        self.until(lambda: "fake terminal" in self.screen(sid))
+        t = self.s.terms[sid]
+        db = os.path.join(self.tmp.name, "record.db")
+        conn = sqlite3.connect(db)
+        conn.executescript("CREATE TABLE event_types (event_type_id INTEGER PRIMARY KEY, name TEXT);"
+                           "CREATE TABLE events (row_id INTEGER PRIMARY KEY, event_type_id INT, payload_json TEXT, "
+                           "p_channel TEXT, inserted_at TEXT); INSERT INTO event_types VALUES (1, 'message_sent'), "
+                           "(2, 'session_file');")
+        conn.commit()
+
+        def recorded(kind, at, inserted, channel=sid):
+            conn.execute("INSERT INTO events (event_type_id, payload_json, p_channel, inserted_at) VALUES (?, ?, ?, ?)",
+                         (kind, json.dumps({"at": at, "how": "prompt"}), channel,
+                          datetime.fromtimestamp(inserted, timezone.utc).isoformat()))
+            conn.commit()
+
+        def opened(_):
+            got = sqlite3.connect(db)
+            got.row_factory = sqlite3.Row
+            return got
+        with unittest.mock.patch.object(data, "_connect", side_effect=opened):
+            recorded(2, t.prompted + 0.2, t.prompted + 0.2)              # its record followed: a side call came
+            recorded(1, t.prompted - 30, t.prompted + 0.3)               # one sent before it started, recorded late
+            recorded(1, t.prompted + 0.4, t.prompted + 0.5, "other")     # another session's
+            self.assertFalse(self.s._began(t))
+            recorded(1, t.prompted + 0.6, t.prompted + 0.9)
+            self.assertTrue(self.s._began(t))
+        conn.close()
+
     def test_a_message_opens_its_terminal_with_the_message_as_its_first_prompt(self):
         sid = self.s.create("g", self.work)["session_id"]
         s = self.s.send(sid, "-p is not an option\nhere", 90, 25, fullscreen=True)

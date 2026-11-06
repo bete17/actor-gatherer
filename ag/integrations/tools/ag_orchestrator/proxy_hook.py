@@ -88,13 +88,15 @@ class ProxyHook:
                          beside=True))
 
     def following(self, request, gatherer: str, channel: str, call: Call) -> None:
-        """The session's own record followed (session_files.py), from this call of it on: where it runs, and the
-        harness's own folder for it as its launcher named it (`request.config`, the URL's /c/). The call's session kept
-        on the request, for a hang-up while ag reads for it (`hung_up`)."""
+        """The session's own record followed (session_files.py), from this call of it on: where it runs, the harness's
+        own folder for it as its launcher named it (`request.config`, the URL's /c/), and the run the call came from
+        (`request.run`, the URL's /r/). The call's session kept on the request, for a hang-up while ag reads for it
+        (`hung_up`)."""
         if isinstance(getattr(request, "state", None), dict):
             request.state[self.SESSION] = (gatherer, channel)
         if self.sessions is not None and call is not None and call.session:
-            self.sessions.follow(gatherer, channel, self.harness, call.session, call.cwd, getattr(request, "config", None))
+            self.sessions.follow(gatherer, channel, self.harness, call.session, call.cwd, getattr(request, "config", None),
+                                 getattr(request, "run", None))
 
     async def recapped(self, gatherer: str, channel: str, text: Optional[str]) -> None:
         """A recap the harness made of the session, recorded."""

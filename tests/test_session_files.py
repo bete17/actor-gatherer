@@ -204,6 +204,19 @@ class FollowTest(unittest.IsolatedAsyncioTestCase):
         await self.until(lambda: self.server.types() == ["session_file", "turn_stopped"])
         self.assertEqual(self.server.inserted[-1][1]["payload"]["how"], "interrupted")
 
+    async def test_the_record_names_the_run_whose_call_it_was_followed_from(self):
+        """The run a call came from (the URL's /r/<run>/: the process a terminal started), kept with the record
+        followed -- what a dashboard finds a new codex terminal's thread by, as its first call comes in."""
+        home = os.path.join(self.tmp.name, "codex")
+        d = os.path.join(home, "sessions", "2026", "10", "26")
+        os.makedirs(d)
+        path = os.path.join(d, f"rollout-2026-10-26T10-00-00-{THREAD}.jsonl")
+        with open(path, "w") as fh:
+            fh.write(json.dumps({"timestamp": stamp(), "type": "event_msg", "payload": {"type": "task_started"}}) + "\n")
+        self.files.follow("g", THREAD, Codex(), THREAD, None, home, run="4242")
+        await self.until(lambda: self.server.types()[:1] == ["session_file"])
+        self.assertEqual(self.server.inserted[0][1]["payload"], {"harness": "codex", "path": path, "run": "4242"})
+
 
 class FollowerTest(unittest.TestCase):
     """The harness's own followers (harness_kit), a line at a time."""

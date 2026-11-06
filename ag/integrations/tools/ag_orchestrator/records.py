@@ -15,7 +15,10 @@ gatherer beside the conversation's, which no policy groups, so they never reach 
 
 and, from the harness's own record of the session as it grows (session_files.py), what no model call carries:
 
-    session_file  the record followed: the harness, and the file's path
+    session_file  the record followed: the harness, the file's path, and the run whose call it was followed from
+                  (`run`, as the harness's launcher named it in the URL: the process a dashboard's terminal started),
+                  where known -- recorded as that call comes in, before ag reads for it, so a reader learns at once
+                  which session a new process works in (a codex terminal's thread)
     message_queued, message_sent, message_withdrawn, asked, ask_settled, turn_stopped, task_started, task_ended,
     task_activity, name each a fact the record says (harness_kit's Facts), its data the payload with `at`, when it
                   happened
@@ -97,9 +100,9 @@ def name(text: str, by: str) -> dict:
     return {"type": NAME, "id": f"name:{uuid.uuid4().hex}", "payload": {"text": text, "by": by}}
 
 
-def session_file(harness: str, path: str) -> dict:
-    """The harness's record of the session, followed from now on."""
-    return {"type": SESSION_FILE, "id": f"file:{path}", "payload": {"harness": harness, "path": path}}
+def session_file(harness: str, path: str, run: Optional[str] = None) -> dict:
+    """The harness's record of the session, followed from now on, from a call of `run` (None: not known)."""
+    return {"type": SESSION_FILE, "id": f"file:{path}", "payload": _own(harness=harness, path=path, run=run)}
 
 
 def fact(f: Fact, path: str) -> dict:

@@ -10,6 +10,7 @@ import textwrap
 import time
 import unittest
 import unittest.mock
+from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -216,6 +217,30 @@ class ThreadOfTest(CodexBase):
         self.assertEqual(sessions._thread_of("g", 4242, set()), THREAD)
         self.assertIsNone(sessions._thread_of("g", 4242, {THREAD}))       # already a session's
         self.assertIsNone(sessions._thread_of("g", 777, set()))
+
+    def test_the_record_followed_from_the_terminal_s_run_names_its_thread_before_any_read(self):
+        """The hook records the record it follows, with the run of the call, as a thread's first turn call comes in --
+        before ag reads for it, which on a busy gatherer takes seconds, and only then logs the read."""
+        self.reads([])
+        path = os.path.join(dashboard_home.HOME, "gatherers", "g", "context.db")
+        conn = sqlite3.connect(path)
+        conn.executescript("CREATE TABLE event_types (event_type_id INTEGER PRIMARY KEY, name TEXT);"
+                           "CREATE TABLE events (row_id INTEGER PRIMARY KEY, event_type_id INT, payload_json TEXT, "
+                           "p_channel TEXT, inserted_at TEXT); INSERT INTO event_types VALUES (1, 'session_file');")
+        started = time.time()
+
+        def followed(channel, run, at):
+            conn.execute("INSERT INTO events (event_type_id, payload_json, p_channel, inserted_at) VALUES (1, ?, ?, ?)",
+                         (json.dumps({"harness": "codex", "path": f"/r/{channel}.jsonl", "run": run}), channel,
+                          datetime.fromtimestamp(at, timezone.utc).isoformat()))
+            conn.commit()
+        followed("old", "4242", started - 60)                 # a run of the same pid, before the terminal started
+        followed("other", "999", started + 1)                 # another run's
+        self.assertIsNone(sessions._thread_of("g", 4242, set(), started))
+        followed(THREAD, "4242", started + 1)
+        conn.close()
+        self.assertEqual(sessions._thread_of("g", 4242, set(), started), THREAD)
+        self.assertIsNone(sessions._thread_of("g", 4242, {THREAD}, started))        # already a session's
 
     def test_a_gatherer_from_before_runs_is_read_by_process(self):
         self.reads([(THREAD, "/w", os.getpid(), None)], run_column=False)
