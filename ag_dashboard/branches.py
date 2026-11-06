@@ -17,8 +17,8 @@ BASE -- the branch's file as far as the project has it, merged in or settled (`b
 branch started) -- the project's (MINE: the document, when the file is open in the Editor; else the file) and the
 branch's now (THEIRS). The places only the branch changed are taken in, and the base moves on there; the places held
 are not, until the reader settles them in the Editor: each a conflict of the file's open document (editor.py's
-`Conflict.agent`), whose Accept takes the branch's lines (`theirs`), Reject leaves them out (`mine`) -- the base moving
-on either way, so each change is asked about once. HELD are, with `approve` (the actor's "auto-merge with approval"):
+`Conflict.agent`), whose Accept takes the branch's lines (`theirs`), Reject leaves them out (`mine`), and Edit takes them
+as the reader made them in the box (`edited`) -- the base moving on either way, so each change is asked about once. HELD are, with `approve` (the actor's "auto-merge with approval"):
 every change; without: the branch's changes to the conflict zone (the lines edited in the Editor since the file was
 opened), and those to lines the project changed too, differently -- and, either way, a place held before, until
 settled (`branch_files.held`, by `_key`). A file the branch made or deleted, or that the project no longer has, is
@@ -26,7 +26,7 @@ asked about whole (`decide`).
 
 Nothing goes the other way: the actor's worktree is its own, and what the project has that it lacks -- the reader's
 edits, other actors', a change of its own left out -- it is not given. When the reader leaves out a change of the
-actor's (Reject, Keep yours, a file not added or not deleted) or keeps both, the actor is TOLD (`tell`): a message from
+actor's (Reject, Keep yours, a file not added or not deleted), keeps both, or takes it edited, the actor is TOLD (`tell`): a message from
 a stream (the policy's `context_stream`: "Message in the Editor from the gatherer ..."), put in its channel, which it
 reads at its next model call -- in its turn, or at the start of the next -- with its lines and the project's there; what
 to make of the difference is its own to work out. No turn is started for it.
@@ -305,8 +305,8 @@ def _block(text: str) -> str:
 
 def note(what: str, rel: str, project: str, pairs: List[Tuple[str, str]] = ()) -> str:
     """What an actor on a branch is told when the reader left a change of its out of its project (module doc): `what`
-    -- "rejected" (Reject: with approval), "kept" (Keep yours: lines the reader edited too), "both" (both kept), or a
-    file's -- "created" (not added), "deleted" (not deleted), "missing" (left out of the project) -- and, for lines,
+    -- "rejected" (Reject: with approval), "kept" (Keep yours: lines the reader edited too), "both" (both kept),
+    "edited" (taken in, as the reader edited them), or a file's -- "created" (not added), "deleted" (not deleted), "missing" (left out of the project) -- and, for lines,
     `pairs`: (the project's lines there now, the branch's) -- and, where the project has the file, to read its latest
     version there before changing it again."""
     if what == "created":
@@ -323,7 +323,9 @@ def note(what: str, rel: str, project: str, pairs: List[Tuple[str, str]] = ()) -
             "kept": f"The user kept their own lines in {rel}, which they had edited too, in place of your change: the "
                     f"project ({project}) keeps them.",
             "both": f"The user kept both their lines and yours in {rel}: the project ({project}) has theirs, then "
-                    f"yours."}[what]
+                    f"yours.",
+            "edited": f"The user edited {'your changes' if many else 'your change'} to {rel} before taking "
+                      f"{'them' if many else 'it'} in: the project ({project}) has their version there."}[what]
     parts = [f"{head} Your branch still has your version, so it and the project now differ in this file. {latest}"]
     for ours, theirs in pairs:
         parts.append(f"Yours:\n{_block(theirs)}\n\nThe project's:\n{_block(ours)}")
@@ -776,25 +778,25 @@ class Branches:
         room._restate()
 
     # ------------------------------------------------------------------ the reader's say
-    def settle(self, room, c, take: str) -> dict:
+    def settle(self, room, c, take: str, text: Optional[str] = None, theirs: Optional[str] = None,
+               mine: Optional[str] = None) -> dict:
         """A place held, settled in the Editor (editor.py's `Editors.settle`): `take` put in the document as for any
-        conflict, and the base moved on there -- the branch's lines as the reader saw them taken in, or left out."""
-        if take not in ("mine", "theirs", "both"):
-            raise editor.EditorError(f"take {take!r}: mine, theirs or both")
+        conflict, and the base moved on there -- the branch's lines as the reader saw them taken in, left out, or taken
+        in as the reader edited them (`text`)."""
         b = self._row(c.agent["session_id"])
         rel = c.agent["path"]
         with self.lock, room.lock:
-            if room.conflicts.pop(c.id, None) is None:
-                raise editor.EditorError("that change is settled already")
-            ours = str(room.text).encode("utf-8")[c.start:c.end].decode("utf-8", "replace")
-            room.take(c, take)
+            c = room.settling(c.id, take, text, theirs, mine)
+            del room.conflicts[c.id]
+            ours = text if take == "edited" else str(room.text).encode("utf-8")[c.start:c.end].decode("utf-8", "replace")
+            room.take(c, take, text)
             self.decided.setdefault((b["session_id"], rel), {})[c.agent["key"]] = c.theirs
             self._merge(b, rel, room)
             self._count()
             room._restate()
             state = room.state()
-        if take != "theirs":                            # its change left out, or not alone: it is told
-            what = "both" if take == "both" else "rejected" if c.agent.get("why") == "approve" else "kept"
+        if take != "theirs" and not (take == "edited" and ours == c.theirs):   # left out, not alone, or edited: told
+            what = take if take in ("both", "edited") else "rejected" if c.agent.get("why") == "approve" else "kept"
             now = ours + ("\n" if ours and not ours.endswith("\n") else "") + c.theirs if take == "both" else ours
             tell(b["gatherer"], b["channel"], note(what, rel, b["project"], [(now, c.theirs)]))
         return state

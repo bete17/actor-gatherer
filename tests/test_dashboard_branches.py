@@ -315,6 +315,39 @@ class BranchesTest(unittest.TestCase):
                          f"The user did not add added.txt, which you created, to the project ({self.project}): it is only "
                          "on your branch.")
 
+    def test_its_change_edited_before_it_is_taken_in_is_told(self):
+        self.record = self.enterContext(mock.patch.object(branches.actions, "record"))
+        s, wt = self.branch(approve=True)
+        self.put(wt, "notes.py", "def f():\n    return 2\n\nx = f()\n")
+        self.branches.look(everything=True)
+        room = self.open("notes.py")
+        [c] = room.state()["conflicts"]
+        self.editors.settle(room.path, self.project, c["id"], "edited", "    return 2  # checked\n",
+                            theirs="    return 2\n", mine="    return 1\n")
+        self.assertEqual((str(room.text), room.state()["conflicts"]), ("def f():\n    return 2  # checked\n\nx = f()\n", []))
+        [(_, said)] = self.told()
+        self.assertTrue(said["text"].startswith(f"The user edited your change to notes.py before taking it in: the "
+                                                f"project ({self.project}) has their version there. Your branch still"))
+        self.assertIn("Yours:\n```\n    return 2\n```\n\nThe project's:\n```\n    return 2  # checked\n```", said["text"])
+        self.branches.look(everything=True)                                     # asked once
+        self.assertEqual(room.state()["conflicts"], [])
+        room.save()
+        self.assertEqual(self.get(self.project, "notes.py"), "def f():\n    return 2  # checked\n\nx = f()\n")
+
+    def test_its_change_taken_in_unedited_is_not_told_and_a_newer_one_refuses_the_old(self):
+        self.record = self.enterContext(mock.patch.object(branches.actions, "record"))
+        s, wt = self.branch(approve=True)
+        self.put(wt, "notes.py", "def f():\n    return 2\n\nx = f()\n")
+        self.branches.look(everything=True)
+        room = self.open("notes.py")
+        self.put(wt, "notes.py", "def f():\n    return 3\n\nx = f()\n")    # changed again on its branch
+        self.branches.look(everything=True)
+        [c] = room.state()["conflicts"]
+        with self.assertRaisesRegex(editor.EditorError, "its lines changed again"):
+            self.editors.settle(room.path, self.project, c["id"], "edited", "    return 2\n", theirs="    return 2\n")
+        self.editors.settle(room.path, self.project, c["id"], "edited", "    return 3\n", theirs="    return 3\n")
+        self.assertEqual((self.told(), room.state()["conflicts"]), ([], []))
+
     def test_its_changes_rejected_all_at_once_are_told_together(self):
         self.record = self.enterContext(mock.patch.object(branches.actions, "record"))
         s, wt = self.branch(approve=True)
