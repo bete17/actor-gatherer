@@ -69,7 +69,8 @@ the ag app (Electron)                                     the dashboard server (
 - Electron, a pinned version, in `desktop/` (TypeScript: the main process and a preload), built with the repo's pnpm.
 - **Starting:** it finds the home's running dashboard the way `ag` does (`_serves_this_home`: its `/api/home`), and if
   none is running, starts `ag dashboard --no-open` detached, so actors outlive the app as they outlive a browser tab
-  today. It needs ag installed, as `ag` does; bundling Python comes later, if at all.
+  today. It needs ag installed, as `ag` does; bundling Python comes later, if at all. So relaunching the app never
+  restarts the dashboard: `ag dashboard restart` does (ag_dashboard/restart.py), and the app's link reconnects by itself.
 - **The window** loads the page the server serves, not a copy of it, so a dashboard update needs no app update.
 - **In the app, a Browser is always a native page** (decided 2026-11-04). There is no setting for it, and the app
   never shows a streamed Browser.

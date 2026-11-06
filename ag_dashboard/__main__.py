@@ -8,11 +8,9 @@ one's methods, path, and the first paragraph of its handler's docstring (what it
 import argparse
 import errno
 import importlib.util
-import json
 import os
 import signal
 import sys
-import urllib.request
 import webbrowser
 from typing import List, Optional
 
@@ -23,7 +21,9 @@ NEEDED = ["fastapi", "uvicorn", "sse_starlette"]   # what of pyproject.toml's `d
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    ap = argparse.ArgumentParser(prog="ag dashboard", description="Start, talk to and watch your agents in the browser.")
+    ap = argparse.ArgumentParser(prog="ag dashboard", description="Start, talk to and watch your agents in the browser.",
+                                 epilog="ag dashboard restart: stop the home's dashboard and start it again, on the code "
+                                        "now on disk (`ag dashboard restart --help`).")
     ap.add_argument("--home", help="the context manager's home (default: AG_HOME, or ~/.ag)")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=4200)
@@ -101,11 +101,7 @@ def _url(host: str, port: int) -> str:
 
 def _serves_this_home(url: str) -> bool:
     """Whether the server at `url` is a dashboard of this home (its /api/home says so)."""
-    try:
-        with urllib.request.urlopen(url + "api/home", timeout=10) as answer:
-            return json.load(answer).get("home") == home.HOME
-    except (OSError, ValueError, AttributeError):
-        return False
+    return home.serves(url)
 
 
 def _open(url: str) -> None:

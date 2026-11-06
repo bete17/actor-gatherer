@@ -352,7 +352,16 @@ def _migrate_module():
 def dashboard(args: List[str]) -> int:
     """`ag` alone, or `ag dashboard [--host H] [--port N] [--no-open] [--out FILE]`: the dashboard (its own
     package, ag_dashboard, which reads the home's files and imports nothing of ag), on this home, opened
-    in the browser -- unless --no-open."""
+    in the browser -- unless --no-open. `ag dashboard restart [...]`: the one running on this home stopped and
+    started again (ag_dashboard/restart.py)."""
+    if args[:1] == ["restart"]:
+        from ag_dashboard import restart
+        if not {"-h", "--help"} & set(args):
+            migrations()
+        try:
+            return restart.main(["--home", config.home(), *args[1:]])
+        except SystemExit as exc:
+            return exc.code if isinstance(exc.code, int) else 2
     from ag_dashboard.__main__ import main as dashboard_main
     if not {"--out", "-h", "--help"} & {a.split("=")[0] for a in args}:   # a page written, or its usage: nothing runs
         migrations()

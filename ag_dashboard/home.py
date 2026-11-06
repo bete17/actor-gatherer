@@ -9,8 +9,9 @@ lays it out -- the dashboard's only knowledge of ag, which it never imports:
 and the dashboard's own, beside them:
 
     dashboard/views/*.js                 the reader's own chat views, which the page loads
-    dashboard/address.json               where the dashboard that last started on this home listens: {url, pid} --
-                                         how an actor it did not start reaches it (`ag actors`, coordination.py)
+    dashboard/address.json               where the dashboard that last started on this home listens: {url, pid,
+                                         host, cwd} -- how an actor it did not start reaches it (`ag actors`,
+                                         coordination.py), and what `ag dashboard restart` stops and starts again
     dashboard/uploads/*                  images pasted or dropped into a message box, named in the message by path
 
 and, of each read, the harness's process that made the call (`_reads.pid`, `pid_started`: the
@@ -75,18 +76,31 @@ def address_path() -> str:
     return os.path.join(HOME, "dashboard", "address.json")
 
 
-def write_address(url: str) -> Optional[str]:
-    """`url` kept as where this dashboard listens (address_path), for actors it did not start: the file, or None where
-    it could not be written."""
+def write_address(url: str, host: Optional[str] = None) -> Optional[str]:
+    """`url` kept as where this dashboard listens (address_path), for actors it did not start, with this process, the
+    address it was asked to listen on (`host`: url names 127.0.0.1 for 0.0.0.0) and its working directory (where new
+    actors start), for `ag dashboard restart` (restart.py) to start it again as it was: the file, or None where it could
+    not be written."""
     path = address_path()
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path + ".tmp", "w", encoding="utf-8") as fh:
-            json.dump({"url": url, "pid": os.getpid()}, fh)
+            json.dump({"url": url, "pid": os.getpid(), "host": host, "cwd": os.getcwd()}, fh)
         os.replace(path + ".tmp", path)
         return path
     except OSError:
         return None
+
+
+def serves(url: str, timeout: float = 10) -> bool:
+    """Whether the server at `url` (ending in "/") is a dashboard of this home: its /api/home says so, as the ag app
+    tells its own (desktop/src/dashboard.ts)."""
+    import urllib.request
+    try:
+        with urllib.request.urlopen(url + "api/home", timeout=timeout) as answer:
+            return json.load(answer).get("home") == HOME
+    except (OSError, ValueError, AttributeError):
+        return False
 
 
 def forget_address(path: str, url: Optional[str]) -> None:
