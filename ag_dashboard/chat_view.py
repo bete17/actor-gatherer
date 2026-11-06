@@ -29,6 +29,8 @@ time. Its id is the send's (`send_id`) until sends carry one of their own (CHAT_
 import time
 from typing import Dict, List, Optional, Tuple
 
+import harness_kit
+
 from . import data, files
 
 OPENING, WORKING, ASKING, DONE, STOPPED, IDLE = "opening", "working", "asking", "done", "stopped", "idle"
@@ -100,6 +102,14 @@ def _hang_ups(conn, channel: str) -> List[dict]:
     return out
 
 
+def _read_after(conn, channel: str, read_id: int, row_id: int) -> Optional[float]:
+    """When ag read the call after `read_id` that carried the message of row `row_id` again (its newest row), None if
+    none has: a message taken back and sent again, until the harness's record says when it was."""
+    r = conn.execute(f"SELECT read_at FROM _reads WHERE ifnull({data.CHANNEL}, '') = ? AND read_id > ? AND row_id = ? "
+                     f"ORDER BY read_id LIMIT 1", (channel, read_id, row_id)).fetchone()
+    return data._seconds(r[0]) if r else None
+
+
 def _words_of(conn, row_id: Optional[int]) -> Optional[str]:
     """The user's words of a stored user message (its `p_words`, else its text unwrapped by its harness's rules), None
     for any other row."""
@@ -113,8 +123,27 @@ def _words_of(conn, row_id: Optional[int]) -> Optional[str]:
         return None
     if r[1] is not None:
         return r[1]
-    import harness_kit
     return harness_kit.words(r[2] or "", data._harness(conn, r[3] or ""))[1]
+
+
+def _took(b: dict, words: Optional[str], shown: List[tuple], prompts: List[dict], takes_back: bool) -> bool:
+    """Whether a hang-up (`_hang_ups`) took its message back -- Esc before any of its answer, the hook withdrawing what
+    it stored -- as its hook says (`withdrawn`). From a hook before it said: its message not shown (withdrawn); or,
+    shown -- of a harness that puts the message back in its box (`esc_takes_back`), none of the answer come (`reached`
+    "nothing", or not said) -- when the harness sent the same words again after it and no newer message of them is
+    stored: ag keeps the old row for the message sent again, at its old time. Not else: a call later in its turn, or a
+    side call the harness gave up on, is hung up on before any of its answer too."""
+    if words is None:
+        return False
+    if b["withdrawn"] is not None:
+        return b["reached"] == "nothing" and bool(b["withdrawn"])
+    if b["row"] not in {m[0] for m in shown}:
+        return b["reached"] == "nothing"
+    if not takes_back or b["reached"] not in ("nothing", None):
+        return False
+    again = any(_said(p["text"]) == _said(words) and p["sent"] > b["at"] for p in prompts)
+    newer = any(row is not None and row > b["row"] and _said(text) == _said(words) for row, text, _ in shown)
+    return again and not newer
 
 
 def _messages(turns: List[dict]) -> List[tuple]:
@@ -246,20 +275,33 @@ def view(conn, channel: str, session: Optional[dict] = None, now: Optional[float
     turns = [dict(t) for t in got.get("turns") or []]
     sends = _sends(conn, channel, session)
     prompts, held = _record(conn, channel)
-    shown = {m[0] for m in _messages(turns)}
+    h = harness_kit.get(data._harness(conn, channel) or "")
+    takes_back = bool(h and h.esc_takes_back)
     backs = []
-    for b in _hang_ups(conn, channel):                   # each took its message back: Esc before any of its answer, the
-        words = _words_of(conn, b["row"])                # hook withdrawing what it stored (an older hook: it is hidden)
-        withdrew = b["withdrawn"] if b["withdrawn"] is not None else b["row"] not in shown
-        backs.append(dict(b, words=words, took=b["reached"] == "nothing" and words is not None and bool(withdrew)))
+    for b in _hang_ups(conn, channel):                   # each, whether it took its message back (`_took`)
+        words = _words_of(conn, b["row"])
+        backs.append(dict(b, words=words, took=_took(b, words, _messages(turns), prompts, takes_back)))
     links, took = _sorted_out(sends, _messages(turns), backs)
+    last_back = {b["row"]: b for b in backs if b["took"]}   # each message's latest take-back
     for t in turns:
         s = links.get(t.get("row_id"))
-        prompt = next((p for p in prompts if _said(p["text"]) == _said(t.get("text"))
-                       and t.get("at") is not None and abs(p["sent"] - t["at"]) <= SENT_BEFORE), None)
+        b = last_back.get(t.get("row_id"))
+        if b is not None:                                # taken back and sent again: ag keeps its row, at its old time
+            prompt = next((p for p in prompts if _said(p["text"]) == _said(t.get("text"))   # -- the send after it
+                           and p["sent"] >= b["at"]), None)
+            again = prompt["sent"] if prompt else _read_after(conn, channel, b["read"], b["row"])
+        else:
+            prompt = next((p for p in prompts if _said(p["text"]) == _said(t.get("text"))
+                           and t.get("at") is not None and abs(p["sent"] - t["at"]) <= SENT_BEFORE), None)
+            again = prompt["sent"] if prompt else None
         t["cid"] = s["cid"] if s else None
-        t["began"] = s["at"] if s else (prompt["sent"] if prompt else t.get("at"))
+        t["began"] = s["at"] if s else (again if again is not None else t.get("at"))
         t["more"] = [dict(m, cid=(links.get(m.get("row_id")) or {}).get("cid")) for m in t.get("more") or []]
+        t["unsent"] = b is not None and s is None and again is None
+    if turns and turns[-1]["unsent"]:                    # back as ag stores the call that sends it again, not yet sent
+        turns.pop()                                      # by what the harness's record says nor read: shown once it is
+    for t in turns:
+        del t["unsent"]
     back, _ = data.taken_back(conn, channel, tables, data.record_of(conn, channel), now)
     if back is not None:                                 # the send it was: the one the newest hang-up took back
         s = next((s for s in reversed(sends) if s["cid"] in took and _said(s["text"]) == _said(back["text"])), None)
@@ -269,8 +311,15 @@ def view(conn, channel: str, session: Optional[dict] = None, now: Optional[float
     stored = max((t.get("began") or 0.0 for t in turns), default=0.0)
     pending = [s for s in pending if s["at"] > stored - SENT_BEFORE]   # older: never stored (a send that went nowhere)
     at_work = bool(turns) and _state(conn, channel, tables, turns, None, held, session, backs)["state"] in (WORKING, ASKING)
-    # the record's sends of a turn's first message, not stored yet: the harness has it
-    fresh = [p for p in prompts if p["sent"] > stored + 0.001 and not any(
+    gone = set()                                         # the record's sends a take-back took back: the newest of its
+    for b in backs:                                      # words before it
+        if b["took"]:
+            i = next((i for i in range(len(prompts) - 1, -1, -1) if i not in gone and prompts[i]["sent"] <= b["at"]
+                      and _said(prompts[i]["text"]) == _said(b["words"])), None)
+            if i is not None:
+                gone.add(i)
+    # the record's sends of a turn's first message, not stored yet nor taken back: the harness has it
+    fresh = [p for i, p in enumerate(prompts) if i not in gone and p["sent"] > stored + 0.001 and not any(
         _said(p["text"]) == _said(t.get("text")) and t.get("at") is not None and t["at"] >= p["sent"] - 1 for t in turns)]
     opening, waiting = None, []
     for s in pending:

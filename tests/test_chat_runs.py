@@ -65,6 +65,23 @@ class RecordedRunsTest(unittest.TestCase):
                              for m in chat_replay.moments(run, late=late)]
                     self.assertEqual(check(views, sends=sends), [])
 
+    def test_each_typed_into_its_terminal_passes_the_checks_and_ends_as_sent_from_chat(self):
+        """Each run as if its messages had been typed into its terminal (no send from Chat kept): what the harness's
+        record says alone -- a message Esc took back and typed again among them, ag keeping its old row."""
+        from ag_dashboard import chat_view
+        for name in chat_replay.names():
+            run = chat_replay.load(name)
+            sends = tuple(a["at"] for a in run["actions"] if a["what"] == "key Enter")
+            ends = []
+            for typed in (False, True):
+                views = [(m.at, chat_view.view(m.conn, run["channel"], (m.session or {}).get("session"), m.at))
+                         for m in chat_replay.moments(run, typed=typed)]
+                v = views[-1][1]
+                ends.append((v["current"]["state"], [t["text"] for t in v["turns"]], v["opening"]))
+            with self.subTest(name):
+                self.assertEqual(check(views, sends=sends), [])
+                self.assertEqual(ends[1], ends[0])
+
     def test_what_the_dashboard_streamed_passes_the_checks(self):
         """The views the dashboard's stream sent Chat as the run went (record.py's `streamed`): as a page has them."""
         runs = [n for n in chat_replay.names() if chat_replay.load(n).get("streamed")]
