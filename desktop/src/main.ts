@@ -142,7 +142,7 @@ function open(): void {
   }));
   keepPlace(w);
   wire(w);
-  pages = new Pages(w, log, (target, url) => w.webContents.send("ag:still", { target, url }), {
+  pages = new Pages(w, log, (target, url) => !w.isDestroyed() && w.webContents.send("ag:still", { target, url }), {
     pagePreload: path.join(HERE, "page-preload.cjs"),
     downloads: path.join(home, "dashboard", "downloads"), // (ag's own Chrome's: browser.py's downloads_dir)
     permissions: path.join(app.getPath("userData"), "permissions.json"),
@@ -167,6 +167,10 @@ function open(): void {
 // Where the main window's Browser panes are, from its preload: each pane's page placed over it.
 ipcMain.on("ag:stages", (event, stages: Stage[]) => {
   if (win && event.sender === win.webContents) pages?.place(stages);
+});
+// A pane's still picture drawn by the dashboard (preload.cts): its page may now be hidden under it.
+ipcMain.on("ag:still-drawn", (event, target: unknown) => {
+  if (win && event.sender === win.webContents) pages?.drawn(String(target));
 });
 // A Browser page's alert, confirm or prompt (page-preload.cts): the page waits until ag answers it (Pages.dialog).
 ipcMain.on("ag:dialog", (event, d: Dialog) => {

@@ -47,8 +47,14 @@ function everyFrame(): void {
 }
 
 // The still picture of a pane's page while it is covered (its stage's own image, where a browser tab's dashboard draws
-// the page's frames), or none once it isn't.
-ipcRenderer.on("ag:still", (_event, still: { target: string; url: string | null }) => {
+// the page's frames), or none once it isn't. A picture is shown once decoded, and the app told once it is drawn
+// ("ag:still-drawn"), so the page is hidden only with its picture in its place; a newer word for the pane wins.
+const stillAsked = new Map<string, number>();
+const nextFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+ipcRenderer.on("ag:still", async (_event, still: { target: string; url: string | null }) => {
+  const n = (stillAsked.get(still.target) || 0) + 1;
+  stillAsked.set(still.target, n);
+  const imgs: HTMLImageElement[] = [];
   for (const el of document.querySelectorAll<HTMLElement>(".bw-stage[data-key]")) {
     if (el.dataset.target !== still.target) continue;
     const img = el.querySelector<HTMLImageElement>(":scope > img");
@@ -56,9 +62,16 @@ ipcRenderer.on("ag:still", (_event, still: { target: string; url: string | null 
     if (still.url) {
       img.src = still.url;
       Object.assign(img.style, { width: `${el.clientWidth}px`, height: `${el.clientHeight}px` });
-    }
-    img.hidden = !still.url;
+      imgs.push(img);
+    } else img.hidden = true;
   }
+  if (!still.url) return;
+  await Promise.all(imgs.map((img) => img.decode().catch(() => {})));
+  if (stillAsked.get(still.target) !== n) return;
+  for (const img of imgs) img.hidden = false;
+  await nextFrame(); // (drawn in this frame, on screen by the next)
+  await nextFrame();
+  if (stillAsked.get(still.target) === n) ipcRenderer.send("ag:still-drawn", still.target);
 });
 
 window.addEventListener("DOMContentLoaded", () => {
