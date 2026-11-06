@@ -402,7 +402,8 @@ const ICONS = {
   code: "M5.25 4.75L2 8l3.25 3.25M10.75 4.75L14 8l-3.25 3.25M9.25 2.75l-2.5 10.5",   // the Editor: a file's code
   quill: "M13.5 2.5c-4.75.25-8 3.5-9 8.75L2.75 13.5M4.6 10.4h3.15c2.4-1.1 4.25-3.6 5.75-7.9M6.2 7.4h3.3",   // DocWriter: writing
   folderUp: "M1.75 4a1 1 0 0 1 1-1h3.4l1.5 1.6h5.6a1 1 0 0 1 1 1v6.65a1 1 0 0 1-1 1H2.75a1 1 0 0 1-1-1zM8 11.1V7.1M6.3 8.8 8 7.1l1.7 1.7",   // the folder above
-  folder: "M1.75 4a1 1 0 0 1 1-1h3.4l1.5 1.6h5.6a1 1 0 0 1 1 1v6.65a1 1 0 0 1-1 1H2.75a1 1 0 0 1-1-1z",   // a folder of saved actors
+  folder: "M1.75 4a1 1 0 0 1 1-1h3.4l1.5 1.6h5.6a1 1 0 0 1 1 1v6.65a1 1 0 0 1-1 1H2.75a1 1 0 0 1-1-1z",   // a folder of actors
+  folderOpen: "M1.75 12V4a1 1 0 0 1 1-1h3.4l1.5 1.6h4.6a1 1 0 0 1 1 1v1.2M1.75 12l1.7-4.7a1 1 0 0 1 .94-.66h9.1a.6.6 0 0 1 .56.8l-1.6 4.4a1 1 0 0 1-.94.66H2.75a1 1 0 0 1-1-1z",   // one opened
   folderNew: "M1.75 4a1 1 0 0 1 1-1h3.4l1.5 1.6h5.6a1 1 0 0 1 1 1v6.65a1 1 0 0 1-1 1H2.75a1 1 0 0 1-1-1zM8 7.1v4M6 9.1h4",   // one made
   pencil: "M10.6 2.6l2.8 2.8-7.9 7.9-3.4.6.6-3.4zM9.1 4.1l2.8 2.8",   // renamed
   power: "M8 1.75v5.5M4.6 3.9a5.25 5.25 0 1 0 6.8 0",                  // a shell terminated
@@ -419,6 +420,8 @@ const ICONS = {
   area: "M2.5 5V2.5H5M11 2.5h2.5V5M13.5 11v2.5H11M5 13.5H2.5V11M7 2.5h2M7 13.5h2M2.5 7v2M13.5 7v2",   // pick an area
   back: "M9.75 3.5 5.25 8l4.5 4.5",
   forward: "M6.25 3.5 10.75 8l-4.5 4.5",
+  up: "M8 13.25V3M3.75 7.25 8 3l4.25 4.25",                          // the rail: the folder it is in
+  home: "M2.25 7.25 8 2.5l5.75 4.75M3.75 6v7.25h3.1V9.75h2.3v3.5h3.1V6",   // the rail's root: every gatherer
   reload: "M13.25 8a5.25 5.25 0 1 1-1.54-3.71M13.25 2.5v3h-3",
   plus: "M8 3.25v9.5M3.25 8h9.5",
   play: "M5 3.25v9.5L12.75 8z",                                        // run: the Editor's preview

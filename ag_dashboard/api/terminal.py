@@ -72,10 +72,13 @@ def resize(srv: Parts, body: Body) -> Response:
 
 @router.post("/api/shells")
 def shell(srv: Parts, body: Body) -> Response:
-    """{gatherer, cwd, cols?, rows?}: a shell opened in `cwd`, listed under the gatherer (sessions.py's `shell`) -> the
-    shell, its id the session_id its terminal is reached by."""
+    """{gatherer, cwd, cols?, rows?, folder?}: a shell opened in `cwd`, listed under the gatherer -- in its folder
+    `folder` (folders.py's id), if given (sessions.py's `shell`) -> the shell, its id the session_id its terminal is
+    reached by."""
+    folder = body.get("folder")
     return answer(srv.sessions.shell(str(body.get("gatherer") or ""), str(body.get("cwd") or ""),
-                                     int(body.get("cols") or 120), int(body.get("rows") or 32)))
+                                     int(body.get("cols") or 120), int(body.get("rows") or 32),
+                                     int(folder) if isinstance(folder, (int, str)) and str(folder).isdigit() else None))
 
 
 @router.post("/api/shells/close")

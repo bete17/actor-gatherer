@@ -123,34 +123,70 @@ button:disabled { opacity: .5; cursor: default; }
 @media (hover: none) { .agent .save-btn { opacity: 1; } }
 .agent .save-btn.on { color: var(--s1); }
 .agent .save-btn:hover, .agent .save-btn:focus-visible { color: var(--s1); background: var(--surface); }
-/* saved actors' folders: the Saved line's "new folder", each folder's line -- its rename and delete shown while hovered,
-   as the gatherer row's -- its actors set in under it; a line an actor is dragged over, marked; the row dragged, faint */
-.agent-group.saved-line, .agent-group.folder-line { display: flex; align-items: center; gap: 6px; }
-.agent-group.saved-line .label { flex: 1 1 auto; min-width: 0; }
-.agent-group.folder-line { text-transform: none; letter-spacing: 0; font-size: 12px; font-weight: 600; color: var(--ink-2);
-  padding: 5px 14px 3px 44px; min-height: 26px; box-sizing: border-box; }
-.agent-group.folder-line .caret { width: 10px; flex: none; color: var(--muted); }
-.agent-group.folder-line .folder-mark { display: inline-flex; color: var(--muted); flex: none; }
-.agent-group.folder-line .fname { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.agent-group.folder-line .n { flex: 1 0 auto; color: var(--muted); font-weight: 500; font-variant-numeric: tabular-nums; }
-.agent-group.folder-line.editing { padding-top: 2px; padding-bottom: 2px; }
-.agent-group.folder-line .folder-box { flex: 1 1 auto; min-width: 0; width: auto; margin: 0; font-size: 12px; padding: 2px 6px; }
-.folder-act { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 18px; border-radius: 4px;
-  color: var(--muted); cursor: pointer; opacity: 0; flex: none; }
-:is(.saved-line, .folder-line):is(:hover, :focus-visible) .folder-act, .folder-act:focus-visible { opacity: 1; }
-.saved-line[aria-expanded="true"] .folder-act.new { opacity: 1; }
-@media (hover: none) { .folder-act { opacity: 1; } }
-.folder-act:hover, .folder-act:focus-visible { color: var(--ink); background: var(--surface); }
-.folder-act.delete:hover, .folder-act.delete:focus-visible { color: var(--critical); }
-.agent.in-folder { margin-left: 22px; width: calc(100% - 30px); }
-.agent .in-folder-chip { display: inline-flex; align-items: center; gap: 3px; min-width: 0; flex: 0 1 auto; max-width: 7.5em; color: var(--muted);
-  font-size: 11px; margin-left: auto; }
-.agent .in-folder-chip svg { flex: none; }
-.agent .meta .when { white-space: nowrap; }       /* beside a folder's name: that is cut short, not this */
-.agent .in-folder-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.agent .in-folder-chip + .save-btn { margin-left: 0; }
-.agent-group.drop-on { color: var(--ink); background: color-mix(in srgb, var(--s1) 14%, transparent); border-radius: 6px;
-  outline: 1.5px dashed color-mix(in srgb, var(--s1) 70%, transparent); outline-offset: -2px; }
-.agent.dragging { opacity: .45; }
+/* FOLDERS (05-agent-list.js): a folder's line -- a button with its caret, name and count, then its counts, its buttons
+   over them while hovered or in focus (as the gatherer row's rename and hide, nothing moving) -- and what is in it set
+   in under it, a guide line down its left; a line an actor or a folder is dragged over, marked; what is dragged, faint */
+.folder-line { position: relative; display: flex; align-items: center; margin: 1px 8px; border-radius: 8px; min-height: 30px; }
+.folder-line:hover { background: var(--wash); }
+.folder-line .fbtn { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 6px; border: 0; background: none; color: var(--ink-2);
+  font: inherit; font-size: 13px; font-weight: 600; padding: 5px 4px 5px 7px; text-align: left; cursor: pointer; border-radius: 8px; }
+.folder-line:hover .fbtn { color: var(--ink); }
+.folder-line .fbtn:focus-visible { outline: 2px solid var(--axis); outline-offset: -2px; }
+.folder-line .caret { width: 10px; flex: none; color: var(--muted); font-size: 9px; text-align: center; transition: transform .15s; }
+.folder-line .fbtn[aria-expanded="true"] .caret { transform: rotate(90deg); }
+.folder-line .folder-mark, .folder-line.editing .folder-mark { display: inline-flex; color: var(--muted); flex: none; }
+.folder-line .fname { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.folder-line .n { flex: none; color: var(--muted); font-weight: 500; font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.folder-line .fill { position: relative; flex: none; display: flex; align-items: center; justify-content: flex-end; gap: 4px;
+  min-height: 26px; padding: 0 6px 0 2px; cursor: pointer; }
+.folder-line .count { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--ink-2); background: var(--wash);
+  border-radius: 999px; padding: 1px 7px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.folder-line .count i { width: 6px; height: 6px; border-radius: 50%; background: var(--good); display: inline-block; }
+.folder-line .count.asking i { background: var(--warning); }
+.folder-line .count.error i { background: var(--critical); }
+.folder-line .f-acts { position: absolute; right: 2px; top: 50%; transform: translateY(-50%); display: flex; align-items: center; gap: 1px;
+  padding: 1px; border-radius: 6px; opacity: 0; pointer-events: none; background: linear-gradient(var(--wash), var(--wash)), var(--side); }
+.folder-line:is(:hover, :focus-within) .f-acts, .folder-line:has(.f-acts :is([aria-expanded="true"], .busy)) .f-acts { opacity: 1; pointer-events: auto; }
+@media (hover: none) { .folder-line .f-acts { position: static; transform: none; opacity: 1; pointer-events: auto; background: none; } }
+.folder-line .act { border: 0; border-radius: 6px; background: none; color: var(--muted); padding: 0 4px; height: 22px; line-height: 1;
+  display: inline-flex; align-items: center; cursor: pointer; flex: none; }
+.folder-line .act:hover, .folder-line .act:focus-visible, .folder-line .act[aria-expanded="true"] { color: var(--ink); background: var(--wash); }
+.folder-line .act.start { gap: 1px; font-size: 14px; }
+.folder-line .act.start svg { display: block; pointer-events: none; }
+.folder-line .act.start.busy svg { animation: term-blink 1s ease-in-out infinite; }
+.folder-line .act.start:disabled { cursor: default; opacity: .45; }
+.folder-line .act.start + .folder-act { margin-left: 4px; }
+.folder-line .folder-act { width: 24px; justify-content: center; padding: 0; }
+.folder-line .folder-act.delete:hover, .folder-line .folder-act.delete:focus-visible { color: var(--critical); }
+.folder-line.editing { gap: 6px; padding: 3px 8px 3px 24px; }
+.folder-line .folder-box { flex: 1 1 auto; min-width: 0; width: auto; margin: 0; font-size: 12.5px; padding: 2px 6px; }
+.f-kids { margin-left: 21px; border-left: 1px solid var(--grid); }
+.f-kids .agent { margin-left: 4px; width: calc(100% - 12px); }
+.f-kids .folder-line { margin-left: 4px; }
+.f-kids > .agent-group { padding-left: 14px; }
+.f-kids.peek { border-left-style: dashed; }
+.f-empty { color: var(--muted); font-size: 11.5px; font-style: italic; padding: 3px 0 5px 14px; }
+.agent-group .fold-mark { display: inline-flex; vertical-align: -1px; margin-right: 3px; color: var(--s1); }
+:is(.folder-line, .gatherer-row).drop-on { background: color-mix(in srgb, var(--s1) 14%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--s1) 55%, transparent); }
+:is(.agent, .folder-line).dragging { opacity: .45; }
+/* SELECTING several actors (Shift+click): tinted in its own colour, not the blue of the one shown; from two, a check on
+   each one's avatar and a bar under the list */
+.agent.picked, .agent.picked:hover { background: color-mix(in srgb, var(--pick) 15%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--pick) 55%, transparent); }
+.agent .avatar .pick { position: absolute; left: -5px; top: -5px; width: 15px; height: 15px; border-radius: 50%; display: flex; align-items: center;
+  justify-content: center; background: var(--pick); box-shadow: 0 0 0 1.5px var(--side); color: #fff; cursor: pointer; }
+.agent .avatar .pick svg { width: 11px; height: 11px; stroke-width: 2.2; }
+.pick-bar { flex: none; display: flex; align-items: center; gap: 6px; padding: 8px 10px 8px 16px; border-top: 1px solid var(--ring);
+  background: var(--surface); font-size: 12.5px; }
+.pick-bar[hidden], :root:is(.list-folded, .list-full) .pick-bar { display: none; }
+.pick-bar .n { font-weight: 600; margin-right: auto; color: var(--pick); white-space: nowrap; }
+.pick-bar .pb { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--ring); background: var(--side); border-radius: 7px;
+  padding: 3px 8px; cursor: pointer; color: var(--ink-2); font: inherit; font-size: 12px; white-space: nowrap; }
+.pick-bar .pb:hover, .pick-bar .pb[aria-expanded="true"] { color: var(--ink); background: var(--wash); }
+.pick-bar .pb svg { width: 13px; height: 13px; flex: none; }
+.pick-bar .pb.x { border: 0; background: none; padding: 3px 6px; }
+.drag-ghost { position: fixed; top: -100px; left: -100px; padding: 4px 10px; border-radius: 999px; background: var(--pick); color: #fff;
+  font-size: 12px; font-weight: 600; }
 .m-folder { display: flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; color: var(--ink-2); padding: 6px 4px 2px; }
 .m-folder svg { color: var(--muted); flex: none; }

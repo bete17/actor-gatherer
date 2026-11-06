@@ -20,7 +20,7 @@ import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from ag_dashboard import avatars, data, hiding, saved, seen, server, sessions, titles  # noqa: E402
+from ag_dashboard import avatars, data, folders, hiding, saved, seen, server, sessions, titles  # noqa: E402
 import harness_kit  # noqa: E402
 from harness_kit.base import Box  # noqa: E402
 from ag_dashboard import home as dashboard_home  # noqa: E402
@@ -1571,51 +1571,53 @@ class EndpointTest(SessionsBase):
         self.assertEqual(self.post("/api/saved", {"gatherer": "g", "channel": "c3", "saved": True}, {"Origin": "https://evil.example"})[0], 403)
         self.post("/api/saved", {"gatherer": "g", "channel": "c2", "saved": False})
 
-    def test_saved_actors_are_put_in_folders_kept_till_deleted(self):
-        folders = lambda body: self.post("/api/saved/folders", body)       # noqa: E731
-        self.assertEqual(json.load(urllib.request.urlopen(self.url + "/api/home", timeout=10))["saved_folders"], {})
-        code, kept = folders({"gatherer": "g", "do": "new", "name": "  Paper   revisions "})
-        self.assertEqual((code, kept), (200, {"saved": {}, "folders": {"g": {"Paper revisions": []}}}))   # empty, kept
-        code, kept = folders({"gatherer": "g", "do": "file", "channel": "c1", "name": "paper REVISIONS"})   # its case
-        self.assertEqual((code, list(kept["saved"]["g"]), kept["folders"]), (200, ["c1"], {"g": {"Paper revisions": ["c1"]}}))
-        code, kept = folders({"gatherer": "g", "do": "file", "channel": "c2", "name": "Ideas"})    # a new one: made
-        self.assertEqual(kept["folders"]["g"], {"Ideas": ["c2"], "Paper revisions": ["c1"]})
-        self.post("/api/saved", {"gatherer": "g", "channel": "c3", "saved": True})               # the bookmark: in none
-        self.assertEqual(saved.folders()["g"], {"Ideas": ["c2"], "Paper revisions": ["c1"]})
-        self.post("/api/saved", {"gatherer": "g", "channel": "c1", "saved": True})               # saved again: stays in it
-        self.assertEqual(saved.folders()["g"]["Paper revisions"], ["c1"])
-        code, kept = folders({"gatherer": "g", "do": "file", "channel": "c1", "name": ""})       # out of its folder
-        self.assertEqual((kept["folders"]["g"], sorted(kept["saved"]["g"])), ({"Ideas": ["c2"], "Paper revisions": []}, ["c1", "c2", "c3"]))
-        code, kept = folders({"gatherer": "g", "do": "rename", "name": "ideas", "to": "Later"})
-        self.assertEqual(kept["folders"]["g"], {"Later": ["c2"], "Paper revisions": []})
-        self.assertEqual(folders({"gatherer": "g", "do": "rename", "name": "Later", "to": "paper revisions"}),
-                         (400, {"error": 'there is a folder "Paper revisions" in g already'}))
-        self.assertEqual(folders({"gatherer": "g", "do": "rename", "name": "Later", "to": "later"})[1]["folders"]["g"],
-                         {"later": ["c2"], "Paper revisions": []})                                # its case, changed
-        self.post("/api/saved", {"gatherer": "g", "channel": "c2", "saved": False})              # unsaved: out of it
-        self.assertEqual(saved.folders()["g"], {"later": [], "Paper revisions": []})
-        folders({"gatherer": "g", "do": "file", "channel": "c3", "name": "later"})
-        code, kept = folders({"gatherer": "g", "do": "delete", "name": "LATER"})
-        self.assertEqual((kept["folders"]["g"], sorted(kept["saved"]["g"])), ({"Paper revisions": []}, ["c1", "c3"]))  # still saved
-        self.assertEqual(data.home([])["saved_folders"], {"g": {"Paper revisions": []}})        # snapshots carry them too
-        self.assertEqual(folders({"gatherer": "g", "do": "delete", "name": "Nope"}), (400, {"error": 'no folder "Nope" in g'}))
-        self.assertEqual(folders({"gatherer": "g", "do": "new", "name": "  "}), (400, {"error": "which folder? Give it a name"}))
-        self.assertEqual(folders({"gatherer": "", "do": "new", "name": "x"})[0], 400)
-        self.assertEqual(folders({"gatherer": "g", "do": "frob", "name": "x"})[0], 400)
-        self.assertEqual(folders({"gatherer": "g", "do": "new", "name": "x"})[0], 200)
-        self.assertEqual(self.post("/api/saved/folders", {"gatherer": "g", "do": "new", "name": "y"}, {"Origin": "https://evil.example"})[0], 403)
-        self.assertEqual(sorted(saved.folders()["g"]), ["Paper revisions", "x"])
+    def test_actors_are_kept_in_folders_in_folders(self):
+        ask = lambda body: self.post("/api/folders", body)       # noqa: E731
+        self.assertEqual(json.load(urllib.request.urlopen(self.url + "/api/home", timeout=10))["folders"], {})
+        code, got = ask({"gatherer": "g", "do": "new", "name": "  Paper   revisions "})
+        paper = got["made"]
+        self.assertEqual((code, got["folders"]), (200, {"g": {"folders": [{"id": paper, "parent": None, "name": "Paper revisions"}], "filed": {}}}))
+        figures = ask({"gatherer": "g", "do": "new", "name": "Figures", "parent": paper})[1]["made"]
+        self.assertEqual(ask({"gatherer": "g", "do": "new", "name": "paper REVISIONS"}), (400, {"error": 'there is a folder "Paper revisions" there already'}))
+        self.assertEqual(ask({"gatherer": "g", "do": "new", "name": "Figures"})[0], 200)       # beside another's: its own
+        self.assertIn("can't hold", ask({"gatherer": "g", "do": "new", "name": "a/b"})[1]["error"])
+        code, got = ask({"gatherer": "g", "do": "file", "channels": ["c1", "c2"], "folder": figures})
+        self.assertEqual((code, got["folders"]["g"]["filed"]), (200, {"c1": figures, "c2": figures}))
+        code, got = ask({"gatherer": "g", "do": "file", "channels": ["c2"]})                     # at the top again
+        self.assertEqual(got["folders"]["g"]["filed"], {"c1": figures})
+        self.post("/api/saved", {"gatherer": "g", "channel": "c1", "saved": True})
+        self.post("/api/saved", {"gatherer": "g", "channel": "c1", "saved": False})
+        self.assertEqual(folders.of("g")["filed"], {"c1": figures})                              # unsaved: where it was
+        self.assertEqual(ask({"gatherer": "g", "do": "move", "id": figures})[0], 400)          # a "Figures" at the top
+        code, got = ask({"gatherer": "g", "do": "rename", "id": figures, "to": "Plots"})
+        self.assertEqual(folders.path(got["folders"]["g"], figures), "Paper revisions/Plots")
+        self.assertEqual(ask({"gatherer": "g", "do": "move", "id": paper, "parent": figures}),
+                         (400, {"error": '"Paper revisions" can\'t go in itself, nor in a folder of its own'}))
+        code, got = ask({"gatherer": "g", "do": "move", "id": figures})                          # now it can
+        self.assertEqual(folders.path(got["folders"]["g"], figures), "Plots")
+        ask({"gatherer": "g", "do": "move", "id": figures, "parent": paper})
+        code, got = ask({"gatherer": "g", "do": "delete", "id": paper})                          # what was in it: up a level
+        tree = got["folders"]["g"]
+        self.assertEqual(([f["name"] for f in tree["folders"]], tree["filed"]), (["Figures", "Plots"], {"c1": figures}))
+        self.assertEqual(data.home([])["folders"], got["folders"])                               # snapshots carry them too
+        self.assertEqual(ask({"gatherer": "h", "do": "file", "channels": ["x"], "folder": figures}),
+                         (400, {"error": f"no folder {figures} in h"}))                           # another gatherer's: none
+        self.assertEqual(ask({"gatherer": "g", "do": "delete", "id": 9999})[0], 400)
+        self.assertEqual(ask({"gatherer": "g", "do": "file", "channels": "c1"})[0], 400)
+        self.assertEqual(ask({"gatherer": "g", "do": "frob"})[0], 400)
+        self.assertEqual(ask({"gatherer": "", "do": "new", "name": "x"})[0], 400)
+        self.assertEqual(self.post("/api/folders", {"gatherer": "g", "do": "new", "name": "y"}, {"Origin": "https://evil.example"})[0], 403)
 
-    def test_a_saved_table_from_before_folders_is_given_them(self):
-        os.makedirs(os.path.dirname(sessions.db_path()), exist_ok=True)
-        conn = sqlite3.connect(sessions.db_path())
-        conn.execute("CREATE TABLE saved (gatherer TEXT NOT NULL, channel TEXT NOT NULL, at TEXT NOT NULL, PRIMARY KEY (gatherer, channel))")
-        conn.execute("INSERT INTO saved VALUES ('g', 'c1', '2026-10-25T00:00:00+00:00')")
-        conn.commit()
-        conn.close()
-        self.assertEqual((saved.stored(), saved.folders()), ({"g": {"c1": "2026-10-25T00:00:00+00:00"}}, {}))
-        self.assertEqual(saved.file("g", "c1", "Old")["folders"], {"g": {"Old": ["c1"]}})
-        self.assertEqual(saved.stored(), {"g": {"c1": "2026-10-25T00:00:00+00:00"}})            # kept from when it was first
+    def test_a_shell_opened_in_a_folder_is_listed_in_it(self):
+        fid = self.post("/api/folders", {"gatherer": "g", "do": "new", "name": "Ops"})[1]["made"]
+        with unittest.mock.patch.dict(os.environ, {"SHELL": "/bin/sh", "HOME": self.tmp.name}):
+            code, s = self.post("/api/shells", {"gatherer": "g", "cwd": self.work, "folder": fid})
+        try:
+            self.assertEqual((code, s["folder"]), (200, fid))
+            home = json.load(urllib.request.urlopen(self.url + "/api/home", timeout=10))
+            self.assertEqual([x["folder"] for x in home["shells"] if x["id"] == s["id"]], [fid])
+        finally:
+            self.post("/api/shells/close", {"id": s["id"]})
 
     def test_a_session_that_never_started_closed_from_the_list_is_listed_no_more(self):
         sid = self.post("/api/sessions", {"gatherer": "g", "cwd": self.work})[1]["session_id"]

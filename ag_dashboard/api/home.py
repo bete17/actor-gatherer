@@ -1,11 +1,11 @@
 """The home -- every gatherer and its actors, as the list shows them -- and what the reader keeps of it: gatherers made,
-hidden, named; actors saved, named, seen."""
+hidden, named; actors saved, named, seen, and kept in folders."""
 
 import harness_kit
 from fastapi import APIRouter
 from starlette.responses import Response
 
-from .. import hiding, naming, saved, seen, sessions, titles
+from .. import folders, hiding, naming, saved, seen, sessions, titles
 from ..models import Home
 from .common import Body, Errors, Parts, answer
 
@@ -49,27 +49,34 @@ def save(srv: Parts, body: Body) -> Response:
     return answer(kept)
 
 
-@router.post("/api/saved/folders")
-def saved_folders(srv: Parts, body: Body) -> Response:
-    """{gatherer, do, ...}: a folder of the gatherer's saved actors made (`new` {name}), renamed (`rename` {name, to})
-    or deleted (`delete` {name}: its actors still saved), or an actor put in one (`file` {channel, name}: "", in
-    none; saved too) (saved.py) -> {saved, folders}, every one saved and every folder."""
+@router.post("/api/folders")
+def folder(srv: Parts, body: Body) -> Response:
+    """{gatherer, do, ...}: the gatherer's folders changed (folders.py) -> {folders: every gatherer's, made?}.
+
+    new {name, parent?} (made: its id), rename {id, to}, move {id, parent?} (a folder put in another; none: at the
+    top), delete {id} (what was in it moved up), file {channels, folder?} (actors put in a folder; none: at the top)."""
     g, do = str(body.get("gatherer") or ""), str(body.get("do") or "")
-    name = str(body.get("name") or "")
-    if not g:
-        raise ValueError("which gatherer?")
-    if do == "file":
-        kept = saved.file(g, str(body.get("channel") or ""), name or None)
-    elif do == "new":
-        kept = saved.make_folder(g, name)
+    parent = body.get("parent")
+    parent = None if parent in (None, "") else parent
+    made = None
+    if do == "new":
+        made = folders.make(g, str(body.get("name") or ""), parent)
     elif do == "rename":
-        kept = saved.rename_folder(g, name, str(body.get("to") or ""))
+        folders.rename(g, body.get("id"), str(body.get("to") or ""))
+    elif do == "move":
+        folders.move(g, body.get("id"), parent)
     elif do == "delete":
-        kept = saved.delete_folder(g, name)
+        folders.delete(g, body.get("id"))
+    elif do == "file":
+        channels = body.get("channels")
+        if not isinstance(channels, list):
+            raise ValueError("which actors? `channels`, a list")
+        target = body.get("folder")
+        folders.file(g, [str(c) for c in channels], None if target in (None, "") else target)
     else:
-        raise ValueError("do what? One of file, new, rename, delete")
+        raise ValueError("do what? One of new, rename, move, delete, file")
     srv.hub.ring(None, what="list")
-    return answer(kept)
+    return answer({"folders": folders.stored(), **({"made": made} if made is not None else {})})
 
 
 @router.post("/api/name")

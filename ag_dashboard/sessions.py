@@ -1403,9 +1403,10 @@ class Sessions:
             threading.Thread(target=self._find_thread, args=(sid, s["gatherer"], t), daemon=True).start()
         return t
 
-    def shell(self, gatherer: str, cwd: str, cols: int = 120, rows: int = 32) -> dict:
-        """A new shell (module doc), listed under `gatherer`: the user's login shell in `cwd`, in a terminal
-        `cols` x `rows`, in the environment a session's terminal has. The shell as `shells` has it."""
+    def shell(self, gatherer: str, cwd: str, cols: int = 120, rows: int = 32, folder: Optional[int] = None) -> dict:
+        """A new shell (module doc), listed under `gatherer` -- in its folder `folder` (folders.py), for as long as it
+        runs, if given: the user's login shell in `cwd`, in a terminal `cols` x `rows`, in the environment a session's
+        terminal has. The shell as `shells` has it."""
         if not TERMINALS:
             raise SessionError("a terminal needs a Unix pseudo-terminal, which this system does not have")
         gatherer = (gatherer or "").strip()
@@ -1433,14 +1434,14 @@ class Sessions:
                     os._exit(127)
             t = _Term(pid, fd, open(os.devnull, "w", encoding="utf-8"))    # nothing of a shell's logged
             self.terms[shell_id] = t
-            self._shells[shell_id] = {"id": shell_id, "gatherer": gatherer, "cwd": cwd, "since": t.since}
+            self._shells[shell_id] = {"id": shell_id, "gatherer": gatherer, "cwd": cwd, "since": t.since, "folder": folder}
             t.reader = threading.Thread(target=self._read_terminal, args=(shell_id, t), daemon=True)
             t.reader.start()
             self._changed(gatherer, shell_id)
             return dict(self._shells[shell_id])
 
     def shells(self) -> List[dict]:
-        """The shells open (`shell`), the oldest first: {id, gatherer, cwd, since}."""
+        """The shells open (`shell`), the oldest first: {id, gatherer, cwd, since, folder}."""
         with self.lock:
             return sorted((dict(s) for s in self._shells.values()), key=lambda s: s["since"])
 

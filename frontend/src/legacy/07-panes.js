@@ -333,92 +333,120 @@ async function openCoordinator(g) {
   const box = panes.focus !== panes.here ? null : document.getElementById("composer-text");
   if (box) box.focus();
 }
-// A gatherer row's start buttons: its gatherer agent (its face), "+ actor" -- a drop-down of the harnesses a new actor
-// may run on, or, with one, that one at once -- and "+ more", a drop-down of the other things started there: an actor on
-// a branch of its own, a DocWriter, a terminal.
-function startButtons(g) {
-  const hs = startable(), cwd = startCwd(g), where = cwd ? tildePath(cwd, state.home.home_dir) : null;
-  const starting = state.starting && state.starting.gatherer === g.name ? String(state.starting.harness) : "";
-  const off = state.starting ? { disabled: "" } : {};
-  const crew = g.agents.find(isCoordinator), hidden = !!crew && crewHidden.has(g.name);
+// A gatherer's gatherer agent, its face just after the gatherer's name in its row: a click shows it (started if it has
+// none), and, hidden from the list, its status at the face's corner.
+function crewButton(g) {
+  const hs = startable(), crew = g.agents.find(isCoordinator), hidden = !!crew && crewHidden.has(g.name);
+  if (!hs.length && !crew) return null;
   const [cls, label] = hidden ? statusOf(crew) : [null, null];      // hidden from the list: its status here
-  const coordinator = hs.length || crew ? el("button", { class: "act start crew" + (starting === CREW_START ? " busy" : "") + (crew ? " on" : ""),
-    type: "button", ...off,
+  const busy = state.starting && state.starting.gatherer === g.name && state.starting.harness === CREW_START;
+  return el("button", { class: "act start crew" + (busy ? " busy" : "") + (crew ? " on" : ""), type: "button",
+    ...(state.starting ? { disabled: "" } : {}),
     title: hidden ? `The gatherer agent (${label.toLowerCase()}), hidden from the list: click to show it and open it`
       : crew ? "The gatherer agent: it coordinates this gatherer's actors -- tell it what to arrange"
       : "Start the gatherer agent: it coordinates this gatherer's actors, settles their conflicts, and arranges their work for you",
     "aria-label": crew ? `The gatherer agent of ${g.name}` : `Start the gatherer agent of ${g.name}`, onclick: () => openCoordinator(g) },
-    crewFace(crew, MANAGER), hidden ? el("i", { class: `crew-dot ${cls}`, "aria-hidden": "true" }) : null) : null;
+    crewFace(crew, MANAGER), hidden ? el("i", { class: `crew-dot ${cls}`, "aria-hidden": "true" }) : null);
+}
+// A gatherer row's start buttons -- and a folder's line's (`folder`: what they start goes in it, folders.py), shown, on
+// each, while it is hovered: "+ actor" -- a drop-down of the harnesses a new actor may run on, or, with one, that one at
+// once -- and "+ more", a drop-down of the other things started there: an actor on a branch of its own, a DocWriter, a
+// Browser, a terminal. Each, pressed, aims what is started next at its folder, or its gatherer's top (aimStart): the
+// actor filed there once started (fileStarted).
+function startButtons(g, folder = null, prefix = "") {
+  const hs = startable(), cwd = startCwd(g), where = cwd ? tildePath(cwd, state.home.home_dir) : null;
+  const fid = folder ? folder.id : null, place = folder ? folder.name : g.name, at = folder ? `:${fid}` : "";
+  const ours = state.starting && state.starting.gatherer === g.name;
+  const starting = ours && startIn.g === g.name && startIn.folder === fid ? String(state.starting.harness) : "";
+  const off = state.starting ? { disabled: "" } : {};
   const plus = () => el("span", { class: "plus", "aria-hidden": "true", text: "+" });
-  const actorKey = `actor:${g.name}`, moreKey = `more:${g.name}`;
+  const actorKey = `${prefix}actor:${g.name}${at}`, moreKey = `${prefix}more:${g.name}${at}`;   // a card's: its own (prefix)
   const actor = !hs.length ? el("button", { class: "act add", type: "button", disabled: "", title: noHarness(), "aria-label": noHarness() }, "+")
     : el("button", { class: "act start new-actor" + (hs.includes(starting) ? " busy" : ""), type: "button", ...off, "data-pop": actorKey,
-      title: `New actor in ${g.name}${where ? `, in ${where}` : ""}: ${hs.map(harnessName).join(" or ")}`,
-      "aria-label": `New actor in ${g.name}`, ...(hs.length > 1 ? { "aria-haspopup": "menu", "aria-expanded": String(rowPop.key === actorKey) } : {}),
-      onclick: (ev) => hs.length > 1 ? openActorMenu(g, hs, ev.currentTarget) : addSession(g, hs[0]) },
+      title: `New actor in ${place}${where ? `, in ${where}` : ""}: ${hs.map(harnessName).join(" or ")}`,
+      "aria-label": `New actor in ${place}`, ...(hs.length > 1 ? { "aria-haspopup": "menu", "aria-expanded": String(rowPop.key === actorKey) } : {}),
+      onclick: (ev) => {
+        aimStart(g.name, fid);
+        if (hs.length > 1) openActorMenu(g, hs, ev.currentTarget, actorKey, undefined, folder ? place : null); else addSession(g, hs[0]);
+      } },
       plus(), strokeIcon(ICONS.agent, 16));
-  const others = moreStarts(g, hs, where);
+  const others = moreStarts(g, hs, where, moreKey);
   const more = others.length ? el("button", { class: "act start new-more" + (starting === SHELL_START || starting === BRANCH_START
       || starting.startsWith(DW_START) || starting.startsWith(BW_START) ? " busy" : ""), type: "button", ...off, "data-pop": moreKey,
-    title: `More to start in ${g.name}: ${others.map((o) => o.text.replace("…", "").toLowerCase()).join(", ")}`,
-    "aria-label": `More to start in ${g.name}`, "aria-haspopup": "menu", "aria-expanded": String(rowPop.key === moreKey),
-    onclick: (ev) => openMoreMenu(g, hs, ev.currentTarget) }, plus(), strokeIcon(ICONS.more, 16)) : null;
-  return [coordinator, actor, more].filter(Boolean);
+    title: `More to start in ${place}: ${others.map((o) => o.text.replace("…", "").toLowerCase()).join(", ")}`,
+    "aria-label": `More to start in ${place}`, "aria-haspopup": "menu", "aria-expanded": String(rowPop.key === moreKey),
+    onclick: (ev) => { aimStart(g.name, fid); openMoreMenu(g, hs, ev.currentTarget, moreKey, place); } }, plus(), strokeIcon(ICONS.more, 16)) : null;
+  return [actor, more].filter(Boolean);
 }
-// The "+ more" drop-down's starts: what each is, said under it, and what choosing it does.
-function moreStarts(g, hs, where) {
+// The "+ more" drop-down's starts: what each is, said under it, and what choosing it does. `key`: its button's data-pop.
+function moreStarts(g, hs, where, key = `more:${g.name}`) {
   const there = where ? `in ${where}` : "in a directory you choose";
   const tooled = hs.filter((h) => (harnessInfo(h) || {}).mcp);    // DocWriter's and a Browser's agent: given their tools
   return [
     hs.length ? { icon: ICONS.branch, text: "Actor on a branch…", note: "in a worktree of a project: its changes merged into the project",
       run: (button) => openBranchMenu(g, button) } : null,
     tooled.length && state.home.docwriter ? { icon: ICONS.quill, text: "DocWriter…", note: "write with an agent that proposes its edits beside your text",
-      run: (button) => openPop(`more:${g.name}`, button, dwBox(g, tooled)) } : null,
+      run: (button) => openPop(key, button, dwBox(g, tooled)) } : null,
     tooled.length && state.home.browser ? { icon: ICONS.globe, text: "Browser…", note: "a browser you and an agent use together: point it at what you mean",
-      run: (button) => tooled.length > 1 ? openPop(`more:${g.name}`, button, popMenu("New Browser, its agent on",
+      run: (button) => tooled.length > 1 ? openPop(key, button, popMenu("New Browser, its agent on",
         tooled.map((h) => ({ mark: harnessBadge(h), text: harnessName(h), run: () => addSession(g, BW_START + h) }))))
         : addSession(g, BW_START + tooled[0]) } : null,
     state.home.terminals !== false ? { icon: ICONS.terminal, text: "Terminal", note: there, run: () => addSession(g, SHELL_START) } : null,
   ].filter(Boolean);
 }
-// `key`: the button's data-pop (the list's "+ actor", or the rail's "+"); `start`: what a harness chosen does.
-function openActorMenu(g, hs, button, key = `actor:${g.name}`, start = (h) => addSession(g, h)) {
+// `key`: the button's data-pop (the list's "+ actor", or the rail's "+"); `start`: what a harness chosen does; `place`: the
+// folder it starts in, named in its heading (else the directory's).
+function openActorMenu(g, hs, button, key = `actor:${g.name}`, start = (h) => addSession(g, h), place = null) {
   const cwd = startCwd(g);
   const where = cwd ? tildePath(cwd, state.home.home_dir) : "";
-  openPop(key, button, popMenu(where ? `New actor in ${where.replace(/\/+$/, "").split("/").pop() || where}` : `New actor in ${g.name}`,
+  openPop(key, button, popMenu(place ? `New actor in ${place}` : where ? `New actor in ${where.replace(/\/+$/, "").split("/").pop() || where}` : `New actor in ${g.name}`,
     hs.map((h) => ({ mark: harnessBadge(h), text: harnessName(h), run: () => start(h) })), where));
 }
-// The rail's "+" under a gatherer's name (renderRail): a new actor in it, as the list's "+ actor" starts one -- on the one
-// harness at once, or on the one picked from a drop-down beside the rail -- in the directory of its most recently active
-// actor. With none (or starting there failed), a box beside the rail asks for the directory first (railNewBox): the list's
-// form, under its gatherer's row, is out of sight with the list folded. Pressed again, what it opened closes.
-const railKey = (g) => `rail:${g.name}`;
-function railNew(g) {
-  const hs = startable(), key = railKey(g), plus = el("span", { class: "plus", "aria-hidden": "true", text: "+" });
-  if (!hs.length) return el("button", { class: "r-new", type: "button", disabled: "", title: noHarness(), "aria-label": noHarness() },
+// The "+ actor" of a gatherer's or a folder's card in the rail (gathererCard, folderCard; `f` null: the gatherer's top): a
+// new actor there, as the list's "+ actor" starts one -- on the one harness at once, or on the one picked from a drop-down
+// -- in the directory of its gatherer's most recently active actor. With none (or starting there failed), a box under it
+// asks for the directory first (railNewBox): the list's form, under its gatherer's row, is out of sight with the list
+// folded. Pressed again, what it opened closes. `cls`: its classes.
+const railKey = (g, f = null) => `rail:${g.name}${f ? `:${f.id}` : ""}`;
+function railNew(g, f = null, cls = "r-new") {
+  const hs = startable(), key = railKey(g, f), plus = el("span", { class: "plus", "aria-hidden": "true", text: "+" });
+  const fid = f ? f.id : null, place = f ? f.name : titleOf(g);
+  if (!hs.length) return el("button", { class: cls, type: "button", disabled: "", title: noHarness(), "aria-label": noHarness() },
     plus, strokeIcon(ICONS.agent, 14));
   const cwd = startCwd(g), where = cwd ? tildePath(cwd, state.home.home_dir) : null;
-  const busy = state.starting && state.starting.gatherer === g.name && hs.includes(String(state.starting.harness));
+  const busy = state.starting && state.starting.gatherer === g.name && startIn.folder === fid && hs.includes(String(state.starting.harness));
   const pops = hs.length > 1 || !cwd;
-  return el("button", { class: "r-new" + (busy ? " busy" : ""), type: "button", "data-pop": key, ...(state.starting ? { disabled: "" } : {}),
-    title: `New actor in ${titleOf(g)}${where ? `, in ${where}` : ""}: ${hs.map(harnessName).join(" or ")}`,
-    "aria-label": `New actor in ${titleOf(g)}`,
+  return el("button", { class: cls + (busy ? " busy" : ""), type: "button", "data-pop": key, ...(state.starting ? { disabled: "" } : {}),
+    title: `New actor in ${place}${where ? `, in ${where}` : ""}: ${hs.map(harnessName).join(" or ")}`,
+    "aria-label": `New actor in ${place}`,
     ...(pops ? { "aria-haspopup": cwd ? "menu" : "dialog", "aria-expanded": String(rowPop.key === key) } : {}),
     onclick: (ev) => {
       const button = ev.currentTarget;
       if (rowPop.key === key) return closePop();
+      aimStart(g.name, fid);
       if (!cwd) openPop(key, button, railNewBox(g, hs));
-      else if (hs.length > 1) openActorMenu(g, hs, button, key, (h) => railStart(g, h));
-      else railStart(g, hs[0]);
+      else if (hs.length > 1) openActorMenu(g, hs, button, key, (h) => railStart(g, h, key), f ? place : null);
+      else railStart(g, hs[0], key);
     } },
     plus, strokeIcon(ICONS.agent, 14));
 }
-async function railStart(g, harness) {
+// A card's "+ ⋯" in the rail: the list's "+ more" drop-down, under it
+function railMore(g, f = null, cls = "r-new r-more") {
+  const hs = startable(), key = `railmore:${g.name}${f ? `:${f.id}` : ""}`, place = f ? f.name : titleOf(g);
+  const others = moreStarts(g, hs, null, key);
+  if (!others.length) return null;
+  return el("button", { class: cls, type: "button", "data-pop": key, ...(state.starting ? { disabled: "" } : {}),
+    title: `More to start in ${place}: ${others.map((o) => o.text.replace("…", "").toLowerCase()).join(", ")}`,
+    "aria-label": `More to start in ${place}`, "aria-haspopup": "menu", "aria-expanded": String(rowPop.key === key),
+    onclick: (ev) => { aimStart(g.name, f ? f.id : null); openMoreMenu(g, hs, ev.currentTarget, key, place); } },
+    el("span", { class: "plus", "aria-hidden": "true", text: "+" }), strokeIcon(ICONS.more, 14));
+}
+async function railStart(g, harness, key = railKey(g)) {
   const cwd = startCwd(g);
   try { await startSession(g.name, cwd, harness); }
   catch (e) {
-    const button = document.querySelector(`#rail [data-pop="${CSS.escape(railKey(g))}"]`);
-    if (button) openPop(railKey(g), button, railNewBox(g, startable(), harness, cwd, e.message));
+    const button = document.querySelector(`[data-pop="${CSS.escape(key)}"]`);
+    if (button) openPop(key, button, railNewBox(g, startable(), harness, cwd, e.message));
     else setLive(`Not started: ${e.message}`);
   }
 }
@@ -452,14 +480,14 @@ function railNewBox(g, hs, harness = hs[0], cwd = "", error = "") {
     err);
   return box;
 }
-function openMoreMenu(g, hs, button) {
+function openMoreMenu(g, hs, button, key = `more:${g.name}`, place = g.name) {
   if (brPick.menu && brPick.menu.g === g.name) return brMenuClose();     // the branch drop-down it opened: pressed again
-  openPop(`more:${g.name}`, button, popMenu(`New in ${g.name}`, moreStarts(g, hs, startCwd(g) && tildePath(startCwd(g), state.home.home_dir))));
+  openPop(key, button, popMenu(`New in ${place}`, moreStarts(g, hs, startCwd(g) && tildePath(startCwd(g), state.home.home_dir), key)));
 }
 // A drop-down's box: its heading, then an item for each choice -- its mark, what it is, and a note under it.
 function popMenu(head, items, title) {
   return el("div", { class: "br-menu row-menu", role: "menu", "aria-label": head }, el("div", { class: "hd", text: head, ...(title ? { title } : {}) }),
-    ...items.map((it) => el("button", { type: "button", role: "menuitem", onclick: (ev) => {
+    ...items.map((it) => el("button", { type: "button", role: "menuitem", ...(it.depth ? { style: `padding-left: ${10 + it.depth * 14}px` } : {}), onclick: (ev) => {
       ev.stopPropagation();
       const button = popButton();
       closePop();
@@ -479,6 +507,7 @@ function closePop() {
   rowPop.off();
   Object.assign(rowPop, { key: "", el: null, off: null });
   if (button) button.setAttribute("aria-expanded", "false");
+  cardRelease();                                     // a card it hung from: let go, unless the pointer is on it
 }
 function placePop() {
   const box = rowPop.el, button = popButton();
@@ -586,6 +615,7 @@ async function addSession(g, harness) {
     try { return await startAny(g.name, cwd, harness); }
     catch (e) { state.adding = { gatherer: g.name, cwd, harness, error: e.message }; }
   } else state.adding = { gatherer: g.name, cwd, harness };
+  if (listMode === "folded") setListMode("list");     // its form is the list's: in sight
   renderAgents();
   const first = document.querySelector(".newform input");
   if (first) first.focus();
@@ -597,6 +627,7 @@ async function startSession(gatherer, cwd, harness) {
   renderAgents();
   try {
     const s = await post("/api/sessions", { gatherer, cwd, harness });
+    await fileStarted(gatherer, s.session_id);
     state.adding = null;
     collapsed.delete(s.gatherer);
     await loadHome();
@@ -611,6 +642,7 @@ async function startDocWriter(gatherer, cwd, harness) {
   renderAgents();
   try {
     const cfg = await post("/api/docwriter", { gatherer, cwd, harness });
+    await fileStarted(gatherer, cfg.channel);
     state.adding = null;
     collapsed.delete(gatherer);
     await loadHome();
@@ -624,6 +656,7 @@ async function startBrowser(gatherer, cwd, harness) {
   renderAgents();
   try {
     const cfg = await post("/api/browser", { gatherer, cwd, harness });
+    await fileStarted(gatherer, cfg.channel);
     state.adding = null;
     collapsed.delete(gatherer);
     await loadHome();
@@ -638,7 +671,8 @@ async function startShell(gatherer, cwd) {
   renderAgents();
   try {
     const size = term.opened && term.host && term.host.isConnected ? { cols: term.xterm.cols, rows: term.xterm.rows } : {};
-    const s = await post("/api/shells", { gatherer, cwd, ...size });
+    const folder = shellFolder(gatherer);            // opened in the folder aimed at, listed there
+    const s = await post("/api/shells", { gatherer, cwd, ...size, ...(folder !== null ? { folder } : {}) });
     state.adding = null;
     collapsed.delete(gatherer);
     await loadHome();                                // listed before it is shown: its pane's head says where it is
@@ -828,6 +862,7 @@ async function startBranch(gatherer, project, harness, approve) {
   renderAgents();
   try {
     const s = await post("/api/branches", { gatherer, project, harness, approve });
+    await fileStarted(gatherer, s.session_id);
     state.adding = null;
     collapsed.delete(s.gatherer);
     await loadHome();
