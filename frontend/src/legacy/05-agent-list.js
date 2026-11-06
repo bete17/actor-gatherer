@@ -142,14 +142,15 @@ const actorsWithin = (g, id) => g.agents.filter((a) => {
 // Those of them open in a pane: in view under the folder while it is folded
 const inPane = (g, a) => openActors().some((sel) => isAt(sel, g.name, a.channel));
 const openIn = (g, id) => actorsWithin(g, id).filter((a) => inPane(g, a));
-// What a folder holds, its folders' too: how many actors wait on the reader, stopped on an error, run; how many are
-// open, saved (closed), closed
+// What a folder holds, its folders' too: how many actors wait on the reader, stopped on an error, run, are idle; how
+// many are open, saved (closed), closed
 function folderTally(g, id) {
-  const t = { asking: 0, error: 0, running: 0, open: 0, saved: 0, closed: 0 };
+  const t = { asking: 0, error: 0, running: 0, idle: 0, open: 0, saved: 0, closed: 0 };
   for (const a of actorsWithin(g, id)) {
     const group = groupOf(g, a);
     if (group === "Saved") t.saved++; else if (group === "Closed") t.closed++; else t.open++;
     if (group === "Waiting for you") t.asking++; else if (group === "Error") t.error++; else if (group === "Running") t.running++;
+    else if (group === "Idle") t.idle++;
   }
   return t;
 }
@@ -663,15 +664,17 @@ const folderMark = (open) => el("span", { class: "folder-mark", "aria-hidden": "
 // a small button on a folder's line, beside its start buttons
 const folderAct = (cls, title, icon, fn) => el("button", { class: `act folder-act ${cls}`, type: "button", title, "aria-label": title,
   onclick: (ev) => { ev.stopPropagation(); fn(); } }, icon);
-// how many of a folder's actors wait on the reader, stopped on an error, run: as a gatherer's row counts its own
-function tallyChips(t, of) {
+// how many of a folder's actors wait on the reader, stopped on an error, run: as a gatherer's row counts its own -- and,
+// on its line in the list (idle), how many are idle, a grey dot as an idle actor's
+function tallyChips(t, of, idle = false) {
   const count = (k, cls, what) => k ? el("span", { class: "count" + cls, title: `${k} of ${of} ${what}` }, el("i", { "aria-hidden": "true" }), String(k)) : null;
-  return [count(t.asking, " asking", "waiting for you"), count(t.error, " error", "stopped on an error"), count(t.running, "", "running")].filter(Boolean);
+  return [count(t.asking, " asking", "waiting for you"), count(t.error, " error", "stopped on an error"), count(t.running, "", "running"),
+    idle ? count(t.idle, " idle", "idle") : null].filter(Boolean);
 }
 const folderSays = (f, t) => `${f.name}: ${plural(t.open, "actor")} open${t.saved ? `, ${t.saved} saved` : ""}${t.closed ? `, ${t.closed} closed` : ""}`
   + " (its folders' too)";
-// A folder's line: a button opening or folding it -- its caret, its name, how many actors it holds open (its folders'
-// too) -- and at its right how many of those wait on the reader, stopped on an error, run (a click there too opens or
+// A folder's line: a button opening or folding it -- its caret, its name -- and at its right how many of the actors it
+// holds open (its folders' too) wait on the reader, stopped on an error, run, are idle (a click there too opens or
 // folds it). Hovered or in focus, its buttons over those counts: "+ actor" and "+ ⋯", started in it (startButtons), a
 // folder made in it, it renamed (F2), it deleted. Dragged: put in another folder, or onto its gatherer's row, at its
 // top; actors dropped on it are put in it, and it opens when one is held over it.
@@ -684,9 +687,8 @@ function folderLine(g, f) {
     el("button", { class: "fbtn", type: "button", "aria-expanded": open ? "true" : "false",
       ...(HOVERS.matches ? {} : { title: folderSays(f, t) }), onclick: toggle,
       onkeydown: (ev) => { if (ev.key === "F2" && !SNAPSHOT) { ev.preventDefault(); startFolderEdit(g.name, f.id); } } },
-      el("span", { class: "caret", "aria-hidden": "true", text: "▶" }), folderMark(open), el("span", { class: "fname", text: f.name }),
-      el("span", { class: "n", title: plural(t.open, "actor"), text: String(t.open) })),
-    el("span", { class: "fill", onclick: toggle }, ...tallyChips(t, plural(t.open, "actor")),
+      el("span", { class: "caret", "aria-hidden": "true", text: "▶" }), folderMark(open), el("span", { class: "fname", text: f.name })),
+    el("span", { class: "fill", onclick: toggle }, ...tallyChips(t, plural(t.open, "actor"), true),
       SNAPSHOT ? null : el("span", { class: "f-acts", onclick: (ev) => ev.stopPropagation() }, ...startButtons(g, f),
         folderAct("new", `New folder in ${f.name}`, strokeIcon(ICONS.folderNew, 14), () => startFolderEdit(g.name, null, f.id)),
         folderAct("rename", `Rename ${f.name} (F2)`, strokeIcon(ICONS.pencil, 13), () => startFolderEdit(g.name, f.id)),

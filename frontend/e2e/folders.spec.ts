@@ -1,6 +1,6 @@
 // Folders in the list (folders.py; 05-agent-list.js "FOLDERS"): made, filled, nested, renamed, deleted; an actor's
 // saved and closed lines in its folder; several actors moved at once; actors started in a folder; and in the rail, a
-// folder's and a gatherer's cards, with their buttons and their tree.
+// folder's and a gatherer's cards, with their buttons and their tree, and what it shows over every gatherer.
 import type { Page } from "@playwright/test";
 import { expect, streamsAsRequests, test } from "./test";
 import { CLAUDE, CODEX, GATHERER, open } from "./home";
@@ -42,14 +42,15 @@ test("keeps actors in folders: made from the gatherer's row, filled by dragging,
     await box.fill("  Paper   revisions ");
     await box.press("Enter");
     await expect(line("Paper revisions")).toBeVisible();
-    await expect(line("Paper revisions").locator(".n")).toHaveText("0");
+    await expect(line("Paper revisions").locator(".count")).toHaveCount(0); // nothing in it: no counts
     await expect(page.locator("#agents .f-empty")).toBeVisible(); // made open, and empty
     await expect.poll(async () => (await treeOf(page)).folders.map((f) => f.name)).toEqual(["Paper revisions"]);
     const paper = (await treeOf(page)).folders[0].id;
 
     await row(CLAUDE).dragTo(line("Paper revisions"));
     await expect(page.locator("#agents .f-kids button.agent", { hasText: CLAUDE })).toBeVisible(); // listed in it
-    await expect(line("Paper revisions").locator(".n")).toHaveText("1");
+    await expect(line("Paper revisions").locator(".count")).toHaveText(["1"]); // its one actor idle, a grey dot
+    await expect(line("Paper revisions").locator(".count.idle")).toHaveCount(1);
     await expect.poll(async () => (await treeOf(page)).filed).toEqual({ [claudeCh]: paper });
     expect(Object.keys((await homeOf(page)).saved?.[GATHERER] || {})).toEqual([]); // put in a folder: not saved
 
@@ -141,7 +142,7 @@ test("lists a closed saved actor in its folder's saved line, folded till opened"
   await open(page);
   const lines = page.locator("#agents .folder-line");
   await expect(lines.locator(".fname")).toHaveText(["Empty", "Paper"]);
-  await expect(lines.locator(".n")).toHaveText(["0", "0"]); // none open in either
+  await expect(lines.locator(".count")).toHaveCount(0); // none open in either: no counts
   const codexRow = page.locator("#agents .f-kids button.agent", { hasText: CODEX });
   const isOpen = await codexRow.count(); // the first actor is shown, so in view under its folded folder
   await lines.filter({ hasText: "Paper" }).locator(".fbtn").click(); // opened: its saved line, folded
@@ -258,7 +259,7 @@ test("in the rail, a folder's and a gatherer's cards stay to be used: their butt
     });
     await page.locator("#agents .lb-fold").click();
     const rail = page.locator("#rail");
-    const name = rail.locator(".r-fname", { hasText: "Ideas" });
+    const name = rail.locator(".r-fname, .r-fhead", { hasText: "Ideas" }); // an actor in it not closed: shown, open
     await expect(name).toBeVisible();
     await name.hover();
     const card = page.locator("#actor-card.live");
@@ -311,27 +312,36 @@ test("the rail shows only a folder on a double-click, Up and Root go out again, 
     await page.locator("#agents .lb-fold").click();
     const rail = page.locator("#rail");
     await expect(rail.locator(".r-actor .r-name", { hasText: CLAUDE })).toBeVisible(); // every gatherer: its actors
-    await rail.locator(".r-fname", { hasText: "Ideas" }).dblclick();
+    const ideasName = rail.locator(".r-fname, .r-fhead", { hasText: "Ideas" }); // an actor in it not closed: shown, open
+    await ideasName.dblclick();
     await expect(rail.locator(".r-here")).toContainText("Ideas");
     await expect(rail.locator(".r-gname")).toHaveCount(0);
     await expect(rail.locator(".r-actor .r-name")).toHaveCount(1); // only what is in it
     await expect(rail.locator(".r-actor .r-name")).toContainText(CODEX);
-    await rail.locator(".r-navb.up").click(); // up: the gatherer's top, Ideas in it, still folded as it was
+    await rail.locator(".r-navb.up").click(); // up: the gatherer's top, Ideas in it
     await expect(rail.locator(".r-here")).toHaveCount(1);
     await expect(rail.locator(".r-gname")).toHaveCount(0);
-    await expect(rail.locator(".r-fname", { hasText: "Ideas" })).toBeVisible();
+    await expect(ideasName).toBeVisible();
     await rail.locator(".r-navb.up").click(); // up again: every gatherer
     await expect(rail.locator(".r-here")).toHaveCount(0);
     await expect(rail.locator(".r-gname")).toHaveCount(1);
     // the gatherer's, then a folder in it; Root from there: every gatherer
     await rail.locator(".r-gname").first().dblclick();
-    await rail.locator(".r-fname", { hasText: "Ideas" }).dblclick();
-    await expect(rail.locator(".r-here .r-hname")).toHaveText("Ideas");
+    await ideasName.dblclick();
+    await expect(rail.locator(".r-here .r-hname .nm")).toHaveText("Ideas");
+    // its name a button, as a folder's in the tree: a click folds what is in it, another opens it again
+    const heading = rail.locator(".r-here .r-hname");
+    await expect(heading).toHaveCSS("cursor", "pointer");
+    await expect(heading).toHaveAttribute("aria-expanded", "true");
+    await heading.click();
+    await expect(heading).toHaveAttribute("aria-expanded", "false");
+    await heading.click();
+    await expect(heading).toHaveAttribute("aria-expanded", "true");
     // the path over its name: a step for its gatherer, a click there showing the gatherer's top
     await expect(rail.locator(".r-step")).toHaveCount(1);
     await rail.locator(".r-step").click();
     await expect(rail.locator(".r-step")).toHaveCount(0);
-    await expect(rail.locator(".r-fname", { hasText: "Ideas" })).toBeVisible();
+    await expect(ideasName).toBeVisible();
     await rail.locator(".r-navb.root").click();
     await expect(rail.locator(".r-gname")).toHaveCount(1);
     // over it, what every actor does: a dot and a number each, the open ones all counted
@@ -352,6 +362,86 @@ test("the rail shows only a folder on a double-click, Up and Root go out again, 
     await expect.poll(async () => (await rail.boundingBox())!.width).toBeGreaterThan(150);
     await grip.dblclick();
     await expect.poll(async () => (await rail.boundingBox())!.width).toBeLessThan(80);
+  } finally {
+    await noFolders(page);
+  }
+});
+
+test("over every gatherer, the rail shows the folders with an actor not closed in them, opened, and the rest and the saved and closed lines, at the top, once checked", async ({
+  page,
+}) => {
+  const [ideas] = [await newFolder(page, "Ideas"), await newFolder(page, "Later")];
+  try {
+    const g = (await homeOf(page)).gatherers.find((x) => x.name === GATHERER)!;
+    const codexCh = g.agents.find((a) => a.harness === "codex")!.channel;
+    await page.request.post("/api/folders", {
+      data: { gatherer: GATHERER, do: "file", channels: [codexCh], folder: ideas },
+    });
+    // the home as the server has it, but the Codex actor (in Ideas) idle and the Claude Code one (at the gatherer's top;
+    // Later empty) closed -- the streams held back, so the server's own home does not replace it
+    await page.route("**/api/home", async (route) => {
+      const home = await (await route.fetch()).json();
+      const agents: { harness?: string; status?: string }[] = home.gatherers.find(
+        (x: { name: string }) => x.name === GATHERER,
+      ).agents;
+      agents.find((a) => a.harness === "codex")!.status = "idle";
+      agents.find((a) => a.harness === "claude")!.status = "closed";
+      await route.fulfill({ json: home });
+    });
+    await streamsAsRequests(page);
+    await page.route("**/api/stream*", (route) => route.abort());
+    await open(page);
+    await page.locator("#agents .lb-fold").click();
+    const rail = page.locator("#rail");
+    const folder = (name: string) => rail.locator(".r-fname, .r-fhead", { hasText: name });
+    const box = (what: string) => rail.locator(".r-check", { hasText: what });
+    const check = async (what: string) => {
+      await rail.locator(".r-show-hd").hover(); // its boxes open while it is hovered
+      await box(what).click();
+    };
+    // its foot "Show…", its boxes folded till it is hovered
+    await expect(rail.locator(".r-show-hd")).toHaveText("Show…");
+    await expect(box("folders")).toBeHidden();
+    await rail.locator(".r-show-hd").hover();
+    await expect(box("folders")).toBeVisible();
+    // at first: none checked; Ideas, an idle actor in it, shown and open; Later, none in it, left out; no lines
+    await expect(rail.locator(".r-show input")).toHaveCount(3);
+    await expect(rail.locator(".r-show input:checked")).toHaveCount(0);
+    await expect(rail.locator(".r-fhead", { hasText: "Ideas" })).toBeVisible();
+    await expect(folder("Later")).toHaveCount(0);
+    await expect(rail.locator(".r-fold")).toHaveCount(0);
+    await rail.locator(".r-fhead", { hasText: "Ideas" }).click(); // folded by the reader, still shown
+    await expect(rail.locator(".r-fname", { hasText: "Ideas" })).toBeVisible();
+    await rail.locator(".r-fname", { hasText: "Ideas" }).click();
+    // every folder: Later too; the closed line once "closed" is checked, at the top, over the folders
+    await check("folders");
+    await expect(rail.locator(".r-fname", { hasText: "Later" })).toBeVisible();
+    await expect(rail.locator(".r-fold")).toHaveCount(0);
+    await check("closed");
+    await expect(rail.locator(".r-fold")).toHaveText(["▸ 1 closed"]);
+    const order = await rail
+      .locator(".r-gatherer > .r-kids")
+      .first()
+      .evaluate((n) => [...n.children].map((c) => c.className.split(" ")[0]));
+    expect(order.indexOf("r-fold"), order.join(" ")).toBeLessThan(order.indexOf("r-fopen"));
+    expect(order.indexOf("r-fold"), order.join(" ")).toBeLessThan(order.indexOf("r-ffold"));
+    await check("closed");
+    await expect(rail.locator(".r-fold")).toHaveCount(0);
+    // kept in this browser
+    await page.reload();
+    await expect(box("folders").locator("input")).toBeChecked();
+    await expect(box("closed").locator("input")).not.toBeChecked();
+    // drilled into the gatherer: the same boxes, the same rule
+    await check("folders");
+    await expect(folder("Later")).toHaveCount(0);
+    await rail.locator(".r-gname").first().dblclick();
+    await expect(rail.locator(".r-here")).toHaveCount(1);
+    await expect(folder("Later")).toHaveCount(0);
+    await expect(rail.locator(".r-fold")).toHaveCount(0);
+    await check("folders");
+    await expect(folder("Later")).toBeVisible();
+    await check("closed");
+    await expect(rail.locator(".r-fold")).toHaveText(["▸ 1 closed"]);
   } finally {
     await noFolders(page);
   }

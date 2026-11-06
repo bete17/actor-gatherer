@@ -3,6 +3,7 @@ terminal stopped before the harness recorded anything of it -- a codex session's
 that makes its thread -- as the terminal's message box shows it after; a session whose process ended (its `ended`),
 before a turn, as it worked, or after it was over; and whether a hang-up took its message back, recorded by a hook
 before it said (`_took`)."""
+import json
 import os
 import sys
 import unittest
@@ -80,6 +81,32 @@ class EndedSessionTest(unittest.TestCase):
 
     def test_an_end_after_the_turn_was_over_leaves_it_done(self):
         self.assertEqual(self.views(60.0)[-1][1:], ("done", None))
+
+
+class AskedBeforeTest(unittest.TestCase):
+    """A question an earlier turn asked that its record never settled -- its session closed as it asked, and resumed
+    without it -- is not what the newest turn waits on."""
+
+    def state(self, asked_after: float) -> dict:
+        """The run at its end, with a question asked `asked_after` seconds after its last turn began, never settled."""
+        run = chat_replay.load("claude-tool-call")
+        conn = chat_replay.at_end(run)
+        conn.execute("INSERT OR IGNORE INTO event_types (name, created_at) VALUES ('asked', '')")
+        began = chat_view.view(conn, run["channel"], None)["turns"][-1]["began"]
+        payload = {"at": began + asked_after, "call": "toolu_q", "kind": "question", "async": False, "turn": None,
+                   "questions": [{"question": "Which one?", "options": [{"label": "A"}, {"label": "B"}]}]}
+        conn.execute("INSERT INTO events (inserted_at, event_id, event_type_id, payload_json, tokens, p_channel) "
+                     "SELECT '', 'asked:toolu_q', event_type_id, ?, 0, ? FROM event_types WHERE name = 'asked'",
+                     (json.dumps(payload), run["channel"]))
+        return chat_view.view(conn, run["channel"], None)["current"]
+
+    def test_one_asked_before_the_newest_turn_opened_is_left_behind(self):
+        got = self.state(-1.0)
+        self.assertEqual((got["state"], got["asking"]), ("done", None))
+
+    def test_one_the_newest_turn_asked_is_waited_on(self):
+        got = self.state(1.0)
+        self.assertEqual((got["state"], got["asking"]["call"]), ("asking", "toolu_q"))
 
 
 class TookBackTest(unittest.TestCase):
