@@ -146,13 +146,13 @@ test("lists a closed saved actor in its folder's saved line, folded till opened"
   await expect(lines.locator(".count")).toHaveCount(0); // none open in either: no counts
   const codexRow = page.locator("#agents .f-kids button.agent", { hasText: CODEX });
   const isOpen = await codexRow.count(); // the first actor is shown, so in view under its folded folder
-  await lines.filter({ hasText: "Paper" }).locator(".fbtn").click(); // opened: its saved line, folded
+  await lines.filter({ hasText: "Paper" }).locator(".fname").click(); // opened (its name clicked): its saved line, folded
   const saved = page.locator("#agents .f-kids .fold-line", { hasText: "saved" });
   await expect(saved).toHaveText("▸ 1 saved");
   await saved.click();
   await expect(codexRow).toBeVisible();
   await saved.click();
-  await lines.filter({ hasText: "Paper" }).locator(".fbtn").click();
+  await lines.filter({ hasText: "Paper" }).locator(".fname").click();
   await expect(codexRow).toHaveCount(isOpen);
 });
 

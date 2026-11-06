@@ -391,7 +391,6 @@ function renderAgents() {
         el("button", { class: "name", type: "button", "aria-expanded": open ? "true" : "false", onclick: () => toggleGatherer(g.name),
           title: g.policy ? `${g.name} · policy ${g.policy}` : g.name },
           el("span", { class: "caret", text: "▶" }),
-          el("span", { class: "gmark", "aria-hidden": "true" }, strokeIcon(open ? ICONS.folderOpen : ICONS.folder, 15)),   // the top folder
           state.renaming && isAt([state.renaming.g, state.renaming.c], g.name, null) ? null
             : el("span", { class: "gname", text: titleOf(g) })),
         state.renaming && isAt([state.renaming.g, state.renaming.c], g.name, null) ? nameBox() : null,
@@ -409,8 +408,9 @@ function renderAgents() {
               hideIcon())))), g, null, () => { if (collapsed.has(g.name)) toggleGatherer(g.name); }));
     if (state.adding && state.adding.gatherer === g.name) box.append(newForm());
     if (g.error) box.append(el("div", { class: "servers", text: `Database unreadable: ${g.error}` }));
-    if (open && crew && !crewHidden.has(g.name)) box.append(agentRow(g, crew, CREW_GROUP));
-    if (open) box.append(...boxRows(g, null));
+    // open: what is in it -- its gatherer agent, then its box's rows -- set in under its row, as a folder's are (g-kids)
+    const kids = open ? [crew && !crewHidden.has(g.name) ? agentRow(g, crew, CREW_GROUP) : null, ...boxRows(g, null)].filter(Boolean) : [];
+    if (kids.length) box.append(el("div", { class: "g-kids" }, ...kids));
     aside.append(box);
   }
   if (hidden.length) {
@@ -627,7 +627,7 @@ async function endRename(keep) {
 function boxRows(g, id) {
   const out = [], edit = state.folderEdit;
   if (edit && edit.g === g.name && edit.id === null && edit.parent === id)
-    out.push(el("div", { class: "folder-line editing", "data-key": `${g.name}/folder:new` }, folderMark(false), folderBox()));
+    out.push(el("div", { class: "folder-line editing", "data-key": `${g.name}/folder:new` }, folderBox()));
   for (const f of kidFolders(g.name, id)) {
     out.push(folderLine(g, f));
     if (isOpenFolder(g.name, f.id)) {
@@ -660,6 +660,7 @@ function foldRows(g, id, name, list) {
   if (shells) return [line, ...(shown ? list.map((s) => shellRow(g, s)) : [])];
   return [line, ...(shown ? list : list.filter((a) => inPane(g, a))).map((a) => agentRow(g, a, name))];
 }
+// a folder's icon: the full-page view's folder headings (the list's lines have none, its caret and indent enough)
 const folderMark = (open) => el("span", { class: "folder-mark", "aria-hidden": "true" }, strokeIcon(open ? ICONS.folderOpen : ICONS.folder, 14));
 // a small button on a folder's line, beside its start buttons
 const folderAct = (cls, title, icon, fn) => el("button", { class: `act folder-act ${cls}`, type: "button", title, "aria-label": title,
@@ -681,13 +682,13 @@ const folderSays = (f, t) => `${f.name}: ${plural(t.open, "actor")} open${t.save
 function folderLine(g, f) {
   const open = isOpenFolder(g.name, f.id), t = folderTally(g, f.id), edit = state.folderEdit;
   if (edit && edit.g === g.name && edit.id === f.id)
-    return el("div", { class: "folder-line editing", "data-key": `${g.name}/folder:${f.id}` }, folderMark(open), folderBox());
+    return el("div", { class: "folder-line editing", "data-key": `${g.name}/folder:${f.id}` }, folderBox());
   const toggle = () => toggleFolder(g.name, f.id);
   const line = el("div", { class: "folder-line", "data-key": `${g.name}/folder:${f.id}`, "data-card": key(g.name, `folder:${f.id}`) },
     el("button", { class: "fbtn", type: "button", "aria-expanded": open ? "true" : "false",
       ...(HOVERS.matches ? {} : { title: folderSays(f, t) }), onclick: toggle,
       onkeydown: (ev) => { if (ev.key === "F2" && !SNAPSHOT) { ev.preventDefault(); startFolderEdit(g.name, f.id); } } },
-      el("span", { class: "caret", "aria-hidden": "true", text: "▶" }), folderMark(open), el("span", { class: "fname", text: f.name })),
+      el("span", { class: "caret", "aria-hidden": "true", text: "▶" }), el("span", { class: "fname", text: f.name })),
     el("span", { class: "fill", onclick: toggle }, ...tallyChips(t, plural(t.open, "actor"), true),
       SNAPSHOT ? null : el("span", { class: "f-acts", onclick: (ev) => ev.stopPropagation() }, ...startButtons(g, f),
         folderAct("new", `New folder in ${f.name}`, strokeIcon(ICONS.folderNew, 14), () => startFolderEdit(g.name, null, f.id)),
