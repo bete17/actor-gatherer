@@ -132,10 +132,14 @@ def save(srv: Parts, body: Body) -> Response:
 
 @router.post("/api/edit/settle")
 def settle(srv: Parts, body: Body) -> Response:
-    """{path, root, conflict, take}: a conflict with the file on disk settled -- the lines kept (take "mine"), the
-    file's in their place ("theirs"), or both -> its state."""
+    """{path, root, conflict, take, text?, theirs?, mine?}: a conflict with the file on disk settled -- the lines kept
+    (take "mine"), the file's in their place ("theirs"), or both -- or the lines the page made of the file's in its
+    box ("edited": `text`, from the file's lines `theirs` and the page's `mine`, refused if either changed since) -> its
+    state."""
+    opt = lambda k: body[k] if isinstance(body.get(k), str) else None   # noqa: E731
     return answer(srv.editors.settle(str(body.get("path") or ""), str(body.get("root") or ""),
-                                     str(body.get("conflict") or ""), str(body.get("take") or "")))
+                                     str(body.get("conflict") or ""), str(body.get("take") or ""),
+                                     opt("text"), opt("theirs"), opt("mine")))
 
 
 @router.post("/api/edit/create", dependencies=[Depends(local_only)])

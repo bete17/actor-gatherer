@@ -74,6 +74,14 @@ class Socket:
                 return got
         return None
 
+    def until_all(self, *wanted) -> bool:
+        """Messages up to the first of each (stream, name) in `wanted`, in whatever order the streams send them (each
+        its own, side by side); whether all came before the socket closed."""
+        left = set(wanted)
+        while left and (got := self.next()) is not None:
+            left.discard(got[:2])
+        return not left
+
     def say(self, value: dict):
         self.sock.sendall(self.ws.send(TextMessage(data=json.dumps(value))))
 
@@ -143,8 +151,7 @@ class StreamsOverOneSocketTest(HomeBase):
         s.say({"open": "1", "url": "/api/stream?gatherer=g&channel=c1"})
         s.say({"open": "2", "url": f"/api/terminal?session_id={sh['id']}"})
         s.say({"open": "3", "url": f"/api/edit/stream?path={path}&root={self.work}&conn=c1&client=7"})
-        self.assertIsNotNone(s.until("2", "out"))
-        self.assertIsNotNone(s.until("3", "init"))
+        self.assertTrue(s.until_all(("2", "out"), ("3", "init")))       # either first: the editor's may come before
         room = next(iter(self.httpd.editors.rooms.values()))
         self.assertEqual(list(room.conns), ["c1"])
         s.close()

@@ -5,8 +5,8 @@
 // type -- and the file on disk one more of its editors, so what an actor writes to it lands in the editor as it is
 // written, around what was typed and not saved, marked in that actor's hue until the next change on disk -- but for
 // the conflict zone: the lines edited here since the file was opened, tinted, which an actor's change is asked about
-// (Restore yours / Accept its rewrite / Keep both), not merged into, until the zone is cleared (its button in the
-// header) or the file closed. Who changed each file, of the
+// (Restore yours / Accept its rewrite / Keep both / Edit: its lines edited in the box first, edBox), not merged into,
+// until the zone is cleared (its button in the header) or the file closed. Who changed each file, of the
 // actors, is what ag's hook found each tool call did on disk (the listing's `writers`): two or more changing one file
 // are said in the tree and over the file. Saved by Save (or ⌘S / Ctrl+S): until then the file on disk, which the
 // actors read, is as it was -- or, with Auto-save on (as it is unless the reader turns it off, kept in this browser), a moment after each
@@ -808,7 +808,7 @@ async function edOpen(path, how = null) {
   if (ed.turn !== turn || ed.s) return;              // another picked meanwhile
   const doc = new A.Y.Doc(), ytext = doc.getText("text"), awareness = new A.Awareness(doc);
   const conn = Math.random().toString(36).slice(2) + Date.now().toString(36);
-  const s = ed.s = { A, path, root: "/", doc, ytext, awareness, conn, es: null, view: null, marks: null, markN: 0,
+  const s = ed.s = { A, path, root: "/", doc, ytext, awareness, conn, es: null, view: null, marks: null, markN: 0, boxes: new Map(),
     epoch: null, state: null, err: "", note: "", out: [], sending: false, awareAt: null, who: null, info };
   awareness.setLocalStateField("user", edMe());
   doc.on("update", (u, origin) => { if (origin !== "remote" && origin !== "disk") { s.out.push(u); edFlush(s); } });
@@ -1004,9 +1004,13 @@ let EdConflict = null;
 function edConflictWidget(A) {
   return EdConflict ||= class extends A.WidgetType {
     constructor(s, c, by, parts) { super(); this.s = s; this.c = c; this.by = by; this.parts = parts; }
-    eq(other) { return other.c.id === this.c.id && other.c.theirs === this.c.theirs && other.by.names.join("\n") === this.by.names.join("\n")
-      && JSON.stringify(other.parts) === JSON.stringify(this.parts); }
+    eq(other) {
+      if (this.box || other.box) return this.box === other.box;    // its lines being edited: the same box, kept as it is
+      return other.c.id === this.c.id && other.c.theirs === this.c.theirs && other.by.names.join("\n") === this.by.names.join("\n")
+        && JSON.stringify(other.parts) === JSON.stringify(this.parts);
+    }
     toDOM() {
+      if (this.box) return this.box.dom;
       const { s, c } = this, name = this.by.label, many = this.by.names.length > 1;
       const pick = (take, label, title) => el("button", { type: "button", title,
         onclick: (ev) => { ev.preventDefault(); edSettle(s, c.id, take); } }, label);
@@ -1041,6 +1045,8 @@ function edConflictWidget(A) {
           pick("theirs", c.theirs ? "Take theirs" : "Delete them", c.theirs ? "Put the file's lines in place of yours" : "Delete your lines, as the file did"),
           c.theirs && mine ? pick("both", "Keep both", "Keep your lines, and the file's after them") : null];
       }
+      picks.push(el("button", { type: "button", title: "Edit its lines here, in this box, before they go in place of yours: what they take out of your lines and put in shows as you type. Accept edit puts them in the file; Cancel leaves everything as it is.",
+        onclick: (ev) => { ev.preventDefault(); edBoxOpen(s, c); } }, "Edit"));
       const color = branch ? edWhoColor(who) : null;
       return el("div", { class: "ed-cf" + (branch ? " from-branch" : ""), style: color ? `--who: ${color}` : null },
         el("div", { class: "ed-cf-head" }, branch && who && who.avatar ? el("span", { class: "ed-avs" }, el("img", { src: `/avatars/${who.avatar}.svg`, alt: "", draggable: "false" })) : null,
@@ -1080,7 +1086,9 @@ function edConflictBy(s, c) {
 function edConflicts(s) {
   const v = s.view, list = (s.state && s.state.conflicts) || [];
   if (!v || !s.conflicts) return;
-  const sig = JSON.stringify(list.map((c) => [c.id, c.from, c.to, c.theirs, edConflictBy(s, c)]));
+  for (const id of [...s.boxes.keys()]) if (!list.some((c) => c.id === id)) edBoxClose(s, id);   // settled elsewhere
+  for (const c of list) if (s.boxes.has(c.id)) edBoxAgain(s, c, s.boxes.get(c.id));
+  const sig = JSON.stringify(list.map((c) => [c.id, c.from, c.to, c.theirs, edConflictBy(s, c), s.boxes.has(c.id) ? s.boxes.get(c.id).n : null]));
   const shown = new Set();
   v.state.field(s.conflicts.field).between(0, v.state.doc.length, (from, to, d) => { if (d.spec.cf) shown.add(d.spec.cf); });
   if (sig === s.conflicts.sig && list.every((c) => shown.has(c.id))) return;
@@ -1091,20 +1099,27 @@ function edDrawConflicts(s, list) {
   const v = s.view, A = s.A, doc = v.state.doc, Widget = edConflictWidget(A), out = [];
   for (const c of list) {
     const from = Math.min(c.from, doc.length), to = Math.min(Math.max(c.to, from), doc.length);
-    const parts = edWordDiff(doc.sliceString(from, to), c.theirs);
+    const box = s.boxes.get(c.id), parts = box ? null : edWordDiff(doc.sliceString(from, to), c.theirs);
     let at = from;                                   // what the change takes out of the lines here, marked in them
     for (const [kind, text] of parts || []) {
       if (kind === "del" && text.trim()) out.push(A.Decoration.mark({ class: "ed-del" }).range(at, at + text.length));
       if (kind !== "add") at += text.length;
+    }
+    if (box && doc.sliceString(from, to) === box.mine) {             // ... as the box has it now: what it struck
+      for (const g of box.view.state.field(box.field)) {
+        if (g.k === "add") continue;
+        if (g.k === "gone" && g.t.trim()) out.push(A.Decoration.mark({ class: "ed-del" }).range(at, at + g.t.length));
+        at += g.t.length;
+      }
     }
     if (to > from) {
       const color = c.agent ? edWhoColor(edActor(c.agent.gatherer, c.agent.channel)) : null;
       const deco = A.Decoration.line({ class: "ed-cf-mine" + (c.agent ? " from-branch" : ""), ...(color ? { attributes: { style: `--who: ${color}` } } : {}) });
       for (let p = from; p < to; ) { const line = doc.lineAt(p); out.push(deco.range(line.from)); p = line.to + 1; }
       const last = doc.lineAt(Math.max(from, to - 1));
-      out.push(A.Decoration.widget({ widget: new Widget(s, c, edConflictBy(s, c), parts), block: true, side: 1, cf: c.id }).range(last.to));
+      out.push(A.Decoration.widget({ widget: edBoxed(new Widget(s, c, edConflictBy(s, c), parts), box), block: true, side: 1, cf: c.id }).range(last.to));
     } else {
-      out.push(A.Decoration.widget({ widget: new Widget(s, c, edConflictBy(s, c), parts), block: true, side: -1, cf: c.id }).range(doc.lineAt(from).from));
+      out.push(A.Decoration.widget({ widget: edBoxed(new Widget(s, c, edConflictBy(s, c), parts), box), block: true, side: -1, cf: c.id }).range(doc.lineAt(from).from));
     }
   }
   v.dispatch({ effects: s.conflicts.set.of(A.Decoration.set(out, true)) });
@@ -1112,6 +1127,249 @@ function edDrawConflicts(s, list) {
 async function edSettle(s, conflict, take) {
   try { s.state = await post("/api/edit/settle", { path: s.path, root: s.root, conflict, take }); s.err = ""; }
   catch (e) { s.err = e.message; }
+  if (ed.s === s) { edConflicts(s); edHead(); }
+}
+
+// ------------------------------------------------------------------ a conflict's lines, edited in its box
+// Edit: the box's lines made editable, in an editor of its own -- not the file's: the reader's lines stay in the file
+// as they are, until Accept edit. What it shows is worked out once, when the editing begins -- the reader's lines and its,
+// word by word (edWordDiff) -- and from then on each piece keeps what it is (`segs`: [{k, t}]): "same" (in both,
+// plain), "add" (put in, green: its, and what the reader types), "gone" (taken out of the reader's lines, struck: what
+// it took out, and what the reader deletes of theirs; a click puts it back). So typing changes only what it types,
+// and nothing is matched again. The same pieces strike, in the reader's lines above, what the box takes out of them.
+// The "same" and "gone" pieces, in order, are always the reader's lines; the "same" and "add", the box's text. Accept
+// edit sends the box's text (Room.settle's "edited": refused where its lines, or the reader's, changed since), Cancel
+// closes it. A box lives in this page alone (`s.boxes`, by conflict), until Accept edit, Cancel, or its file closes.
+function edSegsJoin(segs) {
+  const out = [];
+  for (const g of segs) {
+    if (!g.t) continue;
+    const last = out[out.length - 1];
+    if (last && last.k === g.k) last.t += g.t; else out.push({ k: g.k, t: g.t });
+  }
+  return out;
+}
+function edSegsFrom(mine, theirs) {
+  if (mine === theirs) return edSegsJoin([{ k: "same", t: mine }]);
+  const parts = mine && theirs ? edWordDiff(mine, theirs) : null;
+  if (!parts) return edSegsJoin([{ k: "gone", t: mine }, { k: "add", t: theirs }]);
+  return edSegsJoin(edGroups(parts).flatMap((g) => g[0] === "same" ? [{ k: "same", t: g[1] }] : [{ k: "gone", t: g[1] }, { k: "add", t: g[2] }]));
+}
+// One change of the box's text -- `from` to `to` (its positions before it) made `text`: what it takes out of the
+// reader's lines struck, what it takes out of the rest gone; what it puts in, put in -- after anything struck there.
+function edSegsEdit(segs, from, to, text) {
+  const out = [];
+  let at = 0, put = !text;
+  const putIn = () => { if (!put) { out.push({ k: "add", t: text }); put = true; } };
+  for (const g of segs) {
+    if (g.k === "gone") { out.push(g); continue; }  // no width in the text: kept where it is
+    const end = at + g.t.length;
+    const a = Math.min(Math.max(from, at), end), b = Math.min(Math.max(to, at), end);
+    if (a > at) out.push({ k: g.k, t: g.t.slice(0, a - at) });
+    if (b > a && g.k === "same") out.push({ k: "gone", t: g.t.slice(a - at, b - at) });
+    if (end > b) { putIn(); out.push({ k: g.k, t: g.t.slice(b - at) }); }
+    at = end;
+  }
+  putIn();
+  return edSegsJoin(out);
+}
+function edSegsApply(segs, changes) {
+  const list = [];
+  changes.iterChanges((fromA, toA, fromB, toB, text) => list.push([fromA, toA, text.toString(), fromB]));
+  for (let i = list.length - 1; i >= 0; i--) segs = edSegsEdit(segs, ...list[i].slice(0, 3));   // the last first: the others' places hold
+  for (const [, , text, at] of list) if (!text) segs = edSegsTidy(segs, at);   // a deletion: what it left of both, plain
+  return segs;
+}
+// Where a deletion was (`at`, in the text after it): what it struck there -- of the reader's lines -- beside what is put
+// in right there, before it or after it: as much as reads the same on both sides (a line break of the reader's struck,
+// where its own stays: the same text either way) is in both, plain. Nothing else: what is shown elsewhere stays as it was.
+function edSegsTidy(segs, at) {
+  let pos = 0, i = 0;
+  for (; i < segs.length; i++) {
+    if (pos === at && segs[i].k === "gone") break;
+    if (pos > at) return segs;
+    if (segs[i].k !== "gone") pos += segs[i].t.length;
+  }
+  if (i >= segs.length) return segs;
+  const out = segs.map((g) => ({ ...g })), g = out[i], prev = out[i - 1], next = out[i + 1];
+  let n = 0;
+  if (prev && prev.k === "add") {                    // ... its end, and the end of what is put in before it
+    while (n < g.t.length && n < prev.t.length && g.t[g.t.length - 1 - n] === prev.t[prev.t.length - 1 - n]) n++;
+    if (n) {
+      const same = g.t.slice(g.t.length - n);
+      g.t = g.t.slice(0, g.t.length - n); prev.t = prev.t.slice(0, prev.t.length - n);
+      return edSegsJoin([...out.slice(0, i + 1), { k: "same", t: same }, ...out.slice(i + 1)]);
+    }
+  }
+  if (next && next.k === "add") {                    // ... its start, and the start of what is put in after it
+    while (n < g.t.length && n < next.t.length && g.t[n] === next.t[n]) n++;
+    if (n) {
+      const same = g.t.slice(0, n);
+      g.t = g.t.slice(n); next.t = next.t.slice(n);
+      return edSegsJoin([...out.slice(0, i), { k: "same", t: same }, ...out.slice(i)]);
+    }
+  }
+  return segs;
+}
+// A struck piece in the box: a click puts it back where it was -- in place of what was put in right after it, if
+// anything (that one change undone).
+let EdBoxGone = null;
+function edBoxGoneWidget(A) {
+  return EdBoxGone ||= class extends A.WidgetType {
+    constructor(box, text, i, put) { super(); this.box = box; this.text = text; this.i = i; this.put = put; }
+    eq(other) { return other.text === this.text && other.i === this.i && other.put === this.put; }
+    toDOM(view) {
+      const span = el("span", { class: "ed-gone", text: this.text.replace(/\n/g, "↵"),
+        title: `Taken out of your lines: click to put it back${this.put.trim() ? ` in place of "${this.put.trim().slice(0, 60)}"` : ""}${this.text.includes("\n") ? " (its line breaks too)" : ""}` });
+      span.addEventListener("mousedown", (ev) => ev.preventDefault());
+      span.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        const segs = view.state.field(this.box.field), next = segs[this.i + 1];
+        let at = 0;
+        for (let k = 0; k < this.i; k++) if (segs[k].k !== "gone") at += segs[k].t.length;
+        const drop = next && next.k === "add" ? next.t.length : 0;
+        view.dispatch({ changes: { from: at, to: at + drop, insert: this.text }, effects: this.box.putBack.of(this.i),
+          selection: { anchor: at + this.text.length }, userEvent: "input.putback" });
+        view.focus();
+      });
+      return span;
+    }
+    ignoreEvent() { return true; }
+  };
+}
+function edBoxDeco(A, box, segs) {
+  const Gone = edBoxGoneWidget(A), out = [];
+  let at = 0;
+  segs.forEach((g, i) => {
+    if (g.k === "gone") {
+      const next = segs[i + 1];
+      out.push(A.Decoration.widget({ widget: new Gone(box, g.t, i, next && next.k === "add" ? next.t : ""), side: -1 }).range(at));
+      return;
+    }
+    if (g.k === "add") out.push(A.Decoration.mark({ class: "ed-add" }).range(at, at + g.t.length));
+    at += g.t.length;
+  });
+  return A.Decoration.set(out, true);
+}
+const edBoxed = (widget, box) => { widget.box = box || null; return widget; };
+function edBoxOpen(s, c) {
+  if (s.boxes.has(c.id) || !s.view) return;
+  const A = s.A, doc = s.view.state.doc;
+  const from = Math.min(c.from, doc.length), mine = doc.sliceString(from, Math.min(Math.max(c.to, from), doc.length));
+  const box = { id: c.id, mine, theirs: c.theirs, n: 0, undo: [], redo: [], lastAt: 0,
+    setSegs: A.StateEffect.define(), putBack: A.StateEffect.define() };
+  box.field = A.StateField.define({
+    create: () => edSegsFrom(mine, c.theirs),
+    update(segs, tr) {
+      for (const e of tr.effects) {
+        if (e.is(box.setSegs)) return e.value;
+        if (e.is(box.putBack)) {                      // struck piece i back, in place of what was put in after it
+          const i = e.value, next = segs[i + 1];
+          return edSegsJoin([...segs.slice(0, i), { k: "same", t: segs[i].t }, ...segs.slice(next && next.k === "add" ? i + 2 : i + 1)]);
+        }
+      }
+      return tr.docChanged ? edSegsApply(segs, tr.changes) : segs;
+    },
+    provide: (f) => A.EditorView.decorations.from(f, (segs) => edBoxDeco(A, box, segs)),
+  });
+  // undone and done again with what each piece was (the editor's own history knows the text only)
+  const snap = (st) => ({ text: st.doc.toString(), segs: st.field(box.field), at: st.selection.main.head });
+  const back = (from, to) => {
+    const v = box.view, was = from.pop();
+    if (!was) return true;
+    to.push(snap(v.state));
+    v.dispatch({ changes: { from: 0, to: v.state.doc.length, insert: was.text }, effects: box.setSegs.of(was.segs),
+      selection: { anchor: Math.min(was.at, was.text.length) }, userEvent: "undo" });
+    box.lastAt = 0;
+    return true;
+  };
+  const kept = A.EditorView.updateListener.of((u) => {
+    if (!u.docChanged) return;
+    box.n++;
+    if (!u.transactions.some((tr) => tr.isUserEvent("undo"))) {
+      const now = Date.now();
+      if (now - box.lastAt > 700 || u.transactions.some((tr) => tr.isUserEvent("input.putback"))) box.undo.push(snap(u.startState));
+      box.lastAt = now;
+      box.redo = [];
+    }
+    if (!s.redraw) s.redraw = requestAnimationFrame(() => { s.redraw = 0; if (ed.s === s) edConflicts(s); });   // its marks above
+  });
+  const host = el("div", { class: "ed-box" });
+  box.note = el("div", { class: "ed-cf-again", hidden: "" });
+  box.err = el("div", { class: "ed-cf-err", hidden: "" });
+  const branch = c.agent, who = branch ? edActor(branch.gatherer, branch.channel) : null, color = branch ? edWhoColor(who) : null;
+  const nm = branch ? (who ? edWhoName(who) : branch.branch) : edConflictBy(s, c).label;
+  const btn = (label, title, f, cls) => el("button", { type: "button", class: cls || null, title, onclick: (ev) => { ev.preventDefault(); f(); } }, label);
+  box.dom = el("div", { class: "ed-cf editing" + (branch ? " from-branch" : ""), style: color ? `--who: ${color}` : null },
+    el("div", { class: "ed-cf-head" }, branch && who && who.avatar ? el("span", { class: "ed-avs" }, el("img", { src: `/avatars/${who.avatar}.svg`, alt: "", draggable: "false" })) : null,
+      el("span", { class: "what", text: `Editing ${nm ? `${nm}'s` : "the file's"} lines${branch ? ", from its branch" : ""}: what you leave here goes in place of your lines above` }),
+      el("span", { class: "grow" }),
+      btn("Accept edit", branch ? "Put these lines in the file, in place of yours above; the actor is told what you changed of its" : "Put these lines in the file, in place of yours above",
+        () => edBoxDone(s, c.id), "primary"),
+      btn("Cancel", "Close the box: your lines and the file as they are", () => { edBoxClose(s, c.id); edConflicts(s); edHead(); })),
+    box.note,
+    el("div", { class: "ed-cf-label" }, "Its lines, to edit here: ", el("span", { class: "ed-del", text: "taken out of yours" }), ", ",
+      el("span", { class: "ed-add", text: "put in" }), ". Click a struck piece to put it back."),
+    host, box.err);
+  box.view = new A.EditorView({
+    parent: host,
+    state: A.EditorState.create({
+      doc: c.theirs,
+      extensions: [
+        A.keymap.of([{ key: "Mod-z", preventDefault: true, run: () => back(box.undo, box.redo) },
+          { key: "Mod-Shift-z", preventDefault: true, run: () => back(box.redo, box.undo) },
+          { key: "Mod-y", preventDefault: true, run: () => back(box.redo, box.undo) },
+          { key: "Mod-s", preventDefault: true, run: () => true }]),
+        A.basicSetup, A.EditorState.lineSeparator.of("\n"), A.highlight, A.language(s.path), box.field, kept,
+        ed.wrap ? A.EditorView.lineWrapping : [],
+      ],
+    }),
+  });
+  s.boxes.set(c.id, box);
+  s.conflicts.sig = "";
+  edConflicts(s); edHead();
+  requestAnimationFrame(() => { box.view.focus(); box.view.dispatch({ selection: { anchor: box.view.state.doc.length } }); });
+}
+function edBoxClose(s, id) {
+  const box = s.boxes.get(id);
+  if (!box) return;
+  s.boxes.delete(id);
+  box.view.destroy();
+  if (s.conflicts) s.conflicts.sig = "";
+}
+// Its lines changed again on disk (or on its branch), or the reader's above: said, with a way to begin again from them.
+function edBoxAgain(s, c, box) {
+  const doc = s.view.state.doc, from = Math.min(c.from, doc.length);
+  const mine = doc.sliceString(from, Math.min(Math.max(c.to, from), doc.length));
+  const theirsNew = c.theirs !== box.theirs, mineNew = mine !== box.mine;
+  const sig = `${theirsNew}|${mineNew}`;
+  if (sig === box.noteSig) return;
+  box.noteSig = sig;
+  box.note.hidden = !(theirsNew || mineNew);
+  box.note.replaceChildren(...(theirsNew || mineNew ? [
+    theirsNew ? "Its lines changed again since you began editing them." : "Your lines above changed since you began.",
+    el("button", { type: "button", title: "Begin again: its lines as they are now, against your lines as they are now (what you changed here is dropped)",
+      onclick: (ev) => {
+        ev.preventDefault();
+        const d = s.view.state.doc, f = Math.min(c.from, d.length), cur = (s.state.conflicts || []).find((x) => x.id === c.id) || c;
+        box.mine = d.sliceString(f, Math.min(Math.max(cur.to, f), d.length)); box.theirs = cur.theirs;
+        box.undo = []; box.redo = []; box.noteSig = "";
+        box.view.dispatch({ changes: { from: 0, to: box.view.state.doc.length, insert: cur.theirs },
+          effects: box.setSegs.of(edSegsFrom(box.mine, cur.theirs)), userEvent: "undo" });
+        box.err.hidden = true;
+        edConflicts(s);
+      } }, theirsNew ? "Start again from its new lines" : "Start again")] : []));
+}
+async function edBoxDone(s, id) {
+  const box = s.boxes.get(id);
+  if (!box) return;
+  for (let i = 0; i < 100 && (s.sending || s.out.length) && !s.err; i++) await new Promise((r) => setTimeout(r, 20));   // the file's last keys first
+  try {
+    s.state = await post("/api/edit/settle", { path: s.path, root: s.root, conflict: id, take: "edited",
+      text: box.view.state.doc.toString(), theirs: box.theirs, mine: box.mine });
+    s.err = "";
+    edBoxClose(s, id);
+  } catch (e) { box.err.textContent = e.message; box.err.hidden = false; }
   if (ed.s === s) { edConflicts(s); edHead(); }
 }
 function edUnmark(s) {
@@ -1262,6 +1520,7 @@ function edClose() {
       && !edDiskConflicts(s).length)                      // and, auto-saved, saved -- not over a conflict
     sent = sent.then(() => post("/api/edit/save", { path: s.path, root: s.root }));
   sent.catch(() => {});
+  for (const id of [...s.boxes.keys()]) edBoxClose(s, id);
   s.awareness.setLocalState(null);                   // its cursor gone from the others' at once
   s.awareness.destroy();
   if (s.es) s.es.close();
@@ -1287,8 +1546,9 @@ function edHead() {
     return;
   }
   const st = s && s.state;
-  const nc = edDiskConflicts(s).length, na = ((st && st.conflicts) || []).length - nc;
+  const nc = edDiskConflicts(s).length, na = ((st && st.conflicts) || []).length - nc, nb = s ? s.boxes.size : 0;
   const [cls, said] = ed.err || (s && s.err) ? ["bad", ed.err || s.err]
+    : nb ? ["warn", `Editing ${nb > 1 ? `${nb} changes` : "a change"} in ${nb > 1 ? "their boxes" : "its box"}: Accept edit or Cancel there`]
     : nc ? ["bad", `${plural(nc, "conflict")} with the file on disk`]
     : na ? ["warn", `${plural(na, "change")} from a branch to approve`]
     : !s || !s.epoch ? ["", "Opening…"]

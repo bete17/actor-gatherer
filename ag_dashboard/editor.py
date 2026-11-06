@@ -18,7 +18,8 @@ kept, the file's shown beside them, for a page to take or not.
                                read or written here (`disk`), the document, and the file now; the merged text made
                                the document's (an edit here, sent to every page), and each conflict kept (`Conflict`:
                                where the pages' lines are, moved with each edit, and the file's)
-    a page settles a conflict  `Room.settle`: the pages' lines kept, the file's taken in their place, or both
+    a page settles a conflict  `Room.settle`: the pages' lines kept, the file's taken in their place, or both -- or
+                               lines the page made of the file's in its box (Edit), in place of the pages' (`edited`)
     a page saves               `Room.save`: the document written to the file, in place of it (whoever reads it
                                meanwhile reads all of the old or all of the new) -- the file's own change taken in
                                first, and not saved over where it is a conflict found then; a conflict shown before
@@ -71,6 +72,7 @@ SKIPPED = frozenset({".git", "node_modules", "__pycache__", ".venv", "venv", ".m
                      ".ruff_cache", ".tox", ".DS_Store"})
 FILES_MAX = 20000           # the most files Go to file is given of one folder
 FILES_S = 2.0               # seconds a folder's walk for them may take
+TAKES = ("mine", "theirs", "both", "edited")   # how a conflict is settled (Room.settle)
 TEMP = ".ag-edit"           # what a file being saved is written as first, beside it: not listed
 ROOT = "text"               # the document's one shared type: the file's text
 
@@ -540,14 +542,32 @@ class Room:
                     z[1] = z[1] if z[1] <= at else max(at, z[1] - n)
                 if self._from_page:
                     self.zone.append([at, at])
-        if self._from_page:                         # ranges that meet, one
-            kept: List[List[int]] = []
-            for z in sorted(self.zone):
-                if kept and z[0] <= kept[-1][1]:
-                    kept[-1][1] = max(kept[-1][1], z[1])
-                else:
-                    kept.append(z)
-            self.zone = kept
+        if self._from_page:
+            self._join_zone()
+
+    def _join_zone(self) -> None:
+        """The conflict zone's ranges that meet, one."""
+        kept: List[List[int]] = []
+        for z in sorted(self.zone):
+            if kept and z[0] <= kept[-1][1]:
+                kept[-1][1] = max(kept[-1][1], z[1])
+            else:
+                kept.append(z)
+        self.zone = kept
+
+    def _unzone(self, a: int, b: int) -> None:
+        """The conflict zone without what it has from `a` to `b` (UTF-8 bytes of the document), an empty range there
+        too: lines about to be put in place of others, not left marking the line after them."""
+        kept: List[List[int]] = []
+        for z0, z1 in self.zone:
+            if z1 < a or z0 > b or (z1 == a and z0 < a) or (z0 == b and z1 > b):
+                kept.append([z0, z1])
+                continue
+            if z0 < a:
+                kept.append([z0, a])
+            if z1 > b:
+                kept.append([b, z1])
+        self.zone = kept
 
     @staticmethod
     def _lines(text: str, ranges) -> List[Tuple[int, int]]:
@@ -681,22 +701,64 @@ class Room:
             self.disk, self.changed = text, time.time()
             self._restate()
 
-    def settle(self, conflict: str, take: str) -> dict:
+    def settle(self, conflict: str, take: str, text: Optional[str] = None, theirs: Optional[str] = None,
+               mine: Optional[str] = None) -> dict:
         """A conflict settled: the pages' lines kept (`mine`), the file's in their place (`theirs`), or the file's
-        after them (`both`)."""
-        if take not in ("mine", "theirs", "both"):
-            raise EditorError(f"take {take!r}: mine, theirs or both")
+        after them (`both`) -- or `text`, which a page made of the file's lines in its box, in their place (`edited`;
+        `theirs` and `mine`: the file's lines and the pages' it began from, as `settling` says)."""
         with self.lock:
-            c = self.conflicts.pop(conflict, None)
-            if c is None:
-                raise EditorError("that conflict is settled already")
-            self.take(c, take)
+            c = self.settling(conflict, take, text, theirs, mine)
+            del self.conflicts[c.id]
+            self.take(c, take, text)
             self._restate()
             return self.state()
 
-    def take(self, c: Conflict, take: str) -> None:
+    def settling(self, conflict: str, take: str, text: Optional[str] = None, theirs: Optional[str] = None,
+                 mine: Optional[str] = None) -> Conflict:
+        """The conflict `take` may settle. Edited (`text`), only if the file's lines are still those the page began
+        from (`theirs`) -- not changed again on disk, or on its branch, meanwhile -- and the pages' lines too (`mine`):
+        else the page is to look again, not to put its lines over what it did not see."""
+        if take not in TAKES:
+            raise EditorError(f"take {take!r}: {', '.join(TAKES)}")
+        c = self.conflicts.get(conflict)
+        if c is None:
+            raise EditorError("that conflict is settled already")
+        if take == "edited":
+            if not isinstance(text, str):
+                raise EditorError("edited: the lines, please")
+            if theirs is not None and theirs != c.theirs:
+                raise EditorError("its lines changed again since you began editing them: look at them again")
+            if mine is not None and mine != str(self.text).encode("utf-8")[c.start:c.end].decode("utf-8", "replace"):
+                raise EditorError("your lines changed since you began editing its: look at them again")
+        return c
+
+    def _replace(self, c: Conflict, text: str) -> None:
+        """`c`'s lines in the document made `text` -- sent to every page -- the other conflicts where they were (one at
+        either edge is not this one's to grow)."""
+        start, end, n = c.start, c.end, len(text.encode("utf-8"))
+        others = {o.id: (o.start, o.end) for o in self.conflicts.values() if o is not c}
+        before = self.doc.get_state()
+        if end > start:
+            del self.text[start:end]
+        if text:
+            self.text.insert(start, text)
+        c.start, c.end, shift = start, start + n, n - (end - start)
+        for o in self.conflicts.values():
+            if o.id in others:
+                a, b = others[o.id]
+                o.start, o.end = (a, b) if b <= start else (a + shift, b + shift) if a >= end else (o.start, o.end)
+        self._send("update", {"update": b64(self.doc.get_update(before))})
+
+    def take(self, c: Conflict, take: str, text: Optional[str] = None) -> None:
         """What settling `c` puts in the document: nothing (`mine`), its lines in place of the pages' (`theirs`), or
-        after them (`both`) -- sent to every page."""
+        after them (`both`), or `text` in place of the pages' (`edited`: the pages' lines now, the conflict zone's) --
+        sent to every page."""
+        if take == "edited":
+            self._unzone(c.start, c.end)
+            self._replace(c, text or "")
+            self.zone.append([c.start, c.end])
+            self._join_zone()
+            return
         if take == "mine":
             return
         before = self.doc.get_state()
@@ -806,12 +868,13 @@ class Editors:
     def save(self, path: str, root: str) -> dict:
         return self._room(path, root).save()
 
-    def settle(self, path: str, root: str, conflict: str, take: str) -> dict:
+    def settle(self, path: str, root: str, conflict: str, take: str, text: Optional[str] = None,
+               theirs: Optional[str] = None, mine: Optional[str] = None) -> dict:
         room = self._room(path, root)
         c = room.conflicts.get(conflict)
         if c is not None and c.agent is not None and self.branches is not None:
-            return self.branches.settle(room, c, take)          # its branch's base moved on too
-        return room.settle(conflict, take)
+            return self.branches.settle(room, c, take, text, theirs, mine)   # its branch's base moved on too
+        return room.settle(conflict, take, text, theirs, mine)
 
     def clear_zone(self, path: str, root: str) -> dict:
         return self._room(path, root).clear_zone()

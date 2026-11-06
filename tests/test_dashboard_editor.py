@@ -402,6 +402,58 @@ class RoomTest(unittest.TestCase):
         room.settle(c["id"], "theirs")
         self.assertEqual(str(room.text), self.disk())
 
+    def rewritten(self, room, doc):
+        """A line edited here, saved, then rewritten by an actor: its conflict."""
+        self.edit(room, "p1", doc, "return 1", "return 5")
+        room.save()
+        self.write("def f():\n    return 6\n\nx = f()\n")
+        room.check()
+        [c] = room.state()["conflicts"]
+        return c
+
+    def test_the_file_s_lines_edited_in_the_box_go_in_place_of_the_page_s(self):
+        room, conn, doc, _ = self.open("p1")
+        c = self.rewritten(room, doc)
+        drain(conn)
+        room.settle(c["id"], "edited", "    return 6 + 1\n", theirs="    return 6\n", mine="    return 5\n")
+        self.assertTrue([v for name, v in drain(conn) if name == "update"])   # sent to the pages
+        self.assertEqual((room.state()["conflicts"], str(room.text)), ([], "def f():\n    return 6 + 1\n\nx = f()\n"))
+        self.assertEqual(self.zone(room), ["    return 6 + 1\n"])          # the page's lines now: the zone's
+        room.save()
+        self.assertEqual(self.disk(), "def f():\n    return 6 + 1\n\nx = f()\n")
+        self.write("def f():\n    return 7\n\nx = f()\n")              # the actor again: asked
+        room.check()
+        self.assertEqual(len(room.conflicts), 1)
+
+    def test_lines_edited_from_what_changed_since_are_refused(self):
+        room, conn, doc, _ = self.open("p1")
+        c = self.rewritten(room, doc)
+        self.write("def f():\n    return 7\n\nx = f()\n")              # the actor again, while the box was open
+        room.check()
+        [c] = room.state()["conflicts"]
+        with self.assertRaisesRegex(editor.EditorError, "its lines changed again"):
+            room.settle(c["id"], "edited", "    return 6 + 1\n", theirs="    return 6\n", mine="    return 5\n")
+        with self.assertRaisesRegex(editor.EditorError, "your lines changed"):
+            room.settle(c["id"], "edited", "    return 7 + 1\n", theirs="    return 7\n", mine="    return 4\n")
+        with self.assertRaisesRegex(editor.EditorError, "the lines, please"):
+            room.settle(c["id"], "edited")
+        self.assertEqual(len(room.conflicts), 1)                         # still there, to look at again
+        room.settle(c["id"], "edited", "", theirs="    return 7\n", mine="    return 5\n")   # all taken out
+        self.assertEqual(str(room.text), "def f():\n\nx = f()\n")
+
+    def test_a_conflict_beside_the_one_edited_stays_on_its_lines(self):
+        room, conn, doc, _ = self.open("p1")
+        self.edit(room, "p1", doc, "return 1", "return 5")
+        self.edit(room, "p1", doc, "x = f()", "x = f() * 5")
+        room.save()
+        self.write("def f():\n    return 6\n\nx = f() * 6\n")
+        room.check()
+        first, second = room.state()["conflicts"]
+        room.settle(first["id"], "edited", "    return 6\n    # two lines now, 😀\n")
+        [second] = room.state()["conflicts"]
+        self.assertEqual((self.region(room, second), second["theirs"]), ("x = f() * 5\n", "x = f() * 6\n"))
+        self.assertEqual(str(room.text), "def f():\n    return 6\n    # two lines now, 😀\n\nx = f() * 5\n")
+
     def test_the_zone_goes_once_the_file_s_last_page_closed_it(self):
         room, conn, doc, text = self.open("p1")
         self.edit(room, "p1", doc, "return 1", "return 5")
