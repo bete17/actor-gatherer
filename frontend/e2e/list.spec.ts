@@ -157,15 +157,20 @@ test("the rail's avatars have the list's bookmark and ×, over their corners: pr
   const codex = rail.locator(".r-actor", { hasText: CODEX });
   await expect(claude.locator(".close-btn")).toHaveCount(1);
   await expect(codex.locator(".close-btn")).toHaveCount(0); // no process of it the dashboard runs: none to close
-  // over the tile's corners, beside the avatar: no taller for them, and shown only while hovered
+  // one under the other at the tile's left, beside the avatar -- the bookmark on top: no taller for them, and shown
+  // only while hovered
   const [tile, pic, bookmark, x] = await Promise.all(
     [claude, claude.locator(".r-pic"), claude.locator(".save-btn"), claude.locator(".close-btn")].map((n) =>
       n.boundingBox(),
     ),
   );
-  expect(bookmark!.x + bookmark!.width).toBeLessThanOrEqual(pic!.x);
-  expect(x!.x).toBeGreaterThanOrEqual(pic!.x + pic!.width);
-  for (const b of [bookmark!, x!]) expect(b.y).toBeGreaterThanOrEqual(tile!.y);
+  for (const b of [bookmark!, x!]) {
+    expect(b.x + b.width).toBeLessThanOrEqual(pic!.x);
+    expect(b.x).toBeGreaterThanOrEqual(tile!.x - 0.5);
+    expect(b.y).toBeGreaterThanOrEqual(tile!.y);
+    expect(b.y + b.height).toBeLessThanOrEqual(pic!.y + pic!.height);
+  }
+  expect(bookmark!.y + bookmark!.height).toBeLessThanOrEqual(x!.y);
   await expect(claude.locator(".close-btn")).toHaveCSS("opacity", "0");
   await claude.hover();
   await expect(claude.locator(".close-btn")).toHaveCSS("opacity", "1");

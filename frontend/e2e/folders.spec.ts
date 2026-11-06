@@ -1,6 +1,7 @@
 // Folders in the list (folders.py; 05-agent-list.js "FOLDERS"): made, filled, nested, renamed, deleted; an actor's
 // saved and closed lines in its folder; several actors moved at once; actors started in a folder; and in the rail, a
-// folder's and a gatherer's cards, with their buttons and their tree, and what it shows over every gatherer.
+// folder's and a gatherer's cards, with their buttons and their tree, what it shows over every gatherer, and where an
+// actor's bookmark sits however deep its folder.
 import type { Page } from "@playwright/test";
 import { expect, streamsAsRequests, test } from "./test";
 import { CLAUDE, CODEX, GATHERER, open } from "./home";
@@ -442,6 +443,47 @@ test("over every gatherer, the rail shows the folders with an actor not closed i
     await expect(folder("Later")).toBeVisible();
     await check("closed");
     await expect(rail.locator(".r-fold")).toHaveText(["▸ 1 closed"]);
+  } finally {
+    await noFolders(page);
+  }
+});
+
+test("in the rail, an actor's bookmark sits as far from its avatar in a folder in a folder as at the gatherer's top", async ({
+  page,
+}) => {
+  const outer = await newFolder(page, "Outer");
+  const inner = await newFolder(page, "Inner", outer);
+  try {
+    const g = (await homeOf(page)).gatherers.find((x) => x.name === GATHERER)!;
+    const codexCh = g.agents.find((a) => a.harness === "codex")!.channel;
+    await page.request.post("/api/folders", {
+      data: { gatherer: GATHERER, do: "file", channels: [codexCh], folder: inner },
+    });
+    // both actors idle, so Outer and Inner are shown open (the streams held back, so the server's home stays out)
+    await page.route("**/api/home", async (route) => {
+      const home = await (await route.fetch()).json();
+      for (const a of home.gatherers.find((x: { name: string }) => x.name === GATHERER).agents) a.status = "idle";
+      await route.fulfill({ json: home });
+    });
+    await streamsAsRequests(page);
+    await page.route("**/api/stream*", (route) => route.abort());
+    await open(page);
+    await page.locator("#agents .lb-fold").click();
+    const rail = page.locator("#rail");
+    await expect(rail.locator(".r-fopen .r-fopen .r-actor", { hasText: CODEX })).toBeVisible();
+    // the tile, how far its bookmark is from its avatar, and whether its bookmark is over its × and both left of it
+    const gap = (name: string) =>
+      rail.locator(".r-actor", { hasText: name }).evaluate((t) => {
+        const r = (s: string) => t.querySelector(s)!.getBoundingClientRect();
+        const pic = r(".r-pic > .logo"),
+          mark = r(".save-btn");
+        return { tile: t.getBoundingClientRect().width, gap: pic.left - mark.right };
+      });
+    const top = await gap(CLAUDE),
+      deep = await gap(CODEX);
+    expect(deep.tile).toBeLessThan(top.tile); // the tile in Inner narrower...
+    expect(Math.abs(deep.gap - top.gap)).toBeLessThan(0.5); // ...its bookmark as far from its avatar
+    expect(deep.gap).toBeGreaterThanOrEqual(0); // and not over it
   } finally {
     await noFolders(page);
   }
