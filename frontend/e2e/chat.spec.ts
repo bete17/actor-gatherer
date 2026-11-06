@@ -38,5 +38,8 @@ test("opens the files and commands beside the turn", async ({ page }) => {
 test("shows a Codex actor's chat", async ({ page }) => {
   await openActor(page, CODEX);
   await expect(page.locator("#main")).toContainText("echo hi");
+  // the pointer off the actor clicked, to empty space under the chat: its hover card not drawn over the turns
+  await page.mouse.move(700, 700);
+  await expect(page.locator("#actor-card")).toBeHidden();
   await expect(page.locator("#main")).toHaveScreenshot("chat-codex.png", { mask: masks(page) });
 });
