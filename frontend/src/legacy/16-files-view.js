@@ -354,7 +354,11 @@ function fileBlock(b, lang) {
 function filesRender({ info, session, running, writable, held }) {
   const d = state.files && state.files.data;
   const asking = errorNote(info) || askingNote(info) || answeredNote(info);
-  if (!d) return [el("div", { class: "desc", style: "padding: 10px 16px", text: SNAPSHOT ? "A snapshot has no files: run `ag dashboard` live to see them." : "Loading…" }), asking].filter(Boolean);
+  // the files feed, and -- the page's stream live -- the server's view of the conversation (its `chat`): drawn once both
+  // have come, not the turns first and what they are at a moment later (the actor done under the latest popping in, and
+  // the conversation moved under the reader)
+  const waits = !d || (!chatViewOf(info) && !!state.stream && !state.paused && !SNAPSHOT);
+  if (waits) return [el("div", { class: "desc", style: "padding: 10px 16px", text: SNAPSHOT ? "A snapshot has no files: run `ag dashboard` live to see them." : "Loading…" }), asking].filter(Boolean);
   // the view opened afresh (from another view, or the page's first draw): the conversation and the
   // commands start where they would for a new turn -- the commands at their end, the conversation at its end or at the turn picked
   const afresh = !document.querySelector("#main .files .fl-grid");
