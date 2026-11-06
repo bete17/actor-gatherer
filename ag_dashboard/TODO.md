@@ -147,15 +147,12 @@ Not covered yet:
   in (a message pasted, an answer), it waits for them (sessions.py's `type`). A session the dashboard runs no terminal
   for (another process's, or the per-turn process of `[dashboard] chat = "headless"`) cannot be interrupted from Chat.
 - [x] **Esc right after a message that starts the terminal** waits until the harness has begun its turn, at most
-  HOLD_MAX (sessions.py's `_began`): before then the harness lets it go by. Claude Code: once its record says it sent
-  the message (`message_sent`), not once the turn's call is recorded -- which waits until ag has read for it, and a new
-  session's first read on a busy gatherer builds its history first (a join build: 4-8 s on a copy of making_ag), so
-  the Esc waited out HOLD_MAX. A new codex terminal: once its first call names its thread, found from the record the
-  hook follows from that call (`session_file`, with the call's `run`), not from the read ag logs after.
-- [ ] **The same wait, still on ag's read**: a codex session resumed with a message on its command line (a message
-  from Chat to a closed codex actor) -- codex records no message sent, and its record is followed already -- and
-  agy's first message, whose record its hook follows only once the call is read (a new gatherer's database is made by
-  that first read). An Esc then waits until the read is through, up to HOLD_MAX.
+  HOLD_MAX (sessions.py's `_began`): before then the harness lets it go by. Once the turn's first call has come in:
+  the hooks record a turn's `model_call` as the call comes in, with its run, before ag reads for it (proxy_hook.py's
+  `calling`) -- recorded after, it waited for the read, and a new session's first read on a busy gatherer builds its
+  history first (a join build: 4-8 s on a copy of making_ag), so the Esc sat out HOLD_MAX. A new codex or agy
+  terminal's thread is found from that call's run (`_thread_of`), not from the read ag logs after. Every harness, new
+  or resumed.
 - [ ] **`took_back` knows only keys typed through the dashboard's terminal**, and relies on Claude Code 2.1.310
   emptying a non-empty input box on Ctrl+C (on an empty one it only says "press again to exit": never send two).
 

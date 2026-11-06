@@ -535,6 +535,27 @@ class HookTest(unittest.TestCase):
         self.assertEqual((op, sent["gatherer"], sent["properties"]["channel"]), ("rewrite", "ag-x", "sess"))
         self.assertEqual(sent["cwd"], "/w/ws")
 
+    def test_a_turn_s_call_is_recorded_as_it_comes_in_before_ag_reads(self):
+        """Its `model_call`, with the run it came from (the URL's /r/), stored before the read begins -- a read that
+        waits for a build can take seconds, and a reader learns from the call that the turn has begun."""
+        client, order = FakeClient(), []
+        request = client.request
+
+        async def ordered(op, body=None, timeout=None):
+            order.append((op, [e["type"] for e in (body or {}).get("events", [])] if op == "insert" else None))
+            return await request(op, body, timeout)
+        client.request = ordered
+        body = {"model": "m", "tools": [{"name": "Bash"}], "messages": first_turn(), "metadata": {}}
+        req = SimpleNamespace(method="POST", path="/v1/messages", label="ag-x", run="4242",
+                              headers={"X-Claude-Code-Session-Id": "sess"}, body=body)
+        self.run_hook(req, client)
+        ops = [op for op, _ in order if op != "latest"]
+        self.assertEqual(ops[:2], ["insert", "rewrite"])
+        self.assertEqual(order[[op for op, _ in order].index("insert")][1], ["model_call"])
+        [call] = [e for e in client.records if e["type"] == "model_call"]
+        self.assertEqual((call["payload"]["kind"], call["payload"]["run"]), ("turn", "4242"))
+        self.assertNotIn("read_id", call.get("properties") or {})
+
     def test_a_subagents_calls_go_through_as_they_are(self):
         client = FakeClient()
         req = SimpleNamespace(method="POST", path="/v1/messages", label="ag-x",

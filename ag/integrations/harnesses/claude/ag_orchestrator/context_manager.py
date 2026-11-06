@@ -204,6 +204,7 @@ class ClaudeContextManager(ProxyHook):
             return await self.side_call(request, client, gatherer, channel, body, call.history, call.own,
                                         adaptor, mode, op, call.kind)
 
+        await self.calling(request, gatherer, channel, call)     # recorded before ag reads for it (proxy_hook.py)
         cwd = cwd_of(messages) or self.cwd
         if isinstance(getattr(request, "state", None), dict):
             request.state[ANSWERED] = (gatherer, channel, cwd)
@@ -243,7 +244,6 @@ class ClaudeContextManager(ProxyHook):
                     new, out = again, out_again
         keep_read(request, gatherer, out)                 # what was sent is the read's context either way
         keep_stored(request, gatherer, {CHANNEL: channel}, stored)
-        self.called(gatherer, channel, call, out.get("read_id"))
         if new is not None and "read_id" in out:
             new, out["left_out_events"] = fresh_thinking(out.get("context"), new)
             out["left_out"] = sum(out["left_out_events"].values())          # off the read's sent_tokens

@@ -1,7 +1,7 @@
 """What a proxy hook does for every harness (the Claude Code and codex hooks build on it): once the hook server has a
 call's answer, as it streams and once whole, the answer is recorded as events of the session -- each complete part
 (`reply_part`), then its end (`reply_end`) -- and a call that failed as `call_failed`; every call it sees is recorded as
-`model_call` (records.py). A side call whose answer is the session's recap or name is the subclass's to read
+`model_call` (records.py) -- a turn's as it comes in, before ag reads for it (`calling`). A side call whose answer is the session's recap or name is the subclass's to read
 (`side_answered`). From each call of a session on, the harness's own record of it is followed (`following`,
 session_files.py): what it says that no call carries recorded as it is written. What an answer asks the user, and what
 a call's new pieces say of background tasks, are recorded too (`derive`: harness_kit's `derived`), each once, by the
@@ -66,6 +66,16 @@ class ProxyHook:
         self.keep(self.recorded(gatherer, channel, [model_call(call.kind, self.harness.name, call.version, read_id,
                                                                {"derives": True, **detail})]))
 
+    async def calling(self, request, gatherer: str, channel: str, call: Call) -> None:
+        """A turn's call recorded as it comes in (`model_call`), before ag reads for it -- which can take seconds, as it
+        waits for a build -- with the run it came from (`request.run`, the URL's /r/: the process a dashboard's terminal
+        started), where known: what tells a reader the harness has begun its turn (a key that stops it now stops it),
+        and which session a new process works in (a codex thread, an agy conversation). Awaited, in the session's own
+        lane at ag's server: so it is stored before the read begins, and a new gatherer's database is made by one lane,
+        not two at once."""
+        await self.recorded(gatherer, channel, [model_call(call.kind, self.harness.name, call.version, None,
+                                                           {"derives": True, "run": getattr(request, "run", None)})])
+
     def derive(self, gatherer: str, channel: str, parts: List[Part], history: Optional[list] = None,
                asks: bool = True) -> None:
         """What `parts` -- an answer's, or a call's new pieces -- say besides the conversation (harness_kit's `derived`:
@@ -88,15 +98,13 @@ class ProxyHook:
                          beside=True))
 
     def following(self, request, gatherer: str, channel: str, call: Call) -> None:
-        """The session's own record followed (session_files.py), from this call of it on: where it runs, the harness's
-        own folder for it as its launcher named it (`request.config`, the URL's /c/), and the run the call came from
-        (`request.run`, the URL's /r/). The call's session kept on the request, for a hang-up while ag reads for it
-        (`hung_up`)."""
+        """The session's own record followed (session_files.py), from this call of it on: where it runs, and the
+        harness's own folder for it as its launcher named it (`request.config`, the URL's /c/). The call's session kept
+        on the request, for a hang-up while ag reads for it (`hung_up`)."""
         if isinstance(getattr(request, "state", None), dict):
             request.state[self.SESSION] = (gatherer, channel)
         if self.sessions is not None and call is not None and call.session:
-            self.sessions.follow(gatherer, channel, self.harness, call.session, call.cwd, getattr(request, "config", None),
-                                 getattr(request, "run", None))
+            self.sessions.follow(gatherer, channel, self.harness, call.session, call.cwd, getattr(request, "config", None))
 
     async def recapped(self, gatherer: str, channel: str, text: Optional[str]) -> None:
         """A recap the harness made of the session, recorded."""

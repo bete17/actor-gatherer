@@ -44,9 +44,8 @@ BATCH = 200                 # the most events inserted at once
 class _Followed:
     """One session's record, as followed so far."""
 
-    def __init__(self, harness: Harness, session: str, cwd: Optional[str], config: Optional[str],
-                 run: Optional[str] = None):
-        self.harness, self.session, self.cwd, self.config, self.run = harness, session, cwd, config, run
+    def __init__(self, harness: Harness, session: str, cwd: Optional[str], config: Optional[str]):
+        self.harness, self.session, self.cwd, self.config = harness, session, cwd, config
         self.path: Optional[str] = None
         self.follower = None
         self.offset = 0
@@ -73,17 +72,16 @@ class SessionFiles:
         self.followed: Dict[Tuple[str, str], _Followed] = {}
 
     def follow(self, gatherer: str, channel: str, harness: Harness, session: Optional[str], cwd: Optional[str] = None,
-               config: Optional[str] = None, run: Optional[str] = None) -> None:
-        """A call of `session` (the channel's) has come in, from the harness's run `run` (as its launcher named it;
-        None: not known): its record followed, if it is not already."""
+               config: Optional[str] = None) -> None:
+        """A call of `session` (the channel's) has come in: its record followed, if it is not already."""
         if not session:
             return
         try:
             f = self.followed.get((gatherer, channel))
             if f is None or f.harness.name != harness.name:
-                f = self.followed[(gatherer, channel)] = _Followed(harness, session, cwd, config, run)
+                f = self.followed[(gatherer, channel)] = _Followed(harness, session, cwd, config)
             f.called = time.time()
-            f.cwd, f.config, f.run = cwd or f.cwd, config or f.config, run or f.run
+            f.cwd, f.config = cwd or f.cwd, config or f.config
             if f.task is None or f.task.done():
                 f.task = asyncio.ensure_future(self._follow(gatherer, channel, f))
         except Exception as exc:  # noqa: BLE001 - never in the way of the call
@@ -119,7 +117,7 @@ class SessionFiles:
         if follower is None:
             return False
         f.path, f.follower = path, follower
-        await self._insert(gatherer, channel, [session_file(f.harness.name, f.path, f.run)])
+        await self._insert(gatherer, channel, [session_file(f.harness.name, f.path)])
         self.log(gatherer, f"[{channel}] session file: following {f.path}")
         return True
 
