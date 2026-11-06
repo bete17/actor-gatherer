@@ -10,16 +10,15 @@
 aside { border-right: 1px solid var(--side-rule); background: var(--side); padding: 12px 0; overflow-y: auto; }
 #agents { flex: 1; min-height: 0; border-right: 0; }
 aside h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 14px 16px 6px; font-weight: 600; }
-/* a gatherer: the top folder, drawn as its folders are (04-list.css's .folder-line), its name a little larger; no rule
-   between gatherers */
+/* a gatherer: the top folder, drawn as its folders are (04-list.css's .folder-line), its name a little larger, no icon,
+   what is in it set in under it as a folder's is (.g-kids); no rule between gatherers */
 .gatherer { padding: 2px 0; }
 /* its name, the hide button beside it (on hover), and at the right how many run and the start buttons; a
    click on the row, but on its buttons, opens or closes it */
 .gatherer-row { display: flex; align-items: stretch; margin: 1px 8px; border-radius: 8px; min-height: 30px; }
 .gatherer-row:hover { background: var(--wash); }
-.gatherer-row .name { flex: 0 1 auto; min-width: 0; padding: 5px 4px 5px 7px; display: flex; align-items: center; gap: 6px;
+.gatherer-row .name { flex: 0 1 auto; min-width: 0; padding: 5px 4px 5px 4px; display: flex; align-items: center; gap: 6px;
   border: 0; border-radius: 8px; background: none; color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
-.gatherer-row .gmark { display: inline-flex; flex: none; color: var(--muted); }
 .gatherer-row .fill { flex: 1 0 auto; display: flex; align-items: center; justify-content: flex-end; padding: 0 4px 0 8px; cursor: pointer; }
 .gatherer-row .fill:last-child { padding-right: 6px; }
 .gatherer-row .name:focus-visible { outline: 2px solid var(--axis); outline-offset: -2px; }

@@ -129,12 +129,11 @@ button:disabled { opacity: .5; cursor: default; }
 .folder-line { position: relative; display: flex; align-items: center; margin: 1px 8px; border-radius: 8px; min-height: 30px; }
 .folder-line:hover { background: var(--wash); }
 .folder-line .fbtn { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 6px; border: 0; background: none; color: var(--ink-2);
-  font: inherit; font-size: 13px; font-weight: 600; padding: 5px 4px 5px 7px; text-align: left; cursor: pointer; border-radius: 8px; }
+  font: inherit; font-size: 13px; font-weight: 600; padding: 5px 4px 5px 4px; text-align: left; cursor: pointer; border-radius: 8px; }
 .folder-line:hover .fbtn { color: var(--ink); }
 .folder-line .fbtn:focus-visible { outline: 2px solid var(--axis); outline-offset: -2px; }
 .folder-line .caret { width: 10px; flex: none; color: var(--muted); font-size: 9px; text-align: center; transition: transform .15s; }
 .folder-line .fbtn[aria-expanded="true"] .caret { transform: rotate(90deg); }
-.folder-line .folder-mark, .folder-line.editing .folder-mark { display: inline-flex; color: var(--muted); flex: none; }
 .folder-line .fname { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .folder-line .fill { position: relative; flex: none; display: flex; align-items: center; justify-content: flex-end; gap: 4px;
   min-height: 26px; padding: 0 6px 0 2px; cursor: pointer; }
@@ -158,12 +157,15 @@ button:disabled { opacity: .5; cursor: default; }
 .folder-line .act.start + .folder-act { margin-left: 4px; }
 .folder-line .folder-act { width: 24px; justify-content: center; padding: 0; }
 .folder-line .folder-act.delete:hover, .folder-line .folder-act.delete:focus-visible { color: var(--critical); }
-.folder-line.editing { gap: 6px; padding: 3px 8px 3px 24px; }
+.folder-line.editing { gap: 6px; padding: 3px 8px 3px 20px; }
 .folder-line .folder-box { flex: 1 1 auto; min-width: 0; width: auto; margin: 0; font-size: 12.5px; padding: 2px 6px; }
-.f-kids { margin-left: 21px; border-left: 1px solid var(--grid); }
-.f-kids .agent { margin-left: 4px; width: calc(100% - 12px); }
-.f-kids .folder-line { margin-left: 4px; }
-.f-kids > .agent-group { padding-left: 14px; }
+/* what is in a folder (.f-kids) or a gatherer (.g-kids), set in under its line, its guide line under the caret's
+   middle (the line's margin + 4px padding + half the 10px caret): 14px a level, a gatherer's and a folder's alike */
+.g-kids { margin-left: 17px; border-left: 1px solid var(--grid); }
+.f-kids { margin-left: 13px; border-left: 1px solid var(--grid); }
+:is(.f-kids, .g-kids) .agent { margin-left: 4px; width: calc(100% - 12px); }
+:is(.f-kids, .g-kids) .folder-line { margin-left: 4px; }
+:is(.f-kids, .g-kids) > .agent-group { padding-left: 14px; }
 .f-kids.peek { border-left-style: dashed; }
 .f-empty { color: var(--muted); font-size: 11.5px; font-style: italic; padding: 3px 0 5px 14px; }
 .agent-group .fold-mark { display: inline-flex; vertical-align: -1px; margin-right: 3px; color: var(--s1); }
