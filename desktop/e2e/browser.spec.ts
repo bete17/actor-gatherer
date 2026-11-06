@@ -354,6 +354,85 @@ test("over the page: the agent's cues, Pick and Area, the user's click told, Esc
   }
 });
 
+// Something of the dashboard's over the pane -- a card the size of a folder's hover card -- and gone again: the page
+// swapped for its still picture and back with no blank between. Timed on both sides: in the app, when the page is
+// hidden and shown (polled every millisecond); in the dashboard, each frame, whether the still picture is drawn (shown
+// and decoded). (A card, not a hovered one: the app hiding or showing a page moves the window's real pointer, which in
+// a test is not where Playwright's is.)
+test("a card over the pane: the page hidden only once its picture is drawn, shown before the picture goes", async () => {
+  const { app, page } = await launch();
+  try {
+    expect((await ask(`/browser/w/${key}/nav`, { url: site })).done).toBe(site);
+    await refOnce('button "Pay"');
+    await until(async () => (await pagesOf(app)).some((p) => p.url === site && p.visible));
+
+    await app.evaluate(({ BrowserWindow }, u) => {
+      const g = globalThis as unknown as { agShown: [number, boolean | null][]; agPoll: NodeJS.Timeout };
+      g.agShown = [];
+      let last: boolean | null | undefined;
+      g.agPoll = setInterval(() => {
+        const v = BrowserWindow.getAllWindows()[0]?.contentView.children.find((c) => (c as Electron.WebContentsView).webContents.getURL() === u);
+        const now = v ? v.getVisible() : null;
+        if (now !== last) g.agShown.push([Date.now(), now]);
+        last = now;
+      }, 1);
+    }, site);
+    await page.evaluate(() => {
+      const w = window as unknown as { agDrawn: [number, boolean][] };
+      w.agDrawn = [];
+      const frame = () => {
+        const img = document.querySelector<HTMLImageElement>(".bw-stage > img");
+        const drawn = !!img && !img.hidden && img.complete && img.naturalWidth > 0 && img.src.startsWith("data:");
+        if (w.agDrawn.at(-1)?.[1] !== drawn) w.agDrawn.push([Date.now(), drawn]);
+        requestAnimationFrame(frame);
+      };
+      requestAnimationFrame(frame);
+    });
+
+    const stage = (await page.locator(".bw-stage").first().boundingBox())!;
+    for (let round = 0; round < 3; round++) {
+      await page.evaluate(([x, y]) => {
+        const d = document.createElement("div");
+        d.id = "e2e-card";
+        Object.assign(d.style, { position: "fixed", left: `${x}px`, top: `${y}px`, width: "300px", height: "160px", background: "#444",
+          borderRadius: "9px", zIndex: "70" });
+        document.body.append(d);
+      }, [stage.x - 40, stage.y + 20]);
+      const why = async (what: string) => `${what}: ${JSON.stringify(await pagesOf(app))}`;
+      await until(async () => (await pagesOf(app)).every((p) => !p.visible), 10_000).catch(async () => {
+        throw new Error(await why(`round ${round}, covered: the page still shown`));
+      });
+      await new Promise((r) => setTimeout(r, 300));
+      await page.evaluate(() => document.getElementById("e2e-card")?.remove());
+      await until(async () => (await pagesOf(app)).some((p) => p.url === site && p.visible), 10_000).catch(async () => {
+        throw new Error(await why(`round ${round}, uncovered: the page not back`));
+      });
+      await new Promise((r) => setTimeout(r, 400));
+    }
+
+    const shown = await app.evaluate(() => {
+      const g = globalThis as unknown as { agShown: [number, boolean | null][]; agPoll: NodeJS.Timeout };
+      clearInterval(g.agPoll);
+      return g.agShown;
+    });
+    const drawn = await page.evaluate(() => (window as unknown as { agDrawn: [number, boolean][] }).agDrawn);
+    const drawnAt = (t: number) => drawn.filter(([at]) => at <= t).at(-1)?.[1] ?? false;
+    const gaps: string[] = [];
+    for (let i = 0; i < shown.length; i++) {
+      const [at, visible] = shown[i];
+      if (visible !== false) continue;
+      const back = shown[i + 1]?.[0] ?? Date.now();
+      // hidden: its picture drawn by then, and through to when the page is back
+      if (!drawnAt(at)) gaps.push(`hidden ${(drawn.find(([t, d]) => t > at && d)?.[0] ?? back) - at} ms before its picture was drawn`);
+      for (const [t, d] of drawn) if (t > at && t < back && !d) gaps.push(`its picture gone ${back - t} ms before the page was back`);
+    }
+    expect(shown.filter(([, v]) => v === false).length).toBe(3);
+    expect(gaps).toEqual([]);
+  } finally {
+    await app.close();
+  }
+});
+
 // ---- step 4: what Electron leaves to the app ----
 
 test("a page's dialogs, find, downloads and permission asks", async () => {

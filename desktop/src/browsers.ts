@@ -11,6 +11,10 @@ import path from "node:path";
 export const PARTITION = "persist:browsers"; // the pages' profile, in the app's folder in the home: logins last
 const RECONNECT = [1000, 2000, 5000, 10_000]; // ms between tries to reach the dashboard again
 const PICTURE_WAIT = 3000; // ms a hidden page has to give its still picture
+// ms the dashboard has to draw a page's still picture before the page is hidden anyway (no frames: the window hidden)
+const STILL_WAIT = 500;
+// ms a page shown again keeps its still picture under it: the picture goes once the page is surely drawn over it
+const STILL_KEPT = 150;
 
 export type Stage = { x: number; y: number; w: number; h: number; key: string; target: string; covered?: boolean };
 export type Size = { width: number; height: number };
@@ -112,6 +116,7 @@ export class Pages {
   private shield: WebContentsView | null = null; // over a page whose input is held: takes the user's clicks, not ag's
   private lastSize: Size | null = null; // the last pane's a page was shown in: a new page's, if ag gives none
   private static current: Pages | null = null; // the pages the profile's downloads and permission asks are for
+  private drawing = new Map<string, () => void>(); // a pane's still picture sent, until the dashboard has drawn it
 
   constructor(
     private win: BaseWindow,
@@ -384,20 +389,29 @@ export class Pages {
                 this.place();
                 return;
               }
-              this.still(s.target, url);
-              this.hide(p);
+              // hidden only once its picture is drawn in its place: hidden before, the pane is blank meanwhile
+              const target = s.target;
+              return this.stillDrawn(target, url).then(() => {
+                if (p.still && this.pages.get(target) === p) this.hide(p);
+              });
             })
             .catch(() => {});
         }
         continue;
       }
       if (!s.covered) p.bare = false;
-      if (p.still) {
-        p.still = false;
-        this.still(s.target, null);
-      }
+      const pictured = p.still;
+      p.still = false;
       p.view.setVisible(true);
       this.unemulate(p); // (its own size now, the pane's)
+      if (pictured) {
+        // the page over its pane first, then its picture gone from under it (unless covered again meanwhile)
+        this.drawing.get(s.target)?.();
+        const target = s.target;
+        setTimeout(() => {
+          if (!p.still && this.pages.get(target) === p) this.still(target, null);
+        }, STILL_KEPT);
+      }
       if (p.held) shielded = bounds;
     }
     for (const [id, p] of this.pages)
@@ -414,6 +428,27 @@ export class Pages {
       this.shield.setBounds(shielded);
       this.shield.setVisible(true);
     } else this.shield?.setVisible(false);
+  }
+
+  /** The dashboard told to draw `target`'s still picture: done once it says it is drawn (ag:still-drawn, drawn), or
+   * after STILL_WAIT, or a newer one sent, or the page shown again. */
+  private stillDrawn(target: string, url: string): Promise<void> {
+    this.drawing.get(target)?.();
+    return new Promise((resolve) => {
+      const done = () => {
+        clearTimeout(timer);
+        if (this.drawing.get(target) === done) this.drawing.delete(target);
+        resolve();
+      };
+      const timer = setTimeout(done, STILL_WAIT);
+      this.drawing.set(target, done);
+      this.still(target, url);
+    });
+  }
+
+  /** The dashboard's word that `target`'s still picture is drawn in its pane. */
+  drawn(target: string): void {
+    this.drawing.get(target)?.();
   }
 
   /** `p` out of sight, laid out at its size: a page hidden in the window has none of its own -- a tab the agent opened
