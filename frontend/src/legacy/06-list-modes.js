@@ -85,10 +85,12 @@ function renderFolded() {
 // does (folded, the counts the list shows for it); hovered, its card has its buttons (gathererCard) -- then its box as
 // the list has it (railBox): each of its folders, folded, its name as a gatherer's is, and under it, as under a folded
 // gatherer, how many wait on the reader, stopped on an error, run (railFolded) -- a click opens it in place, its actors
-// and folders set in under its name, a line down their left; hovered, a folder's name has its card with its buttons and
+// and folders set in under its name, a square bracket down their left from its name; hovered, a folder's name has its card with its buttons and
 // its actors (folderCard); a double-click on a gatherer's or folder's name shows only it (railHere) -- then its actors
-// open, then its saved and closed ones, folded as the list folds
-// them, to a line here too that opens them (the one shown staying in view). Each actor its avatar, its status's dot at
+// open; its saved and closed ones, folded as the list folds them, to a line at its top that opens them (the one shown
+// staying in view). Only what the reader checks at the rail's foot (railShow, RAIL_FOOT), over every gatherer or drilled
+// in: unchecked, only the folders with an actor not closed in them, open, and no saved or closed lines. Each actor its
+// avatar, its status's dot at
 // its corner, and its name in small under it; hovered (or in focus from the keys), a card beside the rail says who it
 // is (actorCard) -- a folder's, what it holds (folderCard) -- and an actor's bookmark and × show in its top corners. A
 // click shows it, as in the list.
@@ -123,10 +125,13 @@ const railUp = ({ g, f }) => railGo(f ? { g: g.name, f: parentOf(g.name, f) } : 
 // A click on a gatherer's or a folder's name in the rail folds or opens it; the second of a double-click folds it back
 // as it was, and the rail shows only it (railDrill)
 const railNameClick = (fold, at) => (ev) => { cardHide(); fold(); if (ev.detail === 2) railDrill(at); };
-// The rail drilled in (railAt): Up and Root, where it is (the path to it small over its name, its card hovered), then
-// what is in it as the list has it -- a gatherer's top, its gatherer agent first
-function railHere(here) {
+// The rail drilled in (railAt): Up and Root, where it is (the path to it small over its name, its card hovered; the name
+// a button folding or opening what is in it, as a folder's or gatherer's name does in the tree), then what is in it as
+// the list has it -- a gatherer's top, its gatherer agent first; folded, its counts, and those of its actors open in a pane
+function railHere(here, view) {
   const { g, f } = here, up = f ? parentOf(g.name, f) : null, crew = g.agents.find(isCoordinator);
+  const open = f ? railOpen(g, f, view.busy) : !collapsed.has(g.name), name = f ? f.name : titleOf(g);
+  const fold = f ? () => railFold(g, f, view.busy) : () => toggleGatherer(g.name);
   // the places above it, the gatherer first: a step each, a click showing only it
   const steps = [];
   if (f) {
@@ -146,9 +151,20 @@ function railHere(here) {
       steps.length ? el("div", { class: "r-path", role: "group", "aria-label": "Where it is" },
         ...steps.map((s) => el("button", { class: "r-step", type: "button", title: `${s.name}: show only it`, onclick: () => railGo(s.at) },
           el("span", { class: "nm", text: s.name }), el("span", { class: "sep", "aria-hidden": "true", text: "›" })))) : null,
-      el("div", { class: "r-hname", "data-card": key(g.name, f ? `folder:${f.id}` : "gatherer:") }, ...breakable(f ? f.name : titleOf(g)))),
-    !f && crew && !crewHidden.has(g.name) ? railActor(g, crew) : null,
-    ...railBox(g, f ? f.id : null));
+      el("button", { class: "r-hname", type: "button", "aria-expanded": open ? "true" : "false", "data-card": key(g.name, f ? `folder:${f.id}` : "gatherer:"),
+        title: `${name}: ${open ? "fold it" : "open it"}`, onclick: () => { cardHide(); fold(); } },
+        el("span", { class: "caret", "aria-hidden": "true", text: "▶" }), el("span", { class: "nm" }, ...breakable(name)))),
+    ...(open ? [!f && crew && !crewHidden.has(g.name) ? railActor(g, crew) : null, ...railBoxOr(g, f ? f.id : null, view)] : railHereFolded(g, f)));
+}
+function railHereFolded(g, f) {
+  const counts = f ? tallyChips(folderTally(g, f.id), plural(folderTally(g, f.id).open, "actor")) : gathererCounts(g);
+  const shown = f ? openIn(g, f.id) : g.agents.filter((a) => inPane(g, a));
+  return [counts.length ? el("div", { class: "r-counts" }, ...counts) : null, ...shown.map((a) => railActor(g, a))];
+}
+// what is in it, or, all of it left out as the rail's foot says (railShow), that nothing open is
+function railBoxOr(g, id, view) {
+  const kids = railBox(g, id, view);
+  return kids.length ? kids : [el("div", { class: "r-none", text: "Nothing open here" })];
 }
 // Over the rail, every gatherer's actors open (its gatherer agent left out, as a folder's counts leave it), counted by
 // what they do -- waiting for the reader, stopped on an error, running (in the background too), finished and not yet
@@ -169,12 +185,86 @@ function railTotals(shown) {
   return chips.length ? el("div", { class: "r-totals", role: "group", "aria-label": `Every gatherer's actors: ${chips.map((c) => c.title).join(", ")}` },
     ...chips) : null;
 }
+// The rail shows only what the reader checks at its foot (RAIL_FOOT), over every gatherer and drilled in alike, kept in
+// this browser, each unchecked at first: "folders" -- unchecked, only the folders with an actor not closed in them, at
+// any depth (busyFolders); "saved", "closed" -- their lines (unchecked, none: only those of them open in a pane, in view).
+const RAIL_SHOW_KEY = "ag-dashboard-rail-show";
+const railShow = (() => {
+  const v = { folders: false, saved: false, closed: false };
+  try { const k = JSON.parse(localStorage.getItem(RAIL_SHOW_KEY)) || {}; for (const n of Object.keys(v)) v[n] = k[n] === true; } catch (e) { /* none kept */ }
+  return v;
+})();
+function setRailShow(what, on) {
+  railShow[what] = on;
+  try { localStorage.setItem(RAIL_SHOW_KEY, JSON.stringify(railShow)); } catch (e) { /* this page only */ }
+  renderRail();
+}
+// Its foot: "Show…", folded; hovered, in focus from the keys, or pressed (where there is no hovering), a box each for
+// folders, saved and closed opens over the word, which stays where it is. Made once, and kept as the rail is drawn again
+// above it (renderRail), so a redraw under the pointer does not fold it again; drawRailFoot ticks its boxes.
+const RAIL_FOOT = (() => {
+  const box = (what, says) => el("label", { class: "r-check", title: says },
+    el("input", { type: "checkbox", "data-show": what, "aria-label": `Show ${what}`, onchange: (ev) => setRailShow(what, ev.target.checked) }),
+    el("span", { text: what }));
+  const foot = el("div", { class: "r-show", role: "group", "aria-label": "What the rail shows" },
+    el("div", { class: "r-checks" },
+      box("folders", "Every folder: unchecked, only those with an actor in them that is not closed"),
+      box("saved", "The saved actors of each gatherer and folder, once closed: a line opening them"),
+      box("closed", "The closed actors of each gatherer and folder: a line opening them")),
+    el("button", { class: "r-show-hd", type: "button", "aria-expanded": "false", text: "Show…",
+      title: "What else the rail shows: every folder, the saved actors, the closed ones",
+      onclick: (ev) => ev.currentTarget.setAttribute("aria-expanded", String(foot.classList.toggle("open"))) }));
+  return foot;
+})();
+function drawRailFoot() { for (const i of RAIL_FOOT.querySelectorAll("input[data-show]")) i.checked = railShow[i.dataset.show]; }
+// An actor active, for the rail: any not closed, saved or not -- at work, waiting for the reader, stopped on an error,
+// finished, idle. The ids of a gatherer's folders with one in them, at any depth (`busy`); and of those with one in them
+// or one open in a pane (`kept`: the folder of a closed one shown stays in view, opened or not as the reader left it).
+const railBusy = (g, a) => !["Saved", "Closed"].includes(groupOf(g, a));
+function busyFolders(g) {
+  const busy = new Set(), kept = new Set();
+  const up = (a, ids) => { for (let f = folderById(g.name, folderOf(g.name, a)); f && !ids.has(f.id); f = folderById(g.name, f.parent)) ids.add(f.id); };
+  for (const a of g.agents) {
+    if (isCoordinator(a)) continue;
+    if (railBusy(g, a)) { up(a, busy); up(a, kept); } else if (inPane(g, a)) up(a, kept);
+  }
+  return { busy, kept };
+}
+// A busy folder is open in the rail unless the reader folded it there (busyFolded, kept in this browser) -- forgotten once
+// it is busy no more, so it opens again the next time; any other folder open or not as the list has it.
+const BUSY_FOLDED_KEY = "ag-dashboard-rail-busy-folded";
+const busyFolded = (() => {
+  try { const v = JSON.parse(localStorage.getItem(BUSY_FOLDED_KEY)); if (Array.isArray(v)) return new Set(v); } catch (e) { /* none kept */ }
+  return new Set();
+})();
+const keepBusyFolded = () => { try { localStorage.setItem(BUSY_FOLDED_KEY, JSON.stringify([...busyFolded])); } catch (e) { /* this page only */ } };
+const railOpen = (g, f, busy) => busy.has(f.id) ? !busyFolded.has(folderKey(g.name, f.id)) : isOpenFolder(g.name, f.id);
+function railFold(g, f, busy) {
+  if (!busy.has(f.id)) return toggleFolder(g.name, f.id);
+  const k = folderKey(g.name, f.id);
+  if (busyFolded.has(k)) busyFolded.delete(k); else busyFolded.add(k);
+  keepBusyFolded(); renderAgents();
+}
+// each shown gatherer's busy folders (busyFolders), by its name; those folded by the reader no longer busy, forgotten
+function railBusyNow(shown) {
+  const busy = new Map(shown.map((g) => [g.name, busyFolders(g)]));
+  let gone = false;
+  for (const k of busyFolded) {
+    const [gname, id] = k.split("\u0000");
+    if (!(busy.get(gname) || { busy: new Set() }).busy.has(Number(id))) { busyFolded.delete(k); gone = true; }
+  }
+  if (gone) keepBusyFolded();
+  return busy;
+}
 function renderRail() {
   const shown = state.home.gatherers.filter((g) => !isHidden(g));
   const list = el("div", { class: "r-actors" });
+  const busy = railBusyNow(shown);
   // drilled in: there, or, it gone, its gatherer's top, or every gatherer
   const here = railAt ? railFind(railAt) || railFind({ g: railAt.g, f: null }) : null;
-  if (here) list.append(railHere(here));
+  // what each shows: its folders with an actor not closed in them, open; the rest, its saved and closed lines, as checked
+  const view = (g) => ({ ...busy.get(g.name), only: !railShow.folders, saved: railShow.saved, closed: railShow.closed });
+  if (here) list.append(railHere(here, view(here.g)));
   for (const g of here ? [] : shown) {
     const open = !collapsed.has(g.name), crew = g.agents.find(isCoordinator);
     const sec = el("section", { class: "r-gatherer" + (open ? " open" : ""), "aria-label": titleOf(g) },
@@ -188,61 +278,71 @@ function renderRail() {
       if (counts.length) sec.append(el("div", { class: "r-counts" }, ...counts));
       for (const a of g.agents) if (openActors().some((sel) => isAt(sel, g.name, a.channel))) sec.append(railActor(g, a));
     } else {
-      // what is in it, in one box under its name (r-kids), set in, a line down its left: a tree, as the list's folders are
-      sec.append(el("div", { class: "r-kids" }, crew && !crewHidden.has(g.name) ? railActor(g, crew) : null, ...railBox(g, null)));
+      // what is in it, in one box under its name (r-kids), set in: a tree, as the list's folders are, each folder's in its bracket
+      sec.append(el("div", { class: "r-kids" }, crew && !crewHidden.has(g.name) ? railActor(g, crew) : null, ...railBox(g, null, view(g))));
     }
     list.append(sec);
   }
   if (!shown.length) list.append(el("div", { class: "r-none", text: state.home.gatherers.length ? "Every gatherer is hidden" : "No gatherers" }));
   // its buttons -- open the list, settings, full screen -- the header's, in one row over it (01-layout.css); then the
-  // totals of what every actor does (railTotals), then the tree
+  // totals of what every actor does (railTotals), then the tree, drawn again; then its foot, as it was (RAIL_FOOT)
   const rail = document.getElementById("rail"), was = rail.querySelector(".r-actors");
   const top = was ? was.scrollTop : 0, across = was ? was.scrollLeft : 0;
-  rail.replaceChildren(...[railTotals(shown), list].filter(Boolean));
+  for (const n of [...rail.children]) if (n !== RAIL_FOOT) n.remove();
+  rail.prepend(...[railTotals(shown), list].filter(Boolean));
+  if (!shown.length) RAIL_FOOT.remove();
+  else { drawRailFoot(); if (RAIL_FOOT.parentNode !== rail) rail.append(RAIL_FOOT); }
   list.scrollTop = railMoved ? 0 : top; list.scrollLeft = railMoved ? 0 : across;   // drawn again where the reader had scrolled it
   railMoved = false;
   if (hover.from === "rail") cardDraw();
 }
-// A gatherer's or a folder's box in the rail (`id` null: the gatherer's top), as the list's (boxRows): its folders -- each
-// its name, or, opened, its name and what is in it set in under it -- its actors open, its saved and closed folds (its
-// terminals: in the list only).
-function railBox(g, id) {
-  const out = [];
+// A gatherer's or a folder's box in the rail (`id` null: the gatherer's top), as the list's (boxRows) but its saved and
+// closed folds first, at its top (its terminals: in the list only); then its folders -- each its name, or, opened, its
+// name and what is in it set in under it -- then its actors open. `view`: its folders busy (busy: open unless the reader
+// folded them, railOpen), those kept in view (kept: busy, or one in a pane), whether only those are shown (only), whether
+// its saved and closed lines are (saved, closed).
+function railBox(g, id, view) {
+  const lines = [], folders = [], open = [];
   for (const f of kidFolders(g.name, id)) {
-    if (isOpenFolder(g.name, f.id)) {
-      out.push(el("div", { class: "r-fopen", role: "group", "aria-label": f.name },
+    if (view.only && !view.kept.has(f.id)) continue;                // all in it closed, none in a pane: left out
+    const fold = () => railFold(g, f, view.busy);
+    if (railOpen(g, f, view.busy)) {
+      folders.push(el("div", { class: "r-fopen", role: "group", "aria-label": f.name },
         el("button", { class: "r-fhead", type: "button", "aria-expanded": "true", "data-card": key(g.name, `folder:${f.id}`),
-          title: `${f.name}: fold it · double-click: only it`, onclick: railNameClick(() => toggleFolder(g.name, f.id), { g: g.name, f: f.id }) },
+          title: `${f.name}: fold it · double-click: only it`, onclick: railNameClick(fold, { g: g.name, f: f.id }) },
           el("span", { class: "tx" }, el("span", { class: "caret", "aria-hidden": "true", text: "▶" }), el("span", { class: "nm", text: f.name }))),
-        el("div", { class: "r-kids" }, ...railBox(g, f.id))));
+        el("div", { class: "r-kids" }, ...railBox(g, f.id, view))));
     } else {
-      out.push(railFolded(g, f));
-      for (const a of openIn(g, f.id)) out.push(railActor(g, a));   // folded: those open in a pane, in view
+      folders.push(railFolded(g, f, fold));
+      for (const a of openIn(g, f.id)) folders.push(railActor(g, a));   // folded: those open in a pane, in view
     }
   }
   for (const [name, items] of boxGroups(g, id)) {
     if (name === SHELLS) continue;
     if (name === "Saved" || name === "Closed") {
       const k = boxKey(g.name, id), unfolded = foldOpen[name].has(k), what = name.toLowerCase();
-      out.push(el("button", { class: "r-fold", type: "button", "aria-expanded": unfolded ? "true" : "false",
+      if (!view[what]) {                                               // its line not shown: those open in a pane, in view
+        for (const a of items.filter((a) => inPane(g, a))) lines.push(railActor(g, a));
+        continue;
+      }
+      lines.push(el("button", { class: "r-fold", type: "button", "aria-expanded": unfolded ? "true" : "false",
         title: `${unfolded ? "Hide" : "Show"} the ${what} actors`, onclick: () => toggleFold(name, k) },
-        `${unfolded ? "▾" : "▸"} `, name === "Saved" ? el("span", { class: "fold-mark", "aria-hidden": "true" }, saveIcon(true)) : null,
-        `${items.length} ${what}`));
-      for (const a of unfolded ? items : items.filter((a) => inPane(g, a))) out.push(railActor(g, a));
+        `${unfolded ? "▾" : "▸"} ${items.length} ${what}`));
+      for (const a of unfolded ? items : items.filter((a) => inPane(g, a))) lines.push(railActor(g, a));
       continue;
     }
-    for (const a of items) out.push(railActor(g, a));
+    for (const a of items) open.push(railActor(g, a));
   }
-  return out;
+  return [...lines, ...folders, ...open];
 }
 // A folded folder in the rail, as a folded gatherer is: its name -- a button opening it in place -- with how many actors
 // it holds open, and under it how many of those wait on the reader, stopped on an error, run (its folders' too).
-function railFolded(g, f) {
+function railFolded(g, f, fold) {
   const t = folderTally(g, f.id), counts = tallyChips(t, plural(t.open, "actor"));
   return el("div", { class: "r-ffold" },
     el("button", { class: "r-fname", type: "button", "aria-expanded": "false", "data-card": key(g.name, `folder:${f.id}`),
       "aria-label": `${f.name}, a folder: ${plural(t.open, "actor")} open`, ...(HOVERS.matches ? {} : { title: folderSays(f, t) }),
-      onclick: railNameClick(() => toggleFolder(g.name, f.id), { g: g.name, f: f.id }) },
+      onclick: railNameClick(fold, { g: g.name, f: f.id }) },
       el("span", { class: "tx" }, el("span", { class: "caret", "aria-hidden": "true", text: "▶" }),
         el("span", { class: "nm", text: f.name }))),
     counts.length ? el("div", { class: "r-counts" }, ...counts) : null);

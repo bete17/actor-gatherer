@@ -98,6 +98,8 @@ test("the rail starts a new actor from a gatherer's card: its harness picked bes
   await plus.click();
   const menu = page.locator(".row-menu[role=menu]");
   await expect(menu).toBeVisible();
+  const z = async (n: typeof menu) => Number(await n.evaluate((e) => getComputedStyle(e).zIndex));
+  expect(await z(menu)).toBeGreaterThan(await z(card)); // over the card it opened from, not hidden under it
   const [box, side] = [await menu.boundingBox(), await rail.boundingBox()];
   expect(box!.x).toBeGreaterThanOrEqual(side!.x + side!.width); // beside the rail, not over it
   await expect(menu.locator("[role=menuitem] .nm")).toHaveText(["Claude Code", "Codex"]);
