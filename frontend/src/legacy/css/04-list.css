@@ -58,8 +58,8 @@
 .newform .desc.route code { font: 11.5px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--ink-2); }
 .newform .link { border: 0; background: none; padding: 0; color: var(--s1); font: inherit; font-size: 12px; cursor: pointer; justify-self: start; }
 /* the branch button's drop-down: the gatherer's sources, and adding one; and, in its style, a gatherer row's other
-   drop-downs (popMenu), each item's mark beside it */
-.br-menu { position: fixed; z-index: 60; min-width: 250px; max-width: min(380px, calc(100vw - 16px)); padding: 5px; display: grid; gap: 1px;
+   drop-downs (popMenu), each item's mark beside it -- over a hover card (.actor-card, 70), whose buttons open them too */
+.br-menu { position: fixed; z-index: 72; min-width: 250px; max-width: min(380px, calc(100vw - 16px)); padding: 5px; display: grid; gap: 1px;
   background: var(--surface); border: 1px solid var(--ring); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.25); font-size: 12.5px; }
 .br-menu .hd { color: var(--muted); font-size: 11px; padding: 3px 8px 4px; }
 .br-menu button { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 1px 10px; text-align: left; border: 0; background: none;
@@ -136,7 +136,6 @@ button:disabled { opacity: .5; cursor: default; }
 .folder-line .fbtn[aria-expanded="true"] .caret { transform: rotate(90deg); }
 .folder-line .folder-mark, .folder-line.editing .folder-mark { display: inline-flex; color: var(--muted); flex: none; }
 .folder-line .fname { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.folder-line .n { flex: none; color: var(--muted); font-weight: 500; font-size: 11.5px; font-variant-numeric: tabular-nums; }
 .folder-line .fill { position: relative; flex: none; display: flex; align-items: center; justify-content: flex-end; gap: 4px;
   min-height: 26px; padding: 0 6px 0 2px; cursor: pointer; }
 .folder-line .count { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--ink-2); background: var(--wash);
@@ -144,6 +143,7 @@ button:disabled { opacity: .5; cursor: default; }
 .folder-line .count i { width: 6px; height: 6px; border-radius: 50%; background: var(--good); display: inline-block; }
 .folder-line .count.asking i { background: var(--warning); }
 .folder-line .count.error i { background: var(--critical); }
+.folder-line .count.idle i { background: var(--axis); }
 .folder-line .f-acts { position: absolute; right: 2px; top: 50%; transform: translateY(-50%); display: flex; align-items: center; gap: 1px;
   padding: 1px; border-radius: 6px; opacity: 0; pointer-events: none; background: linear-gradient(var(--wash), var(--wash)), var(--side); }
 .folder-line:is(:hover, :focus-within) .f-acts, .folder-line:has(.f-acts :is([aria-expanded="true"], .busy)) .f-acts { opacity: 1; pointer-events: auto; }
