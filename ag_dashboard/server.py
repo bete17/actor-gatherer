@@ -187,7 +187,7 @@ class Server:
         if live_updates:                     # where actors' `ag actors` reach it: its own, told; any other, by the file
             host = self.server_address[0]
             sessions.DASHBOARD = f"http://{'127.0.0.1' if host in ('', '0.0.0.0', '::') else host}:{self.server_port}"
-            self.address_file = home.write_address(sessions.DASHBOARD)
+            self.address_file = home.write_address(sessions.DASHBOARD, host)
         if known is not None:                                          # its agents all read once, now: a page's
             threading.Thread(target=lambda: data.home([], known), name="ag-home-first", daemon=True).start()   # first
 

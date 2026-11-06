@@ -146,6 +146,10 @@ From it you can create gatherers, start Claude Code and Codex Actors in them and
 every Actor is doing, edit files alongside them, and see the context the Gatherer gave each one. It's only
 reachable from your own machine. For other options, like the port, see `ag dashboard --help`.
 
+After you pull new code, run `ag dashboard restart` to start the dashboard again on it. `ag stop` doesn't do this,
+since it only stops the hook servers. A restart closes every terminal the dashboard runs, including the one you ran
+it from if it's one of them. Your actors stay listed, and you can open each one again. Reload the page afterwards.
+
 ### Actors and the gatherer agent
 
 The actors the dashboard runs can reach one another. Every actor is told about
