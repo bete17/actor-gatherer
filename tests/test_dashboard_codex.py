@@ -217,6 +217,32 @@ class ThreadOfTest(CodexBase):
         self.assertIsNone(sessions._thread_of("g", 4242, {THREAD}))       # already a session's
         self.assertIsNone(sessions._thread_of("g", 777, set()))
 
+    def test_a_turn_s_call_from_the_terminal_s_run_names_its_thread_before_any_read(self):
+        """The hook records a turn's call, with its run, as it comes in -- before ag reads for it, which on a busy
+        gatherer takes seconds, and only then logs the read."""
+        self.reads([])
+        path = os.path.join(dashboard_home.HOME, "gatherers", "g", "context.db")
+        conn = sqlite3.connect(path)
+        conn.executescript("CREATE TABLE event_types (event_type_id INTEGER PRIMARY KEY, name TEXT);"
+                           "CREATE TABLE events (row_id INTEGER PRIMARY KEY, event_type_id INT, payload_json TEXT, "
+                           "p_channel TEXT); INSERT INTO event_types VALUES (1, 'model_call'), (2, 'name');")
+
+        def called(channel, kind, run, type_id=1):
+            conn.execute("INSERT INTO events (event_type_id, payload_json, p_channel) VALUES (?, ?, ?)",
+                         (type_id, json.dumps({"kind": kind, "harness": "codex", "run": run}), channel))
+            conn.commit()
+        called("old", "turn", "4242")                         # a run of the same pid, before the terminal started
+        after = sessions._top_row("g")
+        called("other", "turn", "999")                        # another run's
+        called("title", "title", "4242")                      # a side call of its own: no turn's
+        called("named", "turn", "4242", type_id=2)            # not a call
+        self.assertIsNone(sessions._thread_of("g", 4242, set(), after))
+        called(THREAD, "turn", "4242")
+        conn.close()
+        self.assertEqual(sessions._thread_of("g", 4242, set(), after), THREAD)
+        self.assertIsNone(sessions._thread_of("g", 4242, {THREAD}, after))         # already a session's
+        self.assertEqual(sessions._top_row("nowhere"), 0)                          # no database yet
+
     def test_a_gatherer_from_before_runs_is_read_by_process(self):
         self.reads([(THREAD, "/w", os.getpid(), None)], run_column=False)
         self.assertEqual(sessions._thread_of("g", os.getpid(), set()), THREAD)             # the process itself

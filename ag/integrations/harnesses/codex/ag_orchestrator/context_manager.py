@@ -177,6 +177,7 @@ class CodexContextManager(ProxyHook):
         if compaction is not None:
             self.called(gatherer, channel, call)
             return await self.compaction(request, gatherer, channel, body, cwd, *compaction)
+        await self.calling(request, gatherer, channel, call)     # recorded before ag reads for it (proxy_hook.py)
         if isinstance(getattr(request, "state", None), dict):
             request.state[ANSWERED] = (gatherer, channel, cwd)
             if self.files is not None:
@@ -208,7 +209,6 @@ class CodexContextManager(ProxyHook):
                 if "read_id" in out_again:
                     messages, out = again, out_again
         keep_read(request, gatherer, out)                 # what was sent is the read's context either way
-        self.called(gatherer, channel, call, out.get("read_id"))
         if isinstance(out.get("read_id"), int):
             self.latest[(gatherer, channel)] = max(out["read_id"], self.latest.get((gatherer, channel), 0))
         sent = items if messages is None else messages

@@ -132,6 +132,7 @@ class AntigravityContextManager(ProxyHook):
             self.following(request, gatherer, channel, call)
             self.called(gatherer, channel, call)
             return await self.compaction(request, gatherer, channel, body, cwd, call.history, call.own, told)
+        await self.calling(request, gatherer, channel, call)     # recorded before ag reads for it (proxy_hook.py)
         items = self.harness.items(body["contents"])
         if isinstance(getattr(request, "state", None), dict):
             request.state[ANSWERED] = (gatherer, channel, cwd)
@@ -165,7 +166,6 @@ class AntigravityContextManager(ProxyHook):
                 if "read_id" in out_again:
                     messages, out = again, out_again
         keep_read(request, gatherer, out)                 # what was sent is the read's context either way
-        self.called(gatherer, channel, call, out.get("read_id"))
         # its record followed (session_files.py) once the call is stored: agy makes it before its first call, so it is
         # found at once -- and a new gatherer's database is made by that first call's insert, which another would race
         self.following(request, gatherer, channel, call)

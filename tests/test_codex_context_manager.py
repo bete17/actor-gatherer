@@ -149,6 +149,26 @@ class HookTest(unittest.TestCase):
         import asyncio
         return asyncio.run(hook(request))
 
+    def test_a_turn_s_call_is_recorded_as_it_comes_in_before_ag_reads(self):
+        """Its `model_call`, with the run it came from (the URL's /r/: the process a terminal started), stored before
+        the read begins: what a dashboard finds a new terminal's thread by, while ag still reads."""
+        hook = self.hook()
+        client = hook.ag_clients.client("t1")
+        order = []
+        request = client.request
+
+        async def ordered(op, body=None):
+            order.append(op if op != "insert" else ("insert", tuple(e["type"] for e in body["events"])))
+            return await request(op, body)
+        client.request = ordered
+        req = self.request({"input": [DEV, user("q", 1)]})
+        req.run = "4242"
+        self.call(hook, req)
+        self.assertEqual(order[0], ("insert", ("model_call",)))
+        self.assertEqual(order[1], "rewrite")
+        [call] = [e for e in client.records if e["type"] == "model_call"]
+        self.assertEqual((call["payload"]["kind"], call["payload"]["run"], call["channel"]), ("turn", "4242", "t1"))
+
     def test_none_when_there_is_nothing_to_change(self):
         items = [DEV, user("q", 1)]
         same = lambda body: {"context": [{"type": e["type"], "id": e["id"], "payload": e["payload"]}
