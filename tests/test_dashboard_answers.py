@@ -308,7 +308,7 @@ class TypedTest(SessionsBase):
 
     def test_each_key_on_its_own_and_the_answer_kept(self):
         sid = self.started()
-        a = ask(COLOR, PETS)
+        a = dict(ask(COLOR, PETS), at=time.time())                                       # asked in this terminal
         sent = self.s.answer(sid, a, {"answers": [{"options": [1]}, {"options": [0, 2]}]})
         self.assertEqual((sent["call"], sent["expect"]), ("toolu_1", ['"Which color?"="Blue"', '"Which pets?"="Cat, Fish"']))
         self.until(lambda: len(self.typed()) == 5)
@@ -326,6 +326,15 @@ class TypedTest(SessionsBase):
         with self.assertRaisesRegex(sessions.SessionError, "typed into its terminal since it asked"):
             self.s.answer(sid, a, {"answers": [{"options": [0]}]})
         self.s.answer(sid, dict(a, at=time.time() + 1), {"answers": [{"options": [0]}]})   # asked after it: answered
+
+    def test_refused_where_its_terminal_opened_after_it_asked(self):
+        """Claude Code resumed keeps no question left unanswered: no dialog to type the keys into."""
+        sid = self.started()
+        with self.assertRaisesRegex(sessions.SessionError, "opened after it asked"):
+            self.s.answer(sid, dict(ask(COLOR), at=time.time() - 60), {"answers": [{"options": [0]}]})
+        self.assertEqual(self.typed(), [])
+        self.s.answer(sid, dict(ask(COLOR), at=time.time()), {"answers": [{"options": [0]}]})   # asked since: answered
+        self.until(lambda: self.typed() == ["1"])
 
     def test_no_terminal_here_no_answer(self):
         sid = self.s.create("g", self.work)["session_id"]

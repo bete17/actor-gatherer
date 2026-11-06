@@ -866,6 +866,7 @@ class ClaudeCode(Harness):
     label = "Claude Code"
     checked_with = "2.1.310"
     esc_takes_back = True            # stopped before its answer came, the message is back in its box
+    asks_shown_again = False         # resumed, it keeps no call left unanswered (2.1.319): no dialog, its box empty
     ask_says = {"plan_verb": "approve", "own_answer": "Or type your own answer",       # its plan dialog's choices (PLAN_KEYS)
                 "plan_choices": [{"id": "manual", "label": "Approve, I'll approve edits",
                                   "title": "Claude Code's “Yes, manually approve edits”", "primary": False},

@@ -88,8 +88,8 @@ class AgentsTest(HomeBase):
 
     def facts(self, *facts, channel="c1"):
         """What the hook recorded an answer asks, or its result (`asked`, `ask_settled`)."""
-        insert(self.m, "g", ch(channel), [{"type": t, "id": f"{t}:{f['call']}", "payload": {"at": time.time(), **f}}
-                                          for t, f in facts])
+        insert(self.m, "g", ch(channel), [{"type": t, "id": f"{t}:{f.get('call') or f.get('at')}",
+                                           "payload": {"at": time.time(), **f}} for t, f in facts])
 
     def test_an_agent_read_alone_is_as_the_home_lists_it(self):
         started = [{"session_id": "c1", "gatherer": "g", "cwd": "/", "harness": "codex", "status": "terminal", "pid": 42,
@@ -163,6 +163,27 @@ class AgentsTest(HomeBase):
         a = next(a for a in data.home()["gatherers"][0]["agents"] if a["channel"] == "c1")
         self.assertEqual((a["status"], a["asking"]["kind"], a["asking"]["plan"]), (data.ASKING, "plan", "1. Split the pane"))
         self.assertIsNone(next(a for a in data.home()["gatherers"][0]["agents"] if a["channel"] == "c2")["asking"])
+
+    def test_a_turn_opened_since_it_asked_leaves_its_question(self):
+        """Its session closed as it asked, then resumed: Claude Code keeps no unanswered call, and its record never says
+        how the question ended -- a message that opens a turn after it (`message_sent`) leaves it behind; the turn's own
+        message, or one held for its end, does not."""
+        turn(self.m, "g", ch("c1"), "claude")
+        self.pend([{"type": "tool_call", "payload": {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "t1", "name": "AskUserQuestion", "input": {"questions": []}}]}, "text": "AskUserQuestion"}],
+            "tool_use")
+        asked = time.time()
+        self.facts(("asked", {"at": asked, "call": "t1", "kind": "question", "questions": [], "async": False}),
+                   ("message_sent", {"at": asked - 5, "how": "prompt", "joins": False, "text": "add a README"}),  # stored late
+                   ("message_sent", {"at": asked + 5, "how": "next", "joins": True, "text": "and a license"}))   # held for its end
+        self.assertEqual(self.status()[0], data.ASKING)
+        self.facts(("message_sent", {"at": asked + 60, "how": "prompt", "joins": False, "text": "now the tests"}))
+        self.carried()                                          # the new turn's call: the question not in it
+        self.pend([{"type": "tool_call", "payload": {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "t2", "name": "Bash", "input": {"command": "ls"}}]}, "text": "Bash(ls)"}], "tool_use")
+        a = next(a for a in data.home()["gatherers"][0]["agents"] if a["channel"] == "c1")
+        self.assertEqual((a["status"], a["asking"]), (data.RUNNING, None))
+        self.assertIsNone(data.asking_of("g", "c1"))
 
     def test_an_earlier_answer_s_question_is_not_asked_again(self):
         ask = {"type": "tool_call", "payload": {"content": [{"type": "tool_use", "id": "t1", "name": "AskUserQuestion",

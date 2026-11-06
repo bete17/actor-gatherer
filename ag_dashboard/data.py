@@ -285,6 +285,8 @@ def harness_info() -> Dict[str, dict]:
         fullscreen  the screen its terminal runs in: its full screen, else its classic one, scrolled by the page
         stopped     how its terminal says a turn stopped short (`stopped_says`)
         ask_says    how a reader answers what it asks: its words, the ways to take a plan (`ask_says`)
+        asks_shown_again  whether a terminal opened after it asked still asks it (`asks_shown_again`): else what it
+                    asked is answered in a message, not from the page
         reply_block a block its model writes in a reply that its terminal draws apart, as a card (`reply_block`)
         mcp         whether a run of it can be given an MCP server's tools (`mcp_args`): a DocWriter's, a Browser's
         memory_folder  where it keeps its memory of a directory, a pattern of the folder's path (`memory_folder`)
@@ -294,6 +296,7 @@ def harness_info() -> Dict[str, dict]:
     if _HARNESS_INFO is None:
         _HARNESS_INFO = {n: {"label": h.label or n, "mark": h.mark(), "runs": h.runs_in_terminal,
                              "fullscreen": h.fullscreen, "stopped": dict(h.stopped_says), "ask_says": dict(h.ask_says),
+                             "asks_shown_again": h.asks_shown_again,
                              "reply_block": h.reply_block, "mcp": h.mcp_args("x", "http://x") is not None,
                              "memory_folder": h.memory_folder, "saves": dict(h.saves)}
                          for n, h in harness_kit.HARNESSES.items()}
@@ -992,6 +995,8 @@ class Record:
         followed          whether the hook follows the session's record: what it says is known as it is written
         settled(call)     how an asking call ended there: "answered", "dismissed" (Esc; codex: its turn ended first),
                           or None -- not yet, or not known
+        opened            when the newest message that opened a turn was sent (`message_sent`, not joining the turn
+                          it was written in), 0.0 if none: what was asked before it no longer waits (`moved_on`)
         result(call)      what the harness recorded as its answer (a question's, a plan's), None before it has
         stopped(since)    how its newest turn ended, if it did at or after `since` (when ag last heard of it): {kind:
                           "over", "interrupted" (Esc) or "error" (it gave up on a model call), at, text: the error's
@@ -1006,6 +1011,8 @@ class Record:
         self.followed = any(t == "session_file" for t, _ in self.facts)
         self._settled: Dict[str, dict] = {}
         self._results: Dict[str, str] = {}
+        self.opened = max((f.get("at") or 0.0 for t, f in self.facts if t == "message_sent" and not f.get("joins")),
+                          default=0.0)
         for t, f in self.facts:                         # the first word of each: the record's Esc before the call
             if t == "ask_settled" and f.get("call"):    # that carries the rejected result back
                 self._settled.setdefault(f["call"], f)
@@ -1026,10 +1033,17 @@ class Record:
         return {"kind": last.get("how") or "over", "at": last["at"], "text": _clip(last.get("error"), ERROR_CHARS) or None,
                 "status": last.get("status") if isinstance(last.get("status"), int) else None}
 
+    def moved_on(self, asked: dict) -> bool:
+        """Whether a turn opened after it asked (`opened`): it no longer waits on the user, though its record may never
+        say how the ask ended -- a session closed as it asked, then resumed, drops the question (Claude Code keeps no
+        unanswered call, and draws no dialog), and its next message opens a turn. While a harness waits on an ask no
+        message opens a turn: its dialog takes the keys, an answer typed is the call's result, Esc settles it first."""
+        return asked.get("at") is not None and asked["at"] < self.opened
+
     def _asked(self, kind: str, wait: Optional[bool] = None) -> Optional[dict]:
         for t, f in self.facts:
             if t == "asked" and f.get("kind") == kind and (wait is None or bool(f.get("async")) != wait) \
-                    and f.get("call") not in self._settled:
+                    and f.get("call") not in self._settled and not self.moved_on(f):
                 return f
         return None
 
@@ -1038,7 +1052,7 @@ class Record:
         asked as the turn goes on, and a proposed plan's offer, are `open_question`'s and `offer`'s)."""
         for t, f in reversed(self.facts):
             if t == "asked" and f.get("call") and not f.get("async") and not str(f["call"]).startswith("plan:") \
-                    and f["call"] not in self._settled:
+                    and f["call"] not in self._settled and not self.moved_on(f):
                 return f
         return None
 
