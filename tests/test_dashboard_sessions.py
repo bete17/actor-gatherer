@@ -1576,7 +1576,7 @@ class EndpointTest(SessionsBase):
         self.assertEqual(json.load(urllib.request.urlopen(self.url + "/api/home", timeout=10))["folders"], {})
         code, got = ask({"gatherer": "g", "do": "new", "name": "  Paper   revisions "})
         paper = got["made"]
-        self.assertEqual((code, got["folders"]), (200, {"g": {"folders": [{"id": paper, "parent": None, "name": "Paper revisions"}], "filed": {}}}))
+        self.assertEqual((code, got["folders"]), (200, {"g": {"folders": [{"id": paper, "parent": None, "name": "Paper revisions", "closed": None}], "filed": {}}}))
         figures = ask({"gatherer": "g", "do": "new", "name": "Figures", "parent": paper})[1]["made"]
         self.assertEqual(ask({"gatherer": "g", "do": "new", "name": "paper REVISIONS"}), (400, {"error": 'there is a folder "Paper revisions" there already'}))
         self.assertEqual(ask({"gatherer": "g", "do": "new", "name": "Figures"})[0], 200)       # beside another's: its own
@@ -1608,6 +1608,31 @@ class EndpointTest(SessionsBase):
         self.assertEqual(ask({"gatherer": "", "do": "new", "name": "x"})[0], 400)
         self.assertEqual(self.post("/api/folders", {"gatherer": "g", "do": "new", "name": "y"}, {"Origin": "https://evil.example"})[0], 403)
 
+    def test_gatherers_are_kept_in_folders_of_their_own(self):
+        ask = lambda body: self.post("/api/gatherer-folders", body)    # noqa: E731
+        home = lambda: json.load(urllib.request.urlopen(self.url + "/api/home", timeout=10))   # noqa: E731
+        self.assertEqual(home()["gatherer_folders"], {"folders": [], "filed": {}})
+        code, got = ask({"do": "new", "name": " Work "})
+        work = got["made"]
+        self.assertEqual((code, got["gatherer_folders"]), (200, {"folders": [{"id": work, "parent": None, "name": "Work"}], "filed": {}}))
+        old = ask({"do": "new", "name": "Old", "parent": work})[1]["made"]
+        self.assertEqual(ask({"do": "new", "name": "work"}), (400, {"error": 'there is a folder "Work" there already'}))
+        code, got = ask({"do": "file", "gatherers": ["g", "h"], "folder": old})
+        self.assertEqual((code, got["gatherer_folders"]["filed"]), (200, {"g": old, "h": old}))
+        self.assertEqual(ask({"do": "file", "gatherers": ["h"]})[1]["gatherer_folders"]["filed"], {"g": old})   # at the top again
+        self.assertEqual(ask({"do": "rename", "id": old, "to": "Earlier"})[0], 200)
+        self.assertEqual(ask({"do": "move", "id": work, "parent": old}),
+                         (400, {"error": '"Work" can\'t go in itself, nor in a folder of its own'}))
+        ask({"do": "move", "id": old})                                             # at the top
+        code, got = ask({"do": "delete", "id": old})                               # its gatherer: at the top
+        self.assertEqual((code, got["gatherer_folders"]), (200, {"folders": [{"id": work, "parent": None, "name": "Work"}], "filed": {}}))
+        self.assertEqual(data.home([])["gatherer_folders"], got["gatherer_folders"])                # snapshots carry them too
+        self.assertEqual(home()["folders"], {})                                    # a gatherer's own folders: none made
+        self.assertEqual(ask({"do": "file", "gatherers": "g"})[0], 400)
+        self.assertEqual(ask({"do": "delete", "id": 9999})[0], 400)
+        self.assertEqual(ask({"do": "frob"})[0], 400)
+        self.assertEqual(self.post("/api/gatherer-folders", {"do": "new", "name": "y"}, {"Origin": "https://evil.example"})[0], 403)
+
     def test_a_shell_opened_in_a_folder_is_listed_in_it(self):
         fid = self.post("/api/folders", {"gatherer": "g", "do": "new", "name": "Ops"})[1]["made"]
         with unittest.mock.patch.dict(os.environ, {"SHELL": "/bin/sh", "HOME": self.tmp.name}):
@@ -1618,6 +1643,37 @@ class EndpointTest(SessionsBase):
             self.assertEqual([x["folder"] for x in home["shells"] if x["id"] == s["id"]], [fid])
         finally:
             self.post("/api/shells/close", {"id": s["id"]})
+
+    def test_a_folder_closed_closes_what_is_in_it_and_goes_with_the_closed_ones_till_reopened(self):
+        ask = lambda body: self.post("/api/folders", body)       # noqa: E731
+        paper = ask({"gatherer": "g", "do": "new", "name": "Paper"})[1]["made"]
+        plots = ask({"gatherer": "g", "do": "new", "name": "Plots", "parent": paper})[1]["made"]
+        never = self.post("/api/sessions", {"gatherer": "g", "cwd": self.work})[1]["session_id"]   # made, never started
+        ask({"gatherer": "g", "do": "file", "channels": [never, "gone"], "folder": paper})
+        for c in (never, "gone", "elsewhere"):
+            self.post("/api/saved", {"gatherer": "g", "channel": c, "saved": True})
+        with unittest.mock.patch.dict(os.environ, {"SHELL": "/bin/sh", "HOME": self.tmp.name}):
+            sh = self.post("/api/shells", {"gatherer": "g", "cwd": self.work, "folder": plots})[1]
+        try:
+            code, got = ask({"gatherer": "g", "do": "close", "id": paper})
+        finally:
+            if any(x["id"] == sh["id"] for x in self.httpd.sessions.shells()):
+                self.post("/api/shells/close", {"id": sh["id"]})
+                self.fail("the terminal opened in it was left open")
+        self.assertEqual((code, got["left"], sorted(got["saved"]["g"])), (200, [], ["elsewhere"]))   # its bookmarks off
+        tree = got["folders"]["g"]
+        self.assertTrue(all(f["closed"] for f in tree["folders"]))                              # it and the one in it
+        home = json.load(urllib.request.urlopen(self.url + "/api/home", timeout=10))
+        self.assertEqual([a["channel"] for g in home["gatherers"] for a in g["agents"]], [])       # discarded, as its x does
+        self.assertEqual(home["shells"], [])
+        code, got = ask({"gatherer": "g", "do": "reopen", "id": paper})
+        self.assertEqual((code, [f["closed"] for f in got["folders"]["g"]["folders"]]), (200, [None, None]))
+        ask({"gatherer": "g", "do": "close", "id": paper})
+        code, got = ask({"gatherer": "g", "do": "file", "channels": ["new"], "folder": plots})   # put in: open again
+        self.assertEqual([f["closed"] for f in got["folders"]["g"]["folders"]], [None, None])
+        self.assertEqual(ask({"gatherer": "g", "do": "close", "id": 9999})[0], 400)
+        self.assertEqual(ask({"gatherer": "g", "do": "reopen", "id": "x"})[0], 400)
+        self.assertEqual(self.post("/api/folders", {"gatherer": "g", "do": "close", "id": paper}, {"Origin": "https://evil.example"})[0], 403)
 
     def test_a_session_that_never_started_closed_from_the_list_is_listed_no_more(self):
         sid = self.post("/api/sessions", {"gatherer": "g", "cwd": self.work})[1]["session_id"]

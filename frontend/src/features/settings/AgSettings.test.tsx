@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Settings } from "../../core/api/types";
-import { AgSettings } from "./AgSettings";
+import { AgSettings, ModelInput } from "./AgSettings";
 import { useSettings } from "./store";
 
 const SETTINGS: Settings = {
@@ -78,6 +78,24 @@ describe("AgSettings", () => {
     expect(closePanel).toHaveBeenCalledOnce();
     expect(document.getElementById("cfg-model-note")!.textContent).toBe("Runs on Claude Code.");
     expect((screen.getByLabelText("Gatherer model") as HTMLInputElement).value).toBe("claude-code/sonnet");
+  });
+
+  it("suggests models in the page under the box: filtered, picked by click or by keys", () => {
+    let v = "";
+    const { rerender } = render(<ModelInput value={v} onChange={(x) => (v = x)} />);
+    const box = screen.getByLabelText("Gatherer model");
+    fireEvent.focus(box);
+    expect(screen.getAllByRole("option").length).toBe(5);
+    rerender(<ModelInput value="codex" onChange={(x) => (v = x)} />);
+    expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(["codex/gpt-5-mini"]);
+    fireEvent.mouseDown(screen.getByRole("option"));
+    expect(v).toBe("codex/gpt-5-mini");
+    expect(screen.queryByRole("listbox")).toBeNull();
+    rerender(<ModelInput value="" onChange={(x) => (v = x)} />);
+    fireEvent.keyDown(box, { key: "ArrowDown" });
+    fireEvent.keyDown(box, { key: "ArrowDown" });
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect(v).toBe("claude-code/haiku");
   });
 
   it("saves the defaults, as the file's version had them, and says so", async () => {

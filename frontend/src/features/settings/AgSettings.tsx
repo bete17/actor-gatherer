@@ -75,6 +75,78 @@ export function AgSettings({ closePanel }: AgSettingsProps) {
   );
 }
 
+/** The model's box, its suggestions drawn in the page under it: a <datalist>'s popup is the browser's own, and
+ * embedded browsers (VS Code's, Electron) draw it far from the box. */
+export function ModelInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [at, setAt] = useState(-1);
+  const q = value.trim().toLowerCase();
+  const shown = MODELS.filter((m) => m !== value && m.toLowerCase().includes(q));
+  const list = shown.length ? shown : MODELS.filter((m) => m !== value);
+  const pick = (m: string) => {
+    onChange(m);
+    setOpen(false);
+    setAt(-1);
+  };
+  return (
+    <div className="cfg-combo">
+      <input
+        id="cfg-model-name"
+        placeholder="claude-code/sonnet"
+        spellCheck={false}
+        autoComplete="off"
+        aria-label="Gatherer model"
+        role="combobox"
+        aria-expanded={open}
+        aria-controls="cfg-models"
+        aria-autocomplete="list"
+        aria-activedescendant={open && at >= 0 ? `cfg-model-${at}` : undefined}
+        value={value}
+        onChange={(ev) => {
+          onChange(ev.target.value);
+          setOpen(true);
+          setAt(-1);
+        }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        onKeyDown={(ev) => {
+          if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+            ev.preventDefault();
+            const n = list.length;
+            setOpen(true);
+            setAt((i) => (ev.key === "ArrowDown" ? (i + 1) % n : (i - 1 + n) % n));
+          } else if (ev.key === "Enter" && open && at >= 0) {
+            ev.preventDefault(); // pick, not submit
+            pick(list[at]);
+          } else if (ev.key === "Escape" && open) {
+            ev.stopPropagation(); // close the list, not the panel
+            setOpen(false);
+          }
+        }}
+      />
+      {open && list.length > 0 && (
+        <ul className="cfg-combo-list" id="cfg-models" role="listbox" aria-label="Suggested models">
+          {list.map((m, i) => (
+            <li
+              key={m}
+              id={`cfg-model-${i}`}
+              role="option"
+              aria-selected={i === at}
+              onMouseDown={(ev) => {
+                ev.preventDefault(); // keep the box's focus, so its blur does not close the list first
+                pick(m);
+              }}
+              onMouseEnter={() => setAt(i)}
+            >
+              {m}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function ModelForm({ s, closePanel }: { s: Settings; closePanel: () => void }) {
   const said = useSettings((x) => x.said);
   const [model, setModel] = useState(s.llm.model);
@@ -104,25 +176,11 @@ function ModelForm({ s, closePanel }: { s: Settings; closePanel: () => void }) {
     >
       <h4>Gatherer model</h4>
       <div className="row">
-        <input
-          id="cfg-model-name"
-          list="cfg-models"
-          placeholder="claude-code/sonnet"
-          spellCheck={false}
-          autoComplete="off"
-          aria-label="Gatherer model"
-          value={model}
-          onChange={(ev) => setModel(ev.target.value)}
-        />
+        <ModelInput value={model} onChange={setModel} />
         <button className="primary" type="submit" disabled={busy}>
           Set
         </button>
       </div>
-      <datalist id="cfg-models">
-        {MODELS.map((m) => (
-          <option key={m} value={m} />
-        ))}
-      </datalist>
       <details className="cfg-more" open={!!(s.llm.api_base || s.llm.key_env) || undefined}>
         <summary>API base and key (LiteLLM models only)</summary>
         <label>

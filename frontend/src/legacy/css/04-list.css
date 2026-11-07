@@ -156,7 +156,25 @@ button:disabled { opacity: .5; cursor: default; }
 .folder-line .act.start:disabled { cursor: default; opacity: .45; }
 .folder-line .act.start + .folder-act { margin-left: 4px; }
 .folder-line .folder-act { width: 24px; justify-content: center; padding: 0; }
-.folder-line .folder-act.delete:hover, .folder-line .folder-act.delete:focus-visible { color: var(--critical); }
+.folder-line .folder-act:is(.delete, .close):is(:hover, :focus-visible) { color: var(--critical); }
+/* a closed folder (shownClosed): in its parent's closed line, greyed as a closed actor is, a hollow dot by how many it holds */
+.folder-line.closed .fbtn { color: var(--muted); }
+.folder-line.closed .count { color: var(--muted); background: none; }
+.folder-line .count.closed i { background: none; box-shadow: inset 0 0 0 1.5px var(--axis); }
+/* the question a folder's x asks first (closeAsk): under its line, or in its card */
+.f-ask { margin: 2px 8px 6px 24px; padding: 8px 10px; border: 1px solid var(--ring); border-radius: 8px; background: var(--surface);
+  font-size: 12px; line-height: 1.4; color: var(--ink-2); }
+:is(.f-kids, .g-kids) > .f-ask { margin-left: 18px; }
+.f-ask p { margin: 0 0 8px; }
+.f-ask b { color: var(--ink); font-weight: 600; }
+.f-ask-btns { display: flex; gap: 6px; justify-content: flex-end; }
+.f-ask .pb { display: inline-flex; align-items: center; border: 1px solid var(--ring); background: var(--side); border-radius: 7px;
+  padding: 3px 10px; cursor: pointer; color: var(--ink-2); font: inherit; font-size: 12px; white-space: nowrap; }
+.f-ask .pb:hover { color: var(--ink); background: var(--wash); }
+.f-ask .pb.go { color: #fff; background: var(--critical); border-color: var(--critical); }
+.f-ask .pb.go:hover { color: #fff; background: color-mix(in srgb, var(--critical) 85%, #000); }
+.f-ask .pb:focus-visible { outline: 2px solid var(--axis); outline-offset: 1px; }
+.actor-card .f-ask { margin: 6px 0 2px; }
 .folder-line.editing { gap: 6px; padding: 3px 8px 3px 20px; }
 .folder-line .folder-box { flex: 1 1 auto; min-width: 0; width: auto; margin: 0; font-size: 12.5px; padding: 2px 6px; }
 /* what is in a folder (.f-kids) or a gatherer (.g-kids), set in under its line, its guide line under the caret's
@@ -172,6 +190,21 @@ button:disabled { opacity: .5; cursor: default; }
 :is(.folder-line, .gatherer-row).drop-on { background: color-mix(in srgb, var(--s1) 14%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--s1) 55%, transparent); }
 :is(.agent, .folder-line).dragging { opacity: .45; }
+/* FOLDERS OF GATHERERS (05-gatherer-folders.js): made from the list's head (.gf-new), a line as a gatherer's folder's;
+   what is in one set in under it, its guide line under its caret (the line's margin + 4px padding + half the 10px
+   caret), 14px a level, a gatherer's own as in the list's top. The head, a gatherer dragged over it: lit, as a line is */
+.aside-head .gf-new { display: inline-flex; align-items: center; padding: 4px 7px; margin-left: -4px; color: var(--ink-2); }
+.aside-head .gf-new:hover { color: var(--ink); }
+.aside-head .gf-new svg { display: block; }
+.aside-head.drop-on { background: color-mix(in srgb, var(--s1) 14%, var(--side));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--s1) 55%, transparent); }
+.gf-kids { margin-left: 17px; border-left: 1px solid var(--grid); }
+.gf-kids .gf-kids { margin-left: 13px; }
+.gf-kids > .folder-line, .gf-kids > .gatherer > .gatherer-row { margin-left: 4px; }
+.gf-kids > .gatherer > .g-kids { margin-left: 13px; }
+.gf-kids > .agent { margin-left: 4px; width: calc(100% - 12px); }
+.gf-kids.peek { border-left-style: dashed; }
+.gatherer-row.dragging { opacity: .45; }
 /* SELECTING several actors (Shift+click): tinted in its own colour, not the blue of the one shown; from two, a check on
    each one's avatar and a bar under the list */
 .agent.picked, .agent.picked:hover { background: color-mix(in srgb, var(--pick) 15%, transparent);

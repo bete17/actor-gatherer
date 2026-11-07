@@ -1,5 +1,5 @@
-"""folders.py: the folders a gatherer's actors are kept in -- made, named, moved, deleted, found by path -- and the
-folders of saved actors from before it, copied in once."""
+"""folders.py: the folders a gatherer's actors are kept in -- made, named, moved, deleted, closed and reopened, found
+by path -- and the folders of saved actors from before it, copied in once."""
 
 import os
 import sqlite3
@@ -136,6 +136,111 @@ class FoldersTest(unittest.TestCase):
         saved.choose("g", "c5", True)                                                  # its table from before still takes one
         saved.choose("g", "c1", False)
         self.assertEqual(sorted(saved.stored()["g"]), ["c2", "c3", "c5"])
+
+    def test_a_folder_closed_with_the_folders_in_it_and_reopened(self):
+        a = folders.make("g", "A")
+        b = folders.make("g", "B", a)
+        c = folders.make("g", "C")
+        self.assertEqual(sorted(folders.mark("g", a, True)), sorted([a, b]))
+        closed = {f["name"]: f["closed"] for f in folders.of("g")["folders"]}
+        self.assertTrue(closed["A"] and closed["A"] == closed["B"])               # at once, with what is in it
+        self.assertIsNone(closed["C"])
+        folders.reopen("g", a)
+        self.assertEqual({f["closed"] for f in folders.of("g")["folders"]}, {None})
+        with self.assertRaisesRegex(folders.FolderError, "no folder"):
+            folders.reopen("g", 9999)
+        self.assertIsNotNone(c)
+
+    def test_putting_something_in_a_closed_folder_reopens_it_and_the_closed_folders_it_is_in(self):
+        a = folders.make("g", "A")
+        b = folders.make("g", "B", a)
+        other = folders.make("g", "Other")
+        shut = lambda: {f["name"] for f in folders.of("g")["folders"] if f["closed"]}   # noqa: E731
+        for put in (lambda: folders.file("g", ["c1"], b), lambda: folders.move("g", other, b),
+                    lambda: folders.make("g", "New", b)):
+            folders.mark("g", a, True)
+            folders.mark("g", other, False)
+            put()
+            self.assertEqual(shut(), set())
+        folders.mark("g", a, True)
+        folders.file("g", ["c1"], None)                                           # taken out to the top: nothing opens
+        folders.move("g", other, None)                                            # nor does it, closed with A
+        self.assertEqual(shut(), {"A", "B", "New", "Other"})
+        folders.delete("g", a)                                                    # what was in it, up: closed still
+        self.assertEqual(shut(), {"B", "New", "Other"})
+
+    def test_a_table_from_before_closed_is_given_it_every_folder_open(self):
+        os.makedirs(dashboard_home.HOME)
+        conn = sqlite3.connect(sessions.db_path())
+        conn.executescript("""
+            CREATE TABLE folders (id INTEGER PRIMARY KEY AUTOINCREMENT, gatherer TEXT NOT NULL, parent INTEGER,
+                                  name TEXT NOT NULL, at TEXT NOT NULL);
+            CREATE TABLE filed (gatherer TEXT NOT NULL, channel TEXT NOT NULL, folder INTEGER NOT NULL, at TEXT NOT NULL,
+                                PRIMARY KEY (gatherer, channel));
+            INSERT INTO folders (gatherer, parent, name, at) VALUES ('g', NULL, 'Old', '2026-11-01T00:00:00+00:00');
+        """)
+        conn.close()
+        self.assertEqual(folders.of("g")["folders"], [{"id": 1, "parent": None, "name": "Old", "closed": None}])
+        folders.mark("g", 1, True)                                                # a change gives it the column
+        self.assertTrue(folders.of("g")["folders"][0]["closed"])
+
+    def test_closing_a_folder_closes_every_actor_in_it_takes_their_bookmarks_off_and_ends_its_terminals(self):
+        a = folders.make("g", "A")
+        b = folders.make("g", "B", a)
+        elsewhere = folders.make("g", "Elsewhere")
+        folders.file("g", ["running", "kept", "never", "outside", "done", "gone"], a)
+        folders.file("g", ["codex-sid", "term"], b)
+        folders.file("g", ["away"], elsewhere)
+        for c in ("done", "gone", "running", "away"):
+            saved.choose("g", c, True)
+
+        class Started:                                                            # sessions.Sessions, as close uses it
+            def __init__(self):
+                self.did = []
+
+            def stop(self, sid):
+                self.did.append(("stop", sid))
+                if sid == "running":
+                    return {}
+                if sid == "kept":
+                    raise sessions.SessionError("the dashboard has no process open for this session")
+                return {}
+
+            def discard(self, sid):
+                self.did.append(("discard", sid))
+
+            def shells(self):
+                return [{"id": "sh1", "gatherer": "g", "folder": b}, {"id": "sh2", "gatherer": "g", "folder": elsewhere},
+                        {"id": "sh3", "gatherer": "h", "folder": b}]
+
+            def close_shell(self, sid):
+                self.did.append(("shell", sid))
+
+        def actor(channel, status, **session):
+            return {"channel": channel, "status": status, "events": 3, "reads": 2,
+                    "session": {"session_id": channel, **session} if session is not None else None}
+        home = {"gatherers": [{"name": "g", "agents": [
+            actor("running", "running", pid=11),
+            actor("kept", "idle", kept=1.0),
+            {"channel": "never", "status": "idle", "events": 0, "reads": 0, "session": {"session_id": "never"}},
+            {"channel": "outside", "status": "idle", "session": None},
+            actor("done", "closed"),
+            actor("thread-1", "running", terminal=True, started_as="codex-sid"),
+            actor("away", "running", pid=12),
+            {"channel": "crew", "status": "running", "role": "coordinator", "session": {"session_id": "crew", "pid": 13}},
+        ]}]}
+        started = Started()
+        left = folders.close("g", a, started, home)
+        self.assertEqual(started.did, [("stop", "running"), ("stop", "kept"), ("discard", "never"), ("stop", "thread-1"),
+                                       ("shell", "sh1")])
+        self.assertEqual(left, [{"channel": "kept", "why": "the dashboard has no process open for this session"},
+                                {"channel": "outside", "why": "no process of the dashboard's runs for it"}])
+        self.assertEqual(sorted(saved.stored()["g"]), ["away"])                   # in it -- "gone" too, not in the home
+        self.assertEqual({f["name"] for f in folders.of("g")["folders"] if f["closed"]}, {"A", "B"})
+        with self.assertRaisesRegex(folders.FolderError, "no folder"):
+            folders.close("g", 9999, started, home)
+        with self.assertRaisesRegex(folders.FolderError, "which folder"):
+            folders.close("g", "x", started, home)
 
 
 if __name__ == "__main__":

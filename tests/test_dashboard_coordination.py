@@ -564,6 +564,10 @@ class CommandTest(CoordinationBase):
                                             '- folder "Ideas"', f'    {self.a} "Fix the editor" (saved, you) -- idle, claude, in {where()}',
                                             '- folder "Paper"',
                                             '  - folder "Paper/Figures"', f'      {self.b} "Write the docs" (saved) -- idle, claude, in {where()}'])
+        folders.mark("g", folders.find("g", "Paper"), True)                             # closed from the list
+        code, out, _ = self.run_cli("folders")
+        self.assertEqual(out.splitlines()[3:5], ['- folder "Paper" -- closed', '  - folder "Paper/Figures" -- closed'])
+        folders.reopen("g", folders.find("g", "Paper"))
         code, out, _ = self.run_cli("unsave", self.b)                                    # unsaved: still in its folder
         self.assertEqual(out.strip(), f'Actor {self.b} ("Write the docs") is no longer saved (in the folder "Paper/Figures").')
         code, out, _ = self.run_cli("folder", "move", "Paper/Figures", "Ideas")

@@ -5,7 +5,7 @@ import harness_kit
 from fastapi import APIRouter
 from starlette.responses import Response
 
-from .. import folders, hiding, naming, saved, seen, sessions, titles
+from .. import folders, gatherer_folders, hiding, naming, saved, seen, sessions, titles
 from ..models import Home
 from .common import Body, Errors, Parts, answer
 
@@ -54,11 +54,13 @@ def folder(srv: Parts, body: Body) -> Response:
     """{gatherer, do, ...}: the gatherer's folders changed (folders.py) -> {folders: every gatherer's, made?}.
 
     new {name, parent?} (made: its id), rename {id, to}, move {id, parent?} (a folder put in another; none: at the
-    top), delete {id} (what was in it moved up), file {channels, folder?} (actors put in a folder; none: at the top)."""
+    top), delete {id} (what was in it moved up), file {channels, folder?} (actors put in a folder; none: at the top),
+    close {id} (every actor in it closed, its bookmark off, its terminals ended, then it marked closed, with the
+    folders in it: `left`, the actors in it left open, and `saved`, every one saved after), reopen {id}."""
     g, do = str(body.get("gatherer") or ""), str(body.get("do") or "")
     parent = body.get("parent")
     parent = None if parent in (None, "") else parent
-    made = None
+    made, closing = None, {}
     if do == "new":
         made = folders.make(g, str(body.get("name") or ""), parent)
     elif do == "rename":
@@ -67,6 +69,10 @@ def folder(srv: Parts, body: Body) -> Response:
         folders.move(g, body.get("id"), parent)
     elif do == "delete":
         folders.delete(g, body.get("id"))
+    elif do == "close":                          # its actors as they are now: the home read afresh
+        closing = {"left": folders.close(g, body.get("id"), srv.sessions, srv.home_view()), "saved": saved.stored()}
+    elif do == "reopen":
+        folders.reopen(g, body.get("id"))
     elif do == "file":
         channels = body.get("channels")
         if not isinstance(channels, list):
@@ -74,9 +80,38 @@ def folder(srv: Parts, body: Body) -> Response:
         target = body.get("folder")
         folders.file(g, [str(c) for c in channels], None if target in (None, "") else target)
     else:
+        raise ValueError("do what? One of new, rename, move, delete, file, close, reopen")
+    srv.hub.ring(None, what="list")
+    return answer({"folders": folders.stored(), **({"made": made} if made is not None else {}), **closing})
+
+
+@router.post("/api/gatherer-folders")
+def gatherer_folder(srv: Parts, body: Body) -> Response:
+    """{do, ...}: the folders gatherers are kept in changed (gatherer_folders.py) -> {gatherer_folders: all, made?}.
+
+    new {name, parent?} (made: its id), rename {id, to}, move {id, parent?} (a folder put in another; none: at the
+    top), delete {id} (what was in it moved up), file {gatherers, folder?} (gatherers put in a folder; none: at the top)."""
+    do, parent = str(body.get("do") or ""), body.get("parent")
+    parent = None if parent in (None, "") else parent
+    made = None
+    if do == "new":
+        made = gatherer_folders.make(str(body.get("name") or ""), parent)
+    elif do == "rename":
+        gatherer_folders.rename(body.get("id"), str(body.get("to") or ""))
+    elif do == "move":
+        gatherer_folders.move(body.get("id"), parent)
+    elif do == "delete":
+        gatherer_folders.delete(body.get("id"))
+    elif do == "file":
+        names = body.get("gatherers")
+        if not isinstance(names, list):
+            raise ValueError("which gatherers? `gatherers`, a list")
+        target = body.get("folder")
+        gatherer_folders.file([str(g) for g in names], None if target in (None, "") else target)
+    else:
         raise ValueError("do what? One of new, rename, move, delete, file")
     srv.hub.ring(None, what="list")
-    return answer({"folders": folders.stored(), **({"made": made} if made is not None else {})})
+    return answer({"gatherer_folders": gatherer_folders.stored(), **({"made": made} if made is not None else {})})
 
 
 @router.post("/api/name")
