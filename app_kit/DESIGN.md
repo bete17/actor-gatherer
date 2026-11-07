@@ -9,10 +9,10 @@ A gatherer holds two kinds of things, and the code and the page should treat the
 
 - **Agents.** The actors: harness sessions (Claude Code, Codex, ...) whose context the gatherer puts together. An
   agent's pane (Chat, Terminal, History, and the read-only Messages, Transcript and Details) shows that agent and
-  nothing else.
-- **Apps.** Everything an agent or the user works *with*: the Editor, the Browser, DocWriter, Preview, and the pieces
-  now built into Chat and History (the files-and-commands panel, the file viewer, Summarize / Generate skill /
-  memory / AGENTS.md). An app has a panel of its own beside or above the agent panes.
+  nothing else. A way of looking at the agent's own history is part of its views, not an app: Chat's files and
+  commands, and its file viewer, stay in Chat (decided 2026-11-07).
+- **Apps.** Everything an agent or the user works *with*: the Editor, the Browser, DocWriter, Preview, and History's
+  Summarize / Generate skill / memory / AGENTS.md. An app has a panel of its own beside or above the agent panes.
 
 An app reaches the rest of the system through two things only:
 
@@ -253,7 +253,6 @@ for apps. An app's event types are ag `EventType`s with ag `Property`s (`Manifes
   that kind, opening its panel beside the pane:
   - `open-file {path, line, row_id}`
   - `open-url {url}`
-  - `show-activity {channel, turn}`
   - `explain-answer {channel, turn}`
   - `use-history {channel, rows}`
 
@@ -272,8 +271,8 @@ for apps. An app's event types are ag `EventType`s with ag `Property`s (`Manifes
 
 | Piece | Becomes | How the agent view reaches it |
 |---|---|---|
-| Files-and-commands panel (Chat's left side) | **Activity** app: the agent's commands and files for the selected turn, from `tool_call`, `tool_output` and `file_touched` | A line per turn ("12 commands · 5 files") raises `show-activity`. The Activity panel follows the focused pane's selection |
-| File viewer (Chat's file pane) | Activity for what a turn read or changed; the **Editor** for the file itself | `open-file` |
+| Files-and-commands panel (Chat's left side) | Stays in Chat: a way of looking at the agent's own history, not an app the user works with | — |
+| File viewer (Chat's file pane) | Stays in Chat, as the panel does; opening the file itself to edit is the Editor's | `open-file` |
 | Background tasks list | Stays in the agent view: the tasks are the agent's | — |
 | Question and plan-approval card, errors | Stay: the harness asks, and the agent waits | — |
 | `/context`, Details, Messages, Transcript | Stay: views of the agent | — |
@@ -296,8 +295,8 @@ app_kit/                  the contract, on ag's (ag.ag_interface): standard libr
   backend.py              App, Host, Instance, Caller, ToolResult
   remote.py               the same calls over HTTP, for an app in its own process
   js/                     @ag/app: the panel SDK and its types
-apps/                     our apps, each a package with an app.toml, built as an outside app would be
-  preview/  activity/  editor/  browser/  docwriter/  skills/  sources/
+ag_apps/                  our apps, each a folder with an app.toml, built as an outside app would be
+  preview/  editor/  browser/  docwriter/  skills/  sources/
 ag/                       knows an app only as event types and pollers
   ag_harness/home/        [apps] in config.toml (what is installed); apps = [...] in gatherer.toml (what is on)
 ag_dashboard/             the host: no app's name in its code
@@ -412,9 +411,9 @@ Each step is one PR and leaves the dashboard working. Steps 1–3 change nothing
      set and read the preview with its tools.
    - Not carried over: previews set before this (the old `previews` table) start again from a guess; `ag preview`
      from a shell that is not an actor's is refused (it was "a shell's" before).
-6. **Activity.** The files-and-commands panel and the file viewer leave Chat. Chat raises `show-activity` and
-   `open-file` and publishes its selection. The Editor's changes panel stops calling Chat's code, and what both use
-   goes to `core/ui`.
+6. **Activity: dropped** (2026-11-07). The files-and-commands panel and the file viewer stay in Chat: they are a way
+   of looking at the agent's history, not an app the user works with. The Editor's changes panel keeps using Chat's
+   code until the Editor's step.
 7. **The Editor.** Its tree, live editing, conflicts and viewers become the Editor app; it takes `open-file`. Its
    panel replaces the area above the panes. The whole Editor is to be an app, not only its preview (2026-11-07);
    deferred for now: it stays in the page until this step is taken up.
@@ -446,7 +445,8 @@ Settled on 2026-11-06:
      mid-thread is unconfirmed; and `mcp.py` would have to send notifications.
    - one tool, `app_call(app, tool, args)`, with each app's tools described in the instructions: cheapest in context,
      but the harness can't check arguments against a schema.
-3. **Files and commands leave Chat**, which keeps a one-line count per turn that opens Activity.
+3. **Files and commands stay in Chat** (changed 2026-11-07, from "leave Chat for an Activity app"): they show the
+   agent's own history, so they are part of its views.
 4. **App backends run in the dashboard's process** for now. A separate `ag apps serve`, so apps work without the
    dashboard, can come later: nothing in `app_kit` assumes the dashboard.
 5. **Names carry the app:** `<app>_<tool>` for tools and `<app>.<what>` for event types. One app's names can't collide
