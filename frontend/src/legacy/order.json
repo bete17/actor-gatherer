@@ -22,6 +22,7 @@
     "03-settings.js",
     "04-seen.js",
     "05-agent-list.js",
+    "05-gatherer-folders.js",
     "06-list-modes.js",
     "07-panes.js",
     "08-charts.js",
