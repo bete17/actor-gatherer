@@ -497,6 +497,10 @@ Each step is one PR and leaves the dashboard working. Steps 1–3 change nothing
    merged. Deferred for now (2026-11-07): History keeps its Summarize, Generate skill / memory / AGENTS.md, Save to
    and Export as they are, until this step is taken up.
 10. **Apps from outside.** `ag apps install`, the permissions shown at install, and the store's manifest format.
+    Skipped for now (2026-11-07). Proposed when taken up: install from a folder or git URL into
+    `<home>/apps/<name>/app/` (data kept in `data/`), permissions shown and confirmed, off until turned on, run in a
+    process of its own, `update` / `remove`, loaded without a restart; `native_view` unavailable to it (as in a
+    browser tab) until the desktop link can be passed to an app's own process.
 
 Steps 6–8 change what the user sees the most. Each gets its Playwright tests before it moves and keeps them after,
 as the move to React did.
