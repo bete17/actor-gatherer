@@ -416,7 +416,8 @@ Each step is one PR and leaves the dashboard working. Steps 1–3 change nothing
    `open-file` and publishes its selection. The Editor's changes panel stops calling Chat's code, and what both use
    goes to `core/ui`.
 7. **The Editor.** Its tree, live editing, conflicts and viewers become the Editor app; it takes `open-file`. Its
-   panel replaces the area above the panes.
+   panel replaces the area above the panes. The whole Editor is to be an app, not only its preview (2026-11-07);
+   deferred for now: it stays in the page until this step is taken up.
 8. **The Browser and DocWriter.**
    - Each becomes instances and attachments, with its tools through the gateway. A stored role
      (`{"browser": key}`) is copied to an `app_attached` once, here: until then they aren't apps the host knows.
@@ -437,7 +438,8 @@ Settled on 2026-11-06:
 1. **Every app's panel is an iframe**, ours and outside ones alike. One way for all apps; outside apps are isolated
    from the dashboard; our apps test the same contract an outside one uses. The cost: the SDK forwards keys, theme,
    focus and drag and drop across the frame, and each open panel costs about a page.
-2. **Which tools an agent is given: every app turned on for the gatherer, at launch.** Works for Claude Code and Codex
+2. **Which tools an agent is given: every app turned on for the gatherer, at launch.** Kept so once Preview, an app
+   that comes with ag, put its tools in every session (2026-11-07): a gatherer turns apps off with `apps = []`. Works for Claude Code and Codex
    alike; costs context for each app's tools, so a gatherer's apps should be few. The others, kept for later:
    - only the apps it's attached to, with the list sent again when that changes. Claude Code refreshes on MCP's
      `tools/list_changed` (checked in its 2.1.319 binary); Codex knows the message, but whether it refreshes
