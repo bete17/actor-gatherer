@@ -1,6 +1,6 @@
 # Apps beside agents: plan
 
-Status: being built, from 2026-11-06. Steps 1 (`app_kit/`), 2 (the host), 3 (the tool gateway) and 4 (app panels) are built. This file is the package's design, as
+Status: being built, from 2026-11-06. Steps 1 (`app_kit/`), 2 (the host), 3 (the tool gateway), 4 (app panels) and 5 (Preview) are built. This file is the package's design, as
 `harness_kit/DESIGN.md` is that package's.
 
 ## Goal
@@ -343,7 +343,7 @@ Each step is one PR and leaves the dashboard working. Steps 1–3 change nothing
 
 1. **`app_kit`.** Manifest, `App`, `Host`, the remote protocol and their tests. No app uses it yet.
 2. **The host.** Built:
-   - `ag_dashboard/app_host.py` finds apps (the repo's `apps/`, `AG_APPS_PATH`, `<home>/apps/`), runs their
+   - `ag_dashboard/app_host.py` finds apps (`ag_apps/`, the apps that come with ag; `AG_APPS_PATH`, `<home>/apps/`), runs their
      backends (imported from their folder, or started as a process), and keeps instances and attachments as the
      host's records (`app_opened`, `app_closed`, `app_attached`, `app_detached`, `app_call`). A gatherer's are read
      once, the first time it is asked about.
@@ -390,12 +390,28 @@ Each step is one PR and leaves the dashboard working. Steps 1–3 change nothing
    - The selection: the actor in the actor's pane in focus last, told to every panel as it changes.
    - The test app, Notes (`tests/apps/notes/`), uses each part, and `frontend/e2e/apps.spec.ts` drives it; the e2e
      dashboard finds it (`AG_APPS_PATH`) and inserts through this checkout's `ag` (`AG_COMMAND`).
-5. **Preview, the first real app.** It is the smallest:
-   - its CLI becomes tools;
-   - its SQLite table becomes events (`preview.set`, `preview.ran`);
-   - its panel is the Editor's preview side today.
-
-   This proves the contract from start to end.
+5. **Preview, the first real app.** Built, as one change, so there is never a second preview beside the first:
+   - The apps that come with ag are a package, `ag_apps/` (found through Python's imports, so a wheel carries them).
+     Preview is `ag_apps/preview/`: its run logic (`runs.py`, ported from `ag_dashboard/preview.py`, which is gone,
+     with its routes and table), its backend (`backend.py`), its panel (`panel/`, ported from the Editor's preview
+     side).
+   - What it keeps is its events: `preview.set`, `preview.allowed`, `preview.cleared`, `preview.ran`. One instance
+     per repository (`per-repository`, new in app_kit: worktrees share it), each worktree's runs its own.
+   - Who may run what is as before: the user anything, an agent only a command the user set or let run. Letting one
+     run is the user's alone: a call passing the command as `ok` from an agent is refused.
+   - Its tools are `preview_show`, `_set`, `_run`, `_stop`, `_clear`; `ag preview` is now a client of them.
+   - The Editor asks for it by intents (new in app_kit): Execute and ⌘↵ raise `run`; "→ PDF" and a double-click in a
+     TeX source raise `locate`. The panel sends a PDF's place back as `open-file`, which, with no app taking it, the
+     page gives the Editor.
+   - What two apps share is a library the host serves on each app's origin (`/_ag/lib/`, `ag_dashboard/libs.py`):
+     pdf.js (with SyncTeX in the panel), marked and DOMPurify. The Editor's own PDF viewer keeps `/vendor/pdfjs/`, the
+     same copy.
+   - `Caller.folder` (the agent's working folder) and `Host.panels(instance)` are new in app_kit: an agent's preview
+     runs in its own checkout, and a server no panel shows is stopped.
+   - Checked live: a Claude Code session (Haiku) started by a scratch dashboard was given the gateway at launch, and
+     set and read the preview with its tools.
+   - Not carried over: previews set before this (the old `previews` table) start again from a guess; `ag preview`
+     from a shell that is not an actor's is refused (it was "a shell's" before).
 6. **Activity.** The files-and-commands panel and the file viewer leave Chat. Chat raises `show-activity` and
    `open-file` and publishes its selection. The Editor's changes panel stops calling Chat's code, and what both use
    goes to `core/ui`.
