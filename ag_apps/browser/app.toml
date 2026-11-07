@@ -1,0 +1,36 @@
+# The Browser: a Chrome tab the user and an agent use together. The user sees the page live in its panel and clicks,
+# types and navigates in it; the agent attached to it acts on it through its tools, each action shown to the user as it
+# comes, and is told what the user does there. In the ag desktop app its pages are native ones laid over the panel
+# (native_view); in a browser tab, the dashboard's own Chrome's screen, streamed. One per Browser started, each with an
+# agent of its own, who alone is given its tools and instructions (tools.json and instructions.md: make.py writes them
+# from core.py).
+name = "browser"
+label = "Browser"
+version = "1"
+description = "a browser you and an agent use together: point it at what you mean"
+instances = "many"
+offer = "attached"
+instructions_file = "instructions.md"
+tools_file = "tools.json"
+mark = "mark.svg"
+
+[agent]
+start = true
+name = "Browser · {folder}"
+
+# what its agent was asked, as the list shows it: a message from before the Browser was an app carried the browser's
+# state after the user's words
+[asked]
+when = "<browser_state>"
+pattern = '^([\s\S]*?)\s*<browser_state>'
+otherwise = "A message, with the browser's state"
+
+[backend]
+python = "backend:BrowserApp"
+
+[panel]
+entry = "panel/index.html"
+
+[capabilities]
+native_view = true
+reads = ["user_message"]

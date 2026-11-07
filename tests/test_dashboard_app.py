@@ -71,12 +71,12 @@ class Stream:
 class RoutesTest(unittest.TestCase):
     def test_every_route_says_what_it_answers(self):
         listed = app.routes()
-        self.assertGreater(len(listed), 100)
+        self.assertGreater(len(listed), 80)             # (the apps' own routes are on their own origins)
         for methods, path, doc in listed:
             self.assertTrue(doc, f"{methods} {path} has no docstring")
         paths = {p for _, p, _ in listed}
         for path in ("/api/home", "/api/stream", "/api/terminal", "/api/edit/stream", "/api/apps/stream",
-                     "/browser/w/{key}/stream", "/api/apps/start", "/api/send", "/api/actors/{op:path}"):
+                     "/api/desktop", "/api/apps/start", "/api/send", "/api/actors/{op:path}"):
             self.assertIn(path, paths)
 
     def test_the_command_lists_them(self):

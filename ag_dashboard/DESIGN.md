@@ -106,8 +106,9 @@ Checked by ESLint and tests in CI:
 
 1. `core/` imports nothing from `features/`, `apps/` or `layout/`.
 2. A feature imports `core/` and its own folder, not another feature; what two features share moves to `core/`.
-3. Only `apps/` names an app (DocWriter, Browser). On the server, only `apps.py`, the apps' modules (`docwriter.py`,
-   `browser.py`, and `docwriter_guard.py`, `browser_video.py`) and their routers do (`test_dashboard_apps.py`).
+3. No code of the dashboard names an app (DocWriter, the Browser, the Preview): each is in `ag_apps/`, reached only
+   through the app host and app_kit's contract (app_kit/DESIGN.md), as one written by anyone else would be
+   (`test_dashboard_apps.py`).
 4. Only `layout/` arranges the page. A view draws into the element it is given, and never moves an iframe: a browser
    reloads an iframe that is moved.
 5. `tsc --noEmit` passes, and `types.gen.ts` matches the server's schema.

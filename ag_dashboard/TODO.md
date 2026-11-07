@@ -509,6 +509,9 @@ Not done yet:
 
 ## Browser
 
+(Since 2026-11-07 the Browser is an app, `ag_apps/browser/`: its panel above its actor, not a view of it; what the user
+does there is told its agent as the Browser's messages, not with the user's message. What follows is from before.)
+
 A Browser (browser.py) is an actor of its own, like DocWriter's: a gatherer's "+ more" drop-down, "Browser…" (Claude
 Code or Codex), starts one in the folder a new session there would use, and selecting it shows its view -- a Chrome tab
 the user and the agent use together (its Terminal, Chat and History one click away, the message box under it). One

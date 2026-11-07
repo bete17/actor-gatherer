@@ -1,6 +1,6 @@
-"""The apps behind one list (ag_dashboard/DESIGN.md, rule 3): only apps.py, the apps' own modules and their routers
-name an app (DocWriter, the Browser) -- the rest of the dashboard's server asks what it needs of one through apps.py
--- and each app in apps.APPS gives what that code asks."""
+"""The dashboard names no app (app_kit/DESIGN.md; ag_dashboard/DESIGN.md, rule 3): no module of its server says the
+name of an app that comes with ag (ag_apps/: DocWriter, the Browser, the Preview) -- it reaches each only through the
+app host and app_kit's contract, as it would one written by anyone else -- and mcp.py's tools/list record."""
 import io
 import json
 import os
@@ -14,12 +14,14 @@ import unittest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from ag_dashboard import apps, mcp, sessions  # noqa: E402
+import app_kit  # noqa: E402
+from ag_dashboard import mcp  # noqa: E402
 
 DASHBOARD = os.path.join(ROOT, "ag_dashboard")
-OWN = {"apps.py", "docwriter.py", "docwriter_guard.py", "browser.py", "browser_video.py", "api/docwriter.py",
-       "api/browser.py"}                                          # the apps' own: they may name them
-NAMES = sorted({w.lower() for a in apps.APPS for w in (a.name, a.label)})
+OWN: set = set()                                                  # none of the dashboard's modules is an app's own
+NAMES = sorted({w.lower() for m in app_kit.finding.find(os.path.join(ROOT, "no-home"))[0].values()
+                for w in (m.name, m.label)
+                if os.path.dirname(m.folder or "") == os.path.join(ROOT, "ag_apps")})   # the apps that come with ag
 SAID = re.compile("(?i)" + "|".join(map(re.escape, NAMES)))        # in any text, and any part of a name: DocWriters
 
 #: What the dashboard's code may still say that names an app, and why it is not about one: (file, words of the line
@@ -28,6 +30,12 @@ ALLOWED = {
     ("__main__.py", "webbrowser"): "Python's module that opens the page in the user's web browser",
     ("__main__.py", "the browser"): "the user's web browser, which `ag dashboard` opens the page in",
     ("__main__.py", "open a browser"): "the same",
+    ("history.py", "PREVIEW = 300"): "how much of an event's words an outline shows: a preview, not the Preview",
+    ("history.py", "[:PREVIEW]"): "the same",
+    ("history.py", "{PREVIEW * 2}"): "the same",
+    ("history.py", "def _preview("): "an event's words, shortened for its outline",
+    ("history.py", "or _preview("): "the same",
+    ("history.py", "since the preview (a file changed)"): "what a history export would write, shown first",
 }
 
 
@@ -73,8 +81,8 @@ class OnlyTheAppsNameAnAppTest(unittest.TestCase):
             if name not in OWN:
                 found += [f"{name}:{line}: {what}" for line, what, text in python_names(os.path.join(DASHBOARD, name))
                           if not _allowed(name, text)]
-        self.assertEqual(found, [], "an app named outside its own code: ask it through apps.py's App instead "
-                                    "(ag_dashboard/DESIGN.md, rule 3)")
+        self.assertEqual(found, [], "an app named in the dashboard: reach it through the app host and app_kit's "
+                                    "contract instead (app_kit/DESIGN.md)")
 
     def test_every_allowance_is_still_needed(self):
         used = set()
@@ -92,47 +100,7 @@ class OnlyTheAppsNameAnAppTest(unittest.TestCase):
                 fh.write('"""A DocWriter\'s, a Browser\'s."""\nfrom . import browser as bw, docwriter\n'
                          'if role.get("docwriter"):  # a DocWriter\'s\n    x = srv.browsers.compose(row, text)\n'
                          '    y = f"{a} no DocWriter started {b}"\nz = "/browser/w/"\nw = "a page"\n')
-            # DocWriter is an app of app_kit's now (ag_apps/docwriter/), not one of the dashboard's: its name is words
-            self.assertEqual([line for line, _, _ in python_names(mod)], [2, 4, 6])
-
-
-class EveryAppGivesTheInterfaceTest(unittest.TestCase):
-    """What the shared code asks of an app (apps.py's `App`), each app gives."""
-
-    def test_its_name_says_where_it_is(self):
-        self.assertEqual([a.name for a in apps.APPS], ["browser"])        # DocWriter: an app of app_kit's now
-        for a in apps.APPS:
-            self.assertIs(apps.named(a.name), a)
-            self.assertIs(apps.under(f"/{a.name}/w/0123456789abcdef/mcp"), a)
-            self.assertTrue(a.label and issubclass(a.error, ValueError))
-            self.assertIn(a.name, a.home_fields)
-            self.assertTrue(any(getattr(r, "path", "").startswith(a.path()) for r in a.router().routes))
-        self.assertIsNone(apps.named("nope"))
-        self.assertIsNone(apps.under("/api/home"))
-
-    def test_a_session_s_role_names_its_app(self):
-        """{"<name>": key}: the session is that app's actor -- a role sessions.py takes, found by apps.py's `of` -- and
-        no other's; an actor like any other's role is no app's."""
-        for a in apps.APPS:
-            s = {"role": json.dumps({a.name: "0123456789abcdef"}), "harness": "claude", "cwd": "/w"}
-            self.assertTrue(sessions.known_role(s["role"]))
-            self.assertIs(apps.of(s), a)
-            self.assertEqual([b.name for b in apps.APPS if b.key_of(s) is not None], [a.name])
-        for role in (None, "coordinator", json.dumps({"nope": "0123456789abcdef"})):
-            self.assertIsNone(apps.of({"role": role}))
-            self.assertEqual(sessions.extra_args({"role": role, "harness": "claude"}), [])
-        self.assertFalse(sessions.known_role(json.dumps({"nope": "0123456789abcdef"})))
-
-    def test_its_actor_waits_for_its_tools_where_its_harness_is_given_them(self):
-        """apps.py's `tools_of`: the endpoint of the app's MCP server (/<name>/w/<key>/mcp) for its actor, where its
-        harness takes an MCP server's tools; [] for any other session, and for a harness given none (agy)."""
-        for a in apps.APPS:
-            role = json.dumps({a.name: "0123456789abcdef"})
-            self.assertEqual(apps.tools_of({"role": role, "harness": "claude", "cwd": "/w"}),
-                             [f"{a.name}/0123456789abcdef"])
-            self.assertEqual(apps.tools_of({"role": role, "harness": "antigravity", "cwd": "/w"}), [])
-        for role in (None, "coordinator"):
-            self.assertEqual(apps.tools_of({"role": role, "harness": "claude", "cwd": "/w"}), [])
+            self.assertEqual([line for line, _, _ in python_names(mod)], [2, 2, 3, 4, 5, 6])
 
 
 class ListedTest(unittest.TestCase):

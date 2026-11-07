@@ -1,9 +1,10 @@
-"""A Browser's screen as video (ag_dashboard/browser_video.py): what a page watching is sent -- every chunk from a key
+"""A Browser's screen as video (ag_apps/browser/video.py): what a page watching is sent -- every chunk from a key
 frame on, in order; a new key frame once it falls behind -- how the capture learns the window's bars and falls back to
 the JPEG frames, and, where a Chrome is installed, the whole of it against a real one: the tab captured, H.264 at the
 view's size, a click's change as a small chunk, the video following the tab shown, and turned off by the config."""
 import json
 import os
+import secrets
 import sys
 import time
 import unittest
@@ -11,8 +12,8 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from ag_dashboard import browser, browser_video, sessions  # noqa: E402
-from test_dashboard_browser import Home, checked  # noqa: E402
+from ag_apps.browser import core as browser, video as browser_video  # noqa: E402
+from test_app_browser import Home, checked  # noqa: E402
 
 
 def chunk(t: str, n: int = 0, **more) -> dict:
@@ -55,9 +56,9 @@ class BrowserVideoTest(Home):
 
     def setUp(self):
         super().setUp()
-        self.bs = browser.Browsers(sessions.Sessions())
+        self.bs = self.browsers()
         self.addCleanup(self.bs.close)
-        self.b = browser.Browser(self.bs, "0123456789abcdef", {"gatherer": "g", "root": self.root, "session_id": "s"})
+        self.b = browser.Browser(self.bs, "0123456789abcdef", {"gatherer": "g", "root": self.root})
 
     def test_chunks_go_to_the_pages_that_decode_video_only(self):
         video, jpeg = browser.Viewer(video=True), browser.Viewer(video=False)
@@ -123,9 +124,9 @@ class VideoChromeTest(Home):
 
     def setUp(self):
         super().setUp()
-        self.bs = browser.Browsers(sessions.Sessions())
+        self.bs = self.browsers()
         self.addCleanup(self.bs.close)
-        self.cfg = self.bs.create("g", self.root, "claude")
+        self.cfg = self.bs.keep(secrets.token_hex(8), self.root, "g")
         self.b = self.bs.get(self.cfg["key"])
 
     def watch(self, v: browser.Viewer, until, secs: float = 15.0) -> list:
@@ -244,7 +245,7 @@ class VideoChromeTest(Home):
         self.assertEqual(self.b.tab().title, "My doc - Docs")
 
     def test_two_browsers_watched_in_turn_each_get_their_video_back(self):
-        other = self.bs.get(self.bs.create("g", self.root, "claude")["key"])
+        other = self.bs.get(self.bs.keep(secrets.token_hex(8), self.root, "g")["key"])
         for b in (self.b, other):
             b.live()
             b.resize(600, 400, 1.0)

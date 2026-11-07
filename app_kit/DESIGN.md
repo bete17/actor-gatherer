@@ -433,8 +433,9 @@ Each step is one PR and leaves the dashboard working. Steps 1–3 change nothing
      attached to it.
    - What the agent is told of the app reaches it as ag's events, not by the dashboard rewriting the user's message:
      the app inserts them, or gives an ag poller that pulls its state before each model call of an attached agent.
-     The Browser's `<browser_state>` (the page, what the user did since, what they picked) becomes its poller's: the
-     same content, now also between the calls of a turn. DocWriter's page-built prompt the same way.
+     The Browser's `<browser_state>` (the page, what the user did since, what they picked) becomes events it inserts
+     into its agent's channel (below: a poller's would reach every session): the same content, now also between the
+     calls of a turn. DocWriter's page-built prompt stays the message its page sends.
    - DocWriter's guard on the harness's own edit tools becomes a capability an app declares (the host adds the hook).
    - DocWriter's own request box stays: its page messages its attached agent through the SDK, as it sends today
      (`message_agents` capability), the prompt it builds as it builds it.
@@ -464,6 +465,34 @@ Each step is one PR and leaves the dashboard working. Steps 1–3 change nothing
      dashboard.db once (DocWriter: `docwriter_docs`, `docwriter_kv`, left in place)
    Checked live: a Claude Code (Haiku) actor started with a DocWriter had its six tools; `docwriter_read_doc` was
    answered by the panel; its own Edit of a document open in DocWriter was refused with DocWriter's reason.
+
+   **The Browser: built** (2026-11-07, its own PR). `ag_apps/browser/`: `core.py` is the dashboard's `browser.py`
+   moved as it was (the Chrome, the tools and their checks, the user's input, picks, the screen as video:
+   `video.py`), `backend.py` the App over it, `panel/` the dashboard's Browser view (`20-browser.js`, its CSS) moved
+   onto the SDK, `make.py` writes `tools.json` and `instructions.md` from the core. The dashboard names no app at all
+   now (`test_dashboard_apps.py`): `apps.py` -- the old way an app was built into the dashboard -- is gone with
+   `browser.py`, `browser_video.py`, `api/browser.py` and the Browser view; Settings' "Import logins" is the panel's
+   own "⋯" menu. Its 14 actors are adopted as DocWriter's were, and its tabs copied from dashboard.db once; its Chrome's
+   profile, downloads and the desktop app's marks stay in `<home>/dashboard/`, where they were.
+   - **What the user does reaches its agent as ag's events, inserted, not a poller.** A poller's events belong to no
+     channel (every session in the gatherer would see one Browser's clicks), so the Browser inserts a `context_stream`
+     ("Browser", "the user") into each attached agent's channel: what the user did, the page, what they picked --
+     `<browser_state>`'s content -- `TELL_AFTER` (2 s) after they last did something, at once on a pick. Its agent
+     sees it at its next model call, also between the calls of a turn, where `<browser_state>` waited for the user's
+     next message. An action's result still says what the user did meanwhile, unless told already.
+   - **The user's next message to its agent** (read as `user_message`: a `reads` capability) puts their picks away and
+     lifts a stop (Esc), as sending one did: looked for on each tool call and every 3 s while a Browser waits on one.
+   - **`Response.stream`**: a backend run in the dashboard may answer its panel with server-sent events (the screen).
+     Panel requests' bodies are capped at 40 MB (413).
+   - **The native view is `native_view`**, for an app run in the dashboard. The panel says where its screen is
+     (`ag.native.show(el, target)`, each frame, covered by the panel's own menus or not); the page offsets it by the
+     frame, checks the dashboard's own overlays over it (`features/apps/native.ts`), and tells the desktop app
+     (`agApp.place`), whose preload no longer scans the page. A still picture goes desktop app → page → panel, its
+     "drawn" back the same way. The desktop link (`/api/desktop`, `desktop.py`'s token) is the host's: it hands it to
+     each app that asks (`App.native`), every message tagged with its app; the desktop app keeps each app's pages
+     apart (seen, driven and placed only by it) and in a profile of its own -- the Browser's the one it always had
+     (`persist:browsers`), so its logins stay.
+   - Clicking an app's actor that is already shown opens its app's panel again, if closed.
 9. **Skills & memory, and Sources.** History's actions move to Skills & memory. Sources becomes an app once it is
    merged.
 10. **Apps from outside.** `ag apps install`, the permissions shown at install, and the store's manifest format.

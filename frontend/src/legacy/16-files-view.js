@@ -537,7 +537,7 @@ const mySends = () => { const k = state.selected && key(...state.selected); retu
 const AT_WORK = ["opening", "working", "asking"];
 // A message as the user typed it, to match what was sent with what is stored (the server gives the user's words as
 // typed: harness_kit's): "!echo hi" the same as "! echo hi".
-const typedAs = (text) => bwStrip(String(text ?? "")).trim().replace(/^!\s*/, "! ");
+const typedAs = (text) => String(text ?? "").trim().replace(/^!\s*/, "! ");
 // whether two say the same: their start, as a stored message is clipped
 const sameWords = (a, b) => typedAs(a).slice(0, 200) === typedAs(b).slice(0, 200);
 state.chatSend = async () => false;                    // the message box's send, as the latest draw made it (chatCard)
@@ -625,7 +625,7 @@ function talkFeed(info, session, writable, held, afresh) {
 const CHAT_HOST = Object.freeze({
   atWork, atRest, greeting, callView, callLabel, bareAvatar, hueInk, envelope, typedAs, sameWords, icons: ICONS, beside: BESIDE_KEY,
   crewFace: (a, coordinator) => crewFace(a, coordinator ? MANAGER : null),
-  appWords: (text) => BW_BLOCK.test(text) ? bwWords(text) : null,
+  appWords: (text) => appWordsOf(text),
   redraw: () => keepingPlace(renderMain), foldSide, setFilesTurn, setChatView,
   interruptOver: () => { state.interrupting = null; },
 });

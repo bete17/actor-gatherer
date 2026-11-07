@@ -1,5 +1,5 @@
-"""The MCP server an actor reaches the dashboard's tools by -- a DocWriter's its document tools (docwriter.py), a
-Browser's its browser tools (browser.py): MCP's streamable HTTP transport,
+"""The MCP server an actor reaches the dashboard's tools by -- the apps' tools (tool_gateway.py), and the dashboard's own:
+MCP's streamable HTTP transport,
 the least of it -- each JSON-RPC request POSTed, answered with JSON, no stream of the server's own -- which Claude
 Code (`"type": "http"` in --mcp-config) and codex (`mcp_servers.<name>.url`) both speak.
 
@@ -15,7 +15,7 @@ Standard library only.
 A harness asks for `tools/list` once it has connected, and a turn it starts before that has none of the server's
 tools: Claude Code and codex both start one without waiting for their MCP servers. So each endpoint's last list is
 kept (`listed`, by `endpoint`), and the dashboard types a session's first message only once its actor's endpoints
-have listed their tools (sessions.py's `_first_message`, apps.py's `tools_of`)."""
+have listed their tools (sessions.py's `_first_message`; the gateway's endpoint: tool_gateway.py's `served`)."""
 import json
 import threading
 import time
@@ -23,7 +23,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 PROTOCOL = "2025-06-18"     # the version answered to a client that names none
 NAME = "ag-dashboard"       # a server's name, where none is given (`handle`): its tools' names, as harnesses show them,
-                            # carry it -- an app's server is given its own (docwriter.py's MCP_NAME, browser.py's NAME)
+                            # carry it -- the apps' gateway is given its own (tool_gateway.py's NAME)
 
 _listed: Dict[str, float] = {}      # when each endpoint last answered `tools/list` (epoch seconds), by `endpoint`
 _listed_lock = threading.Lock()

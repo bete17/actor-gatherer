@@ -716,22 +716,25 @@ class ChatTerminalTest(SessionsBase):
 
 @unittest.skipUnless(sessions.TERMINALS, "a terminal needs a Unix pseudo-terminal")
 class ChatToolsTest(SessionsBase):
-    """A session the dashboard gives its own MCP server's tools (an app's actor: apps.py's `tools_of`) starts its
-    terminal without its first message on the command line, and has the message typed in once that server has listed
-    its tools (sessions.py's `_first_message`): its harness starts the turn without waiting for them, and that turn
-    would run without the tools."""
+    """A session the dashboard gives its own MCP server's tools (the apps' tool gateway: tool_gateway.py's `served`)
+    starts its terminal without its first message on the command line, and has the message typed in once that server
+    has listed its tools (sessions.py's `_first_message`): its harness starts the turn without waiting for them, and
+    that turn would run without the tools."""
 
     AT = "x/0123456789abcdef"
 
     def setUp(self):
         super().setUp()
         self.chat(None)
-        from ag_dashboard import apps
-        self.tools = unittest.mock.patch.object(apps, "tools_of", lambda s: [self.AT])
-        self.tools.start()
+        from ag_dashboard import tool_gateway
+        self.tools = [unittest.mock.patch.object(tool_gateway, "served", lambda s: True),
+                      unittest.mock.patch.object(tool_gateway, "endpoint", lambda actor: self.AT)]
+        for t in self.tools:
+            t.start()
 
     def tearDown(self):
-        self.tools.stop()
+        for t in self.tools:
+            t.stop()
         super().tearDown()
 
     def typed(self):
@@ -817,8 +820,8 @@ class ChatToolsTest(SessionsBase):
         self.noted(sid, "its tools listed")
 
     def test_a_session_given_no_tools_starts_with_the_message_on_its_command_line(self):
-        from ag_dashboard import apps
-        with unittest.mock.patch.object(apps, "tools_of", lambda s: []):
+        from ag_dashboard import tool_gateway
+        with unittest.mock.patch.object(tool_gateway, "served", lambda s: False):
             sid = self.s.create("g", self.work)["session_id"]
             self.s.send(sid, "hi", 90, 25)
             [argv] = self.until(self.argvs)

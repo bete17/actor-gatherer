@@ -61,7 +61,6 @@ function takeHome(home) {
   for (const g of home.gatherers) for (const a of g.agents) {
     a.key = key(g.name, a.channel);
     if (appRole(a)) a.last_user_message = appAsked(a, a.last_user_message);
-    else if (bwKey(a)) a.last_user_message = bwStrip(a.last_user_message);
   }
   if (state.selected) {                              // a codex session renamed to its thread: followed there
     const g = home.gatherers.find((x) => x.name === state.selected[0]);
@@ -77,7 +76,6 @@ function takeHome(home) {
   state.home = home;
   markSeen();
   appsAtWork();                                      // apps' panels told their agents' states; held while they work
-  bwTellScheme();
 }
 function markSeen() {
   if (SNAPSHOT || PANE || !state.home || document.visibilityState !== "visible") return;

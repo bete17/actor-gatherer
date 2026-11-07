@@ -45,7 +45,8 @@ from app_kit import App, AppError, Caller, Instance, Manifest, Response, ToolRes
 from . import home
 
 PATH_ENV = app_kit.finding.PATH_ENV
-WRITE_TRIES_SECONDS = 30.0      # a new gatherer has no database until its first call: its writes tried this long
+HELD_RETRY = 2.0                # a new gatherer has no database until its first call: its writes, held, tried this often
+HELD_MAX = 1000                 # the most writes held for one such gatherer: the oldest dropped past it
 PAGE_WAIT = 30.0                # seconds a tool its panel answers waits for a panel of the instance to be open
 TOOL_WAIT = 120.0               # and for the panel's answer
 READ_MAX = 2000
@@ -99,6 +100,7 @@ class AppHost:
         self.lock = threading.RLock()
         self._write_fn = write or _ag_insert
         self._writes: "queue.Queue" = queue.Queue()
+        self._held: Dict[str, List[tuple]] = {}               # a gatherer with no database yet: its writes, in order
         self._writer = threading.Thread(target=self._writing, name="app-host-writes", daemon=True)
         self._writer.start()
         self._rung: "queue.Queue" = queue.Queue()
@@ -261,6 +263,40 @@ class AppHost:
         if channel:
             self.attach(gatherer, i.id, channel, by="adopted")
         return i
+
+    def native_link(self, send: Callable[[str], None], close: Callable[[], None]) -> Callable[[Optional[str]], None]:
+        """The ag desktop app connected (api/apps.py's /api/desktop; desktop.py): its link handed to each app that asks
+        `native_view` and runs inside the dashboard (App.native) -- each message the app sends tagged with its name
+        ("app"), so the desktop app keeps each app's pages apart; each message from the desktop app given to the app it
+        names (naming none, as a desktop app from before apps did: the only such app). Returns what takes each message
+        from the desktop app (None: the link gone)."""
+        takers: Dict[str, Callable[[Optional[str]], None]] = {}
+        for name, h in sorted(self.apps.items()):
+            m = h.manifest
+            if not m.capabilities.native_view or not m.backend.python:
+                continue
+            try:
+                took = self.backend(name).native(lambda text, n=name: send(_tagged(text, n)), close)
+            except Exception:  # noqa: BLE001 - an app that fails to take it goes without its native pages
+                took = None
+            if took is not None:
+                takers[name] = took
+
+        def got(text: Optional[str]) -> None:
+            if text is None:
+                for take in takers.values():
+                    take(None)
+                return
+            try:
+                name = json.loads(text).get("app")
+            except (ValueError, AttributeError):
+                return
+            if name is None and len(takers) == 1:
+                name = next(iter(takers))
+            take = takers.get(name)
+            if take is not None:
+                take(text)
+        return got
 
     def guard(self, gatherer: str, channel: str, path: str) -> Optional[str]:
         """Why the agent must not change `path` with its harness's own edit tools: the first refusal of an app it is
@@ -532,7 +568,8 @@ class AppHost:
         self._writes.put((gatherer, properties, events, types))
 
     def flush(self, timeout: float = 30.0) -> None:
-        """Everything handed to be written, written (for tests, and before a read that needs it); at once, closed."""
+        """Everything handed to be written, written (for tests, and before a read that needs it); at once, closed. A
+        write held for a gatherer with no database yet (`_writing`) is not waited for: it can't be read either."""
         if not self._writer.is_alive():
             return
         done = threading.Event()
@@ -540,27 +577,60 @@ class AppHost:
         done.wait(timeout)
 
     def _writing(self) -> None:
+        """The writes, in order, one at a time. A gatherer with no database yet (a new one, before its first agent's
+        first call) holds its writes -- the later ones behind the first, in order -- and they are tried again every
+        HELD_RETRY seconds once its database is there, never holding up another gatherer's writes, nor a flush."""
         while True:
-            item = self._writes.get()
+            try:
+                item = self._writes.get(timeout=HELD_RETRY if self._held else None)
+            except queue.Empty:
+                self._retry_held()
+                continue
             if item is None:
+                for gatherer, held in self._held.items():
+                    print(f"dashboard: apps' {len(held)} record(s) not kept in {gatherer}: it has no database yet",
+                          file=sys.stderr, flush=True)
                 return
             if isinstance(item, threading.Event):
                 item.set()
                 continue
-            gatherer, props, events, types = item
-            end = time.time() + WRITE_TRIES_SECONDS
-            while True:
-                try:
-                    self._write_fn(gatherer, props, events, types)
+            gatherer = item[0]
+            if gatherer in self._held:
+                self._hold(item)
+                self._retry_held()
+                continue
+            self._write_one(item)
+
+    def _write_one(self, item: tuple) -> bool:
+        """One write; False if its gatherer has no database yet (held, then)."""
+        gatherer, props, events, types = item
+        try:
+            self._write_fn(gatherer, props, events, types)
+        except Exception as exc:  # noqa: BLE001 - a lost record is a line in the log, never the reader's
+            if NO_DATABASE in str(exc):
+                self._hold(item)
+                return False
+            print(f"dashboard: apps' {', '.join(e['type'] for e in events)} not kept in {gatherer}: {exc}",
+                  file=sys.stderr, flush=True)
+        self.rung(gatherer)
+        return True
+
+    def _hold(self, item: tuple) -> None:
+        held = self._held.setdefault(item[0], [])
+        held.append(item)
+        if len(held) > HELD_MAX:
+            del held[0]
+
+    def _retry_held(self) -> None:
+        """Each gatherer's held writes, in order, once its database is there."""
+        for gatherer in list(self._held):
+            if not os.path.exists(home.db_path(gatherer)):
+                continue
+            held = self._held.pop(gatherer)
+            for n, item in enumerate(held):
+                if not self._write_one(item):                       # (held again: the rest after it, as they were)
+                    self._held[gatherer] = self._held.get(gatherer, []) + held[n + 1:]
                     break
-                except Exception as exc:  # noqa: BLE001 - a lost record is a line in the log, never the reader's
-                    if NO_DATABASE in str(exc) and time.time() < end:
-                        time.sleep(2)
-                        continue
-                    print(f"dashboard: apps' {', '.join(e['type'] for e in events)} not kept in {gatherer}: {exc}",
-                          file=sys.stderr, flush=True)
-                    break
-            self.rung(gatherer)
 
     def _load(self, gatherer: str) -> None:
         """The gatherer's apps' records read, once: its open instances and their agents."""
@@ -589,6 +659,15 @@ class AppHost:
                 if inst.app in self.apps:                          # an app no longer found: its instances wait for it
                     self.instances.setdefault(i, inst)
                     self.attached.setdefault(i, set()).update(attached.get(i, ()))
+
+
+def _tagged(text: str, app: str) -> str:
+    """A message of an app's to the desktop app, its name on it ("app")."""
+    try:
+        m = json.loads(text)
+    except ValueError:
+        return text
+    return json.dumps({**m, "app": app}) if isinstance(m, dict) else text
 
 
 class Bound(app_kit.Host):

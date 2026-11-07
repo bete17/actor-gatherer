@@ -8,7 +8,7 @@ import "./css/05-chat.css";
 import "./css/06-terminal.css";
 import "./css/07-editor.css";
 import "./css/08-docwriter.css";
-import "./css/09-browser.css";
+import "./css/09-editor.css";
 import "./css/10-editor-marks.css";
 import "./css/11-files-view.css";
 import "./css/12-editor-tree.css";

@@ -26,6 +26,19 @@ function appMark(info) {
   return el("img", { class: "dw-badge", src: `/apps/mark/${encodeURIComponent(app.name)}.svg`, alt: app.label, title: app.label,
     draggable: "false" });
 }
+// A message an app's page wrote (one holding an app's [asked] `when`: DocWriter's prompt, a Browser's message from
+// before it was an app), shown in Chat by the user's words alone: the first group of its `pattern`; null, any other.
+function appWordsOf(text) {
+  if (typeof text !== "string" || PANE || SNAPSHOT || !window.agNext) return null;
+  for (const app of window.agNext.apps.found()) {
+    const a = app.asked;
+    if (!a || !a.when || !a.pattern || !text.includes(a.when)) continue;
+    let m = null;
+    try { m = text.match(new RegExp(a.pattern)); } catch (e) { continue; }
+    if (m && m[1]) return el("span", { class: "tx" }, m[1]);
+  }
+  return null;
+}
 // What an app's actor was asked, as the list shows it: in a message holding the manifest's `when`, the first group of
 // its `pattern`, else its `otherwise`; any other message as it is.
 function appAsked(info, text) {

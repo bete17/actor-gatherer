@@ -1,6 +1,8 @@
-"""The ag app's link (desktop/DESIGN.md; ag_dashboard/api/desktop.py, browser.py's AppCdp): once the app connects, the
-home's Browsers live in its native pages -- opened there, without what only a windowless Chrome needs, no screencast for
-the app's own page -- and are paused, never moved, while it is away; only the app, with the home's token, may connect."""
+"""The ag desktop app's link (desktop/DESIGN.md; ag_dashboard/api/apps.py's /api/desktop, app_host.py's native_link,
+the Browser's AppCdp): once the desktop app connects, the home's Browsers live in its native pages -- opened there,
+without what only a windowless Chrome needs, no screencast for the panel -- and are paused, never moved, while it is
+away; only the desktop app, with the home's token, may connect; each message is the app's it is of ("app"), and the
+host hands each to that app."""
 import json
 import os
 import queue
@@ -16,9 +18,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from wsproto import ConnectionType, WSConnection  # noqa: E402
 from wsproto.events import AcceptConnection, CloseConnection, RejectConnection, Request, TextMessage  # noqa: E402
 
-from ag_dashboard import browser, server, sessions  # noqa: E402
+import secrets  # noqa: E402
+
+from ag_apps.browser import core as browser  # noqa: E402
+from ag_dashboard import desktop, home as dashboard_home, server  # noqa: E402
+from test_app_browser import Home  # noqa: E402
 from test_dashboard import HomeBase  # noqa: E402
-from test_dashboard_browser import Home  # noqa: E402
 
 WINDOWLESS = ("Page.setInterceptFileChooserDialog", "WebAuthn.enable", "Emulation.setDeviceMetricsOverride")
 
@@ -78,10 +83,10 @@ class AppHome(Home):
 
     def setUp(self):
         super().setUp()
-        self.bs = browser.Browsers(sessions.Sessions())
+        self.bs = self.browsers()
         self.addCleanup(self.bs.close)
         with mock.patch.object(browser, "available", lambda: True):
-            self.key = self.bs.create("g", self.root, "claude")["key"]
+            self.key = self.bs.keep(secrets.token_hex(8), self.root, "g")["key"]
         self.b = self.bs.get(self.key)
 
 
@@ -281,12 +286,21 @@ class Socket:
 
 
 class LinkRouteTest(HomeBase):
+    """The desktop app's link through the dashboard: its token checked, then handed to the Browser (the app that asks
+    native_view), each message tagged with it."""
+
     def setUp(self):
         super().setUp()
+        self.saved = browser.HOME, browser.DB_PATH
+        self.addCleanup(lambda: setattr(browser, "HOME", self.saved[0]) or setattr(browser, "DB_PATH", self.saved[1]))
+        browser.HOME = dashboard_home.HOME                 # the test's home, before the Browser's backend says so
         self.httpd = server.serve("127.0.0.1", 0, live_updates=False)
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
-        self.addCleanup(self.httpd.server_close)
+        self.serving(self.httpd)
+        self.hosts.append(self.httpd.app_host)
         self.port = self.httpd.server_port
+        if "browser" not in self.httpd.app_host.apps:
+            self.skipTest("the Browser app is not found")
 
     def test_a_wrong_token_or_a_web_page_is_refused(self):
         wrong = Socket(self.port)
@@ -298,20 +312,26 @@ class LinkRouteTest(HomeBase):
         page.close()
         self.assertFalse(os.path.exists(browser.app_marker()))
 
-    def test_the_app_with_the_token_links_and_is_asked_for_pages(self):
+    def test_the_app_with_the_token_links_and_is_asked_for_pages_by_the_browser(self):
         app = Socket(self.port)
         self.addCleanup(app.close)
-        app.say(browser.app_token())
-        chrome = self.httpd.apps["browser"].chrome
+        app.say(desktop.app_token())
+        bs = self.httpd.app_host.backend("browser").bs
+        chrome = bs.chrome
         self.assertTrue(until(lambda: chrome.app is not None))
         self.assertEqual(browser.mode(), "app")
         asked = []
         threading.Thread(target=lambda: asked.append(chrome.cdp().call("Target.createTarget", {"url": "about:blank"})),
                          daemon=True).start()
         m = app.next()
-        self.assertEqual(m["method"], "Target.createTarget")
-        app.say(json.dumps({"id": m["id"], "result": {"targetId": "T9"}}))
+        self.assertEqual((m["method"], m["app"]), ("Target.createTarget", "browser"))   # the Browser's, said
+        app.say(json.dumps({"id": m["id"], "result": {"targetId": "T9"}, "app": "browser"}))
         self.assertTrue(until(lambda: asked == [{"targetId": "T9"}]))
+        threading.Thread(target=lambda: asked.append(chrome.cdp().call("Target.getTargets", {})), daemon=True).start()
+        m = app.next()
+        app.say(json.dumps({"id": m["id"], "result": {"targetInfos": []}}))        # naming no app: the only one's
+        self.assertTrue(until(lambda: asked[-1] == {"targetInfos": []}))
+        app.say(json.dumps({"id": 999, "result": {}, "app": "nosuch"}))          # another app's: no one's here
         app.close()                                     # the app quit: its link gone, its Browsers paused
         self.assertTrue(until(lambda: chrome.app is None))
 

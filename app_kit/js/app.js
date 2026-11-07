@@ -26,6 +26,15 @@ Everything goes through the page around it, by postMessage, which checks it agai
     ag.intents.open(kind, data) / on(kind, cb)           ask for something (open-file, open-url, ...) / be asked
     ag.selection.current / on(cb)                        the agent in focus in the page: {gatherer, channel}
     ag.theme.current / on(cb)                            {mode: "light"|"dark", vars}: the vars also set on :root
+    ag.agents.focus(ch)                                  the message box of an attached agent's pane, focused (say after
+                                                         the user pointed at something in the panel: they type next)
+    ag.native.available                                  in the ag desktop app, for an app asking native_view: a native
+                                                         page of the app's (its backend's, over the app's link) can be
+                                                         shown over an element of the panel
+    ag.native.show(el, target) / hide()                  page `target` kept over `el`, as it moves and resizes; anything
+                                                         drawn over `el` (but what takes no pointer) covers it: the page
+                                                         is then a still picture, drawn in el's own <img> (its first)
+    ag.native.release()                                  the keys back from the native page, to the panel
     ag.onMessage(cb)                                     what the app's backend tells its panels
     ag.api(path, init?)                                  its backend's own routes, on its own origin (no bridge)
     ag.close()                                           its pane closed
@@ -40,7 +49,7 @@ Esc, and keys with Ctrl or ⌘ the panel leaves unhandled, go on to the page, as
   const listeners = { event: new Map(), message: [], attached: [], selection: [], theme: [], intent: new Map(),
                       states: [] };
   const handlers = new Map();
-  let info = null, attached = [], selection = null, theme = null, states = {};
+  let info = null, attached = [], selection = null, theme = null, states = {}, nativeOn = false;
 
   function send(op, body) {
     return new Promise((resolve, reject) => {
@@ -93,6 +102,7 @@ Esc, and keys with Ctrl or ⌘ the panel leaves unhandled, go on to the page, as
     else if (m.push === "selection") { selection = m.value; for (const cb of listeners.selection) cb(selection); }
     else if (m.push === "theme") applyTheme(m.value);
     else if (m.push === "states") { states = m.value || {}; for (const cb of listeners.states) cb(states); }
+    else if (m.push === "still") drawStill(m.value || {});
     else if (m.push === "intent") { for (const cb of listeners.intent.get(m.kind) || []) cb(m.data); }
   });
 
@@ -102,6 +112,53 @@ Esc, and keys with Ctrl or ⌘ the panel leaves unhandled, go on to the page, as
     window.parent.postMessage({ ag: 1, op: "key", key: ev.key, code: ev.code, meta: ev.metaKey, ctrl: ev.ctrlKey,
                                 shift: ev.shiftKey, alt: ev.altKey }, HOST);
   });
+
+  // -- a native page over an element (ag.native): where it is, each frame, and whether something covers it
+  const GRID = 5;                      // points across and down the element looked at for something over it
+  let shown = null, reported = "";
+  function covered(el, r) {
+    for (let i = 0; i < GRID; i++)
+      for (let j = 0; j < GRID; j++) {
+        const hit = document.elementFromPoint(r.left + (r.width * (i + 0.5)) / GRID, r.top + (r.height * (j + 0.5)) / GRID);
+        if (hit && hit !== el && !(hit.localName === "img" && hit.parentElement === el)) return true;
+      }
+    return false;
+  }
+  function report() {
+    if (!nativeOn) return;
+    let place = null;
+    if (shown && shown.el.isConnected) {
+      const r = shown.el.getBoundingClientRect();
+      if (r.width >= 2 && r.height >= 2 && shown.el.checkVisibility())
+        place = { target: shown.target, x: r.left, y: r.top, w: r.width, h: r.height, covered: covered(shown.el, r) };
+    }
+    const now = JSON.stringify(place);
+    if (now === reported) return;
+    reported = now;
+    send("native.place", { place }).catch(() => { reported = ""; });
+  }
+  const frame = () => new Promise((resolve) => requestAnimationFrame(() => resolve()));
+  let stillAsked = 0;
+  // the page's still picture (or none), in the element's own <img>; the page told once it is drawn, so the native
+  // page is hidden only with its picture in its place
+  async function drawStill(still) {
+    const n = ++stillAsked;
+    const el = shown && shown.target === still.target ? shown.el : null;
+    const img = el && el.querySelector(":scope > img");
+    if (!img) return;
+    if (!still.url) { img.hidden = true; return; }
+    img.src = still.url;
+    Object.assign(img.style, { width: `${el.clientWidth}px`, height: `${el.clientHeight}px` });
+    await img.decode().catch(() => {});
+    if (n !== stillAsked) return;
+    img.hidden = false;
+    await frame();                     // (drawn in this frame, on screen by the next)
+    await frame();
+    if (n === stillAsked) send("native.drawn", { target: still.target }).catch(() => {});
+  }
+  function everyFrame() { report(); requestAnimationFrame(everyFrame); }
+  requestAnimationFrame(everyFrame);
+  setInterval(report, 250);            // (frames stop while the window is hidden or covered)
 
   const ag = {
     get app() { return info && info.app; },
@@ -124,6 +181,12 @@ Esc, and keys with Ctrl or ⌘ the panel leaves unhandled, go on to the page, as
       handle(name, fn) { handlers.set(name, fn); },
       call: (name, args) => send("tools.call", { tool: name, args: args || {} }),
     },
+    native: {
+      get available() { return nativeOn; },
+      show(el, target) { shown = target ? { el, target: String(target) } : null; report(); },
+      hide() { shown = null; report(); },
+      release: () => send("native.release", {}),
+    },
     agents: {
       get attached() { return attached.slice(); },
       onChange(cb) { listeners.attached.push(cb); },
@@ -135,6 +198,7 @@ Esc, and keys with Ctrl or ⌘ the panel leaves unhandled, go on to the page, as
       answer: (channel, call, choice) => send("agents.answer", { channel, call, choice }),
       interrupt: (channel) => send("agents.interrupt", { channel }),
       transcript: (channel, opts) => send("agents.transcript", { channel, after: (opts && opts.after) || 0 }),
+      focus: (channel) => send("agents.focus", { channel }),
     },
     intents: {
       open: (kind, data) => send("intent", { kind, data: data || {} }),
@@ -159,6 +223,7 @@ Esc, and keys with Ctrl or ⌘ the panel leaves unhandled, go on to the page, as
       info = got.info;
       attached = got.attached || [];
       states = got.states || {};
+      nativeOn = !!got.native;
       selection = got.selection || null;
       if (got.theme) applyTheme(got.theme);
       return ag;

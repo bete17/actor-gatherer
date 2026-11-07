@@ -1,7 +1,9 @@
-"""A Browser in the dashboard: a Chrome tab the user and an agent use together. The user sees the tab live in the
-actor's pane and clicks, types and navigates in it; the agent -- an ACTOR of the gatherer, an ordinary session started
-from the dashboard (sessions.py), its `role` {"browser": key} -- uses it through tools the dashboard serves. What each
-piece is:
+"""The Browser app's core (ag_apps/browser/; app_kit/DESIGN.md step 8): a Chrome tab the user and an agent use
+together. The user sees the tab live in the app's panel and clicks, types and navigates in it; the agent -- an ACTOR of
+the gatherer attached to the Browser (made with it: ag_dashboard/app_agents.py) -- uses it through the app's tools
+(browser_<tool>, the dashboard's tool gateway). Moved from the dashboard (its browser.py) as it was: what changed is
+how it reaches the rest -- the paths of the home (`HOME`), its own database (`DB_PATH`), what it tells its agent
+(`Browsers.tell`), the ag app's link (the host's: backend.py's `native`). What each piece is:
 
     the Chrome            `Chrome`: ONE Chrome for every Browser the dashboard serves, as the home's config.toml's
                           `[dashboard] browser_profile` says (`mode`) --
@@ -20,13 +22,13 @@ piece is:
                             connection kept (each new one asks again). Each tab is hidden from their tab strip (else in a
                             minimized window of its own), closed when the dashboard stops; their downloads and windows
                             are left as they are
-    each Browser          `Browsers.create`: its KEY, its actor a new session of the harness chosen (its folder the
-                          session's), started with the tools and instructions (`launch_args`); its own tabs, opened in the
-                          Chrome when it is used and again after the Chrome stopped (their pages kept in dashboard.db,
-                          `browser`); their pages shown in the dashboard's theme, light or dark (`Browsers.set_scheme`)
+    each Browser          an instance of the app: its KEY the instance's id, its folder the instance's (`Browsers.keep`);
+                          its own tabs, opened in the Chrome when it is used and again after the Chrome stopped (their
+                          pages kept in the app's database, `browser`); their pages shown in the dashboard's theme, light
+                          or dark (`Browsers.set_scheme`)
     what the user sees    `Browser.join`: while a page shows the Browser's view, the tab's screen, as it changes, to the
-                          page's stream (api/browser.py's `stream`) -- in the dashboard's own Chrome as video (H.264,
-                          `Capture`: browser_video.py) to a page that can decode it, else as the JPEG frames of Chrome's
+                          panel's stream (backend.py's `stream`) -- in the dashboard's own Chrome as video (H.264,
+                          `Capture`: video.py) to a page that can decode it, else as the JPEG frames of Chrome's
                           screencast (also until the video comes, and if it fails: `_recast`) -- and its state -- tabs,
                           what the user picked, what the agent does now and did lately, done or not and why (`show`), a
                           dialog open; at the view's size (`resize`), which the agent's screenshots then have too
@@ -46,18 +48,19 @@ piece is:
                           (`find`); a download done, shown in its folder (`reveal`)
     what the user points  `pick`: an element (the one under a click, its tag, text, CSS path, HTML, styles, role and name,
     at                    and a picture of it) or an area (a picture of it, its text): p1, p2, ... a ref the tools take
-    the agent's tools     `TOOLS` + mcp.py: snapshot, click, type, press, select, hover, scroll, navigate, back, forward,
+    the agent's tools     `TOOLS`: snapshot, click, type, press, select, hover, scroll, navigate, back, forward,
                           reload, tabs, screenshot, console, evaluate, wait, dialog, upload, and `steps` (several of
-                          them in one call, in order, stopped at the first not done): an MCP server the actor reaches
-                          at /browser/w/<key>/mcp, each call run here, on the tab -- with or without a page open.
+                          them in one call, in order, stopped at the first not done): the app's tools (tools.json,
+                          written from TOOLS by make.py), each call run here, on the tab -- with or without a panel open.
                           One that acts (ACTS) carries `expect`, the agent's checks of what it relies on that the user
                           could have changed meanwhile -- JavaScript run in the page twice (`Browsers.call`): as it is,
                           a false one refused then, holding nothing; again right before the action, the user's input
                           held off from them until it has acted -- and is refused, told what is there now and what the
                           user did, if one is false or its element is no longer what its snapshot showed (`_unchanged`)
-    the user's message    `compose`: what the user sends the actor (api/sessions.py's /api/send) ends with <browser_state>: the
-                          page they are on, what they did since their last message, what they picked; then forgotten
-                          (`sent`) but for the picks' refs, which keep working
+    what the agent is     `Browser.tell_soon`: what the user did, the page they went to, what they picked -- told the
+    told                  attached agent (a context_stream in its channel, `Browsers.tell`) TELL_AFTER seconds after the
+                          user last did something, or at once on a pick; picks put away once their next message to the
+                          agent is seen (`sent`), their refs still working
 
 Standard library only."""
 import base64
@@ -83,10 +86,16 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import harness_kit
 
-from . import browser_video, home, mcp, naming, sessions
+from . import video as browser_video
 
-NAME = "ag-browser"         # the MCP server's name: the tools' names, as the harness shows them, carry it
-ORIGIN = "http://127.0.0.1:4200"   # where the actors reach the dashboard (its MCP server): set by server.py's `serve`
+HOME = os.environ.get("AG_HOME") or os.path.expanduser("~/.ag")   # the home, as ag finds it (backend.py sets it):
+                                      # its dashboard/ holds the Chrome's profile, downloads, uploads and the ag app's
+                                      # marks, where the dashboard kept them
+DB_PATH = ""                # the app's own database (backend.py: in its data folder)
+TOOL_PREFIX = "browser_"    # the tools as agents are given them (the tool gateway's <app>_<tool>)
+TELL_AFTER = 2.0            # seconds after the user last did something in a Browser that it is told its agent
+#: The environment a harness puts on its session, left out of the Chrome's (as the dashboard's sessions.py has it).
+PARENT_SESSION = tuple(sorted({v for h in harness_kit.HARNESSES.values() for v in h.session_env}))
 KEY = re.compile(r"[0-9a-f]{16}")
 IDLE_STOP = 600.0           # seconds the Chrome runs on with no Browser used
 CALL_WAIT = 20.0            # the most a call to Chrome is waited for
@@ -118,7 +127,6 @@ MAX_EVAL = 20_000           # the most characters of an evaluation's result
 MAX_PASTE = 1_000_000       # the most characters of a paste's text, and of its HTML
 MAX_HTML = 1_500            # the most characters of a pick's HTML
 CONSOLE_KEEP = 200          # the console messages kept per tab
-NAME_WAIT = 600.0           # how long a new actor's first call is waited for, to name it (its gatherer has it then)
 UI_WORLD = "ag-ui"          # the world UI_JS runs in, in each of a tab's pages: of its own, apart from the page's
 UI_BINDING = "__agUISay"    # how it tells the dashboard (Runtime.addBinding, in that world only)
 UPLOAD_KEEP = 86400.0       # seconds a file the user gave a page is kept (the page reads it when it sends it, later)
@@ -178,9 +186,14 @@ class BrowserError(ValueError):
         self.status = status
 
 
+def _result(text: str, error: bool = False) -> dict:
+    """A tool's result, as MCP has it."""
+    return {"content": [{"type": "text", "text": text}], **({"isError": True} if error else {})}
+
+
 def _db() -> sqlite3.Connection:
-    os.makedirs(home.HOME, exist_ok=True)
-    conn = sqlite3.connect(sessions.db_path(), timeout=8, isolation_level=None)
+    os.makedirs(os.path.dirname(DB_PATH) or ".", exist_ok=True)
+    conn = sqlite3.connect(DB_PATH, timeout=8, isolation_level=None)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
     return conn
@@ -189,7 +202,7 @@ def _db() -> sqlite3.Connection:
 def _config() -> dict:
     try:
         import tomllib
-        with open(os.path.join(home.HOME, "config.toml"), "rb") as fh:
+        with open(os.path.join(HOME, "config.toml"), "rb") as fh:
             got = tomllib.load(fh).get("dashboard")
     except (OSError, ValueError):
         return {}
@@ -312,16 +325,16 @@ def available() -> bool:
 
 
 def profile_dir() -> str:
-    return os.path.join(home.HOME, "dashboard", "browser")
+    return os.path.join(HOME, "dashboard", "browser")
 
 
 def downloads_dir() -> str:
-    return os.path.join(home.HOME, "dashboard", "downloads")
+    return os.path.join(HOME, "dashboard", "downloads")
 
 
 def uploads_dir() -> str:
     """Where the files the user gives a page (its file chooser, a file dropped on it) are kept, UPLOAD_KEEP."""
-    return os.path.join(home.HOME, "dashboard", "uploads")
+    return os.path.join(HOME, "dashboard", "uploads")
 
 
 # ---- the Chrome: its own, over a pipe; or the user's, over a WebSocket ------------------------------------------
@@ -449,7 +462,7 @@ class PipeCdp(Cdp):
     def __init__(self, exe: str, profile: str, on_event: Callable, on_exit: Callable):
         super().__init__(on_event, on_exit)
         os.makedirs(profile, exist_ok=True)
-        log_dir = os.path.join(home.HOME, "logs", "dashboard")
+        log_dir = os.path.join(HOME, "logs", "dashboard")
         os.makedirs(log_dir, exist_ok=True)
         r3, w3 = os.pipe()
         r4, w4 = os.pipe()
@@ -737,13 +750,13 @@ PAUSED = ("This Browser is paused while the ag app is closed: its pages live in 
 def app_marker() -> str:
     """The home's mark that its Browsers live in the ag app (desktop/DESIGN.md, "Which Browsers live in the app"): made
     when the app first connects; its Browsers are paused, not moved, while the app is closed."""
-    return os.path.join(home.HOME, "dashboard", "desktop-browsers")
+    return os.path.join(HOME, "dashboard", "desktop-browsers")
 
 
 def app_token() -> str:
     """What the ag app proves itself with when it connects (api/desktop.py): a secret in the home, readable by its user
     alone, made on first use -- which no web page can read."""
-    path = os.path.join(home.HOME, "dashboard", "desktop-token")
+    path = os.path.join(HOME, "dashboard", "desktop-token")
     try:
         with open(path) as fh:
             token = fh.read().strip()
@@ -760,10 +773,10 @@ def app_token() -> str:
 
 
 def _chrome_env() -> Dict[str, str]:
-    """The dashboard's environment, less what ties it to a session it runs in (its harness's: sessions.PARENT_SESSION;
+    """The dashboard's environment, less what ties it to a session it runs in (its harness's: PARENT_SESSION;
     ag's)."""
     env = dict(os.environ)
-    for k in (*sessions.PARENT_SESSION, "ANTHROPIC_BASE_URL", "AG_ACTOR", "AG_DASHBOARD"):
+    for k in (*PARENT_SESSION, "ANTHROPIC_BASE_URL", "AG_ACTOR", "AG_DASHBOARD"):
         env.pop(k, None)
     return env
 
@@ -775,7 +788,7 @@ _NO_LOCK = contextlib.nullcontext()
 
 
 def video_on() -> bool:
-    """Whether a Browser in the dashboard's own Chrome is shown as video (browser_video.py): the home's config.toml's
+    """Whether a Browser in the dashboard's own Chrome is shown as video (video.py): the home's config.toml's
     `[dashboard] browser_video`, true unless it says false."""
     return _config().get("browser_video", True) is not False
 
@@ -785,7 +798,7 @@ def mode() -> str:
     (`app_marker`); "mine", the user's own (the home's config.toml's `[dashboard] browser_profile = "mine"`: their
     logins and history); else "own", the dashboard's, its profile the home's. The file read again only once it
     changed."""
-    path = os.path.join(home.HOME, "config.toml")
+    path = os.path.join(HOME, "config.toml")
     try:
         at = (path, os.stat(path).st_mtime_ns)
     except OSError:
@@ -869,7 +882,7 @@ class Chrome:
                                                       "eventsEnabled": True})
         except BrowserError as exc:
             conn.stop()
-            raise BrowserError(f"Chrome did not start ({exc}): see {os.path.join(home.HOME, 'logs', 'dashboard', 'browser.log')}",
+            raise BrowserError(f"Chrome did not start ({exc}): see {os.path.join(HOME, 'logs', 'dashboard', 'browser.log')}",
                                409) from None
         return conn
 
@@ -1100,7 +1113,7 @@ class Browser:
 
     def __init__(self, browsers: "Browsers", key: str, row: dict):
         self.browsers, self.chrome, self.key = browsers, browsers.chrome, key
-        self.gatherer, self.root, self.session_id = row["gatherer"], row["root"], row["session_id"]
+        self.gatherer, self.root = row["gatherer"], row["root"]
         try:
             saved = json.loads(row.get("tabs") or "[]")
         except ValueError:
@@ -1116,15 +1129,17 @@ class Browser:
         self.frame: Optional[dict] = None                # the last frame, for a viewer joining
         self.seq = 0
         self.casting: Optional[str] = None               # the session whose screen is cast now
-        self.picks: List[dict] = []                      # picked, not yet sent
+        self.picks: List[dict] = []                      # picked since the user's last message (told the agent at once)
         self.kept_picks: Dict[str, dict] = {}            # every pick, sent or not: its ref keeps working
         self.pick_n = 0
-        self.log: List[str] = []                         # what the user did since their last message
+        self.log: List[str] = []                         # what the user did since the agent was last told
         self.lately: collections.deque = collections.deque(maxlen=40)   # and when: (time, what), told the agent
         self.acts = threading.Lock()                     # one action at a time: the agent's (checked) or the user's
         self.acts_by: Optional[int] = None               # the thread whose action holds it, the agent's or the user's
         self.snapped = 0.0                               # when the agent last took a snapshot
         self.told = 0.0                                  # what the user did until then: told the agent already
+        self.telling: Optional[threading.Timer] = None   # the agent to be told what the user did (`tell_soon`)
+        self.told_picks: set = set()                     # the picks told it
         self.acted_on: Optional[Tuple[str, Tab, int]] = None   # the ref the agent's action now is on, its tab and node
         self.named: Dict[str, Tuple[str, str]] = {}      # "e12" -> its (role, name) in the agent's last snapshot of it
         self.worlds: Dict[str, int] = {}                 # a tab's target -> the context its page's checks run in
@@ -1155,7 +1170,7 @@ class Browser:
         self.quick_until = 0.0                           # the screen sent at QUICK_SCALE until then
         self.pressed_at: Optional[Tuple[float, float]] = None   # where the button went down, for a drag
         self.sharpen: Optional[threading.Timer] = None   # what sends it at full density again after
-        self.video = browser_video.Capture(lambda i: self.browsers.owner.__setitem__(i, self.key), home.HOME,
+        self.video = browser_video.Capture(lambda i: self.browsers.owner.__setitem__(i, self.key), HOME,
                                            self.chrome.later, lambda: self.chrome.later(self._video_changed))
         self.vseq = 0
         self.acting_until = 0.0
@@ -1208,7 +1223,7 @@ class Browser:
         """A tab of this Browser's: a new one, opened at `url`; or `target`, one Chrome opened for it, at the page it
         has (`url`). `by_user`, `sent`: as in `_go`."""
         adopted = target
-        with browser_video.WINDOWS if cdp.mode == "own" else _NO_LOCK:   # (its windows: browser_video.py)
+        with browser_video.WINDOWS if cdp.mode == "own" else _NO_LOCK:   # (its windows: video.py)
             if target is None:
                 target = self.chrome.new_target(cdp, self.viewport[:2])
             session = cdp.call("Target.attachToTarget", {"targetId": target, "flatten": True})["sessionId"]
@@ -1495,7 +1510,7 @@ class Browser:
     # -- what the page sees
 
     def join(self, video: bool = False, page: str = "", visible: bool = True, native: bool = False) -> Viewer:
-        """A page showing it (until `leave`): `video`, the page can decode video (browser_video.py); `page`, its id,
+        """A page showing it (until `leave`): `video`, the page can decode video (video.py); `page`, its id,
         `visible`, whether it is shown (`watch`); `native`, the ag app's page, which shows the tab's own native page
         over its view and wants no frames."""
         v = Viewer(video, page, visible, native)
@@ -1526,7 +1541,7 @@ class Browser:
 
     def _recast(self) -> None:
         """While a page watches, the active tab's screen at the view's size: as video where it can be (the dashboard's
-        own Chrome, a page that decodes it: browser_video.py), as the screencast's frames until it comes and for any
+        own Chrome, a page that decodes it: video.py), as the screencast's frames until it comes and for any
         other page; off otherwise."""
         cdp = self.chrome.conn
         if cdp is None or not cdp.alive:
@@ -1860,6 +1875,7 @@ class Browser:
                 return
             self.log.append(what)
             del self.log[:-40]
+        self.tell_soon()
 
     def _acting_now(self) -> bool:
         """Whether a change of the page now -- a page loaded, a tab opened -- is the agent's doing: while it acts, and
@@ -2284,6 +2300,7 @@ class Browser:
             self.picks.append(pick)
             self.kept_picks[pick["id"]] = pick
         self._publish()
+        self.tell_soon(now=True)                         # a pick: told at once, for the message the user writes next
         return {"id": pick["id"], "label": pick["label"]}
 
     def unpick(self, pid: str) -> None:
@@ -2302,40 +2319,52 @@ class Browser:
 
     # -- the user's message
 
-    def compose(self, text: str) -> str:
-        """The user's message as the agent gets it: their words, then <browser_state> (module doc)."""
+    def tell_soon(self, now: bool = False) -> None:
+        """What the user did, told its agent (`_tell`) TELL_AFTER seconds after they last did something -- a run of
+        clicks and typing one message -- or `now` (a pick: they are about to say what they mean by it)."""
         with self.lock:
-            tabs, active, log, picks = list(self.tabs), self.active, list(self.log), list(self.picks)
-        lines = ["<browser_state>", "The browser you share with the user, as they sent this message:"]
+            if self.telling is not None:
+                self.telling.cancel()
+            self.telling = threading.Timer(0 if now else TELL_AFTER, self._tell)
+            self.telling.daemon = True
+            self.telling.start()
+
+    def _tell(self) -> None:
+        """The agent told, in its channel (`Browsers.tell`), what the user did since it was last told, the page they
+        are on, and the picks it was not told yet -- what <browser_state> said with each of the user's messages before."""
+        with self.lock:
+            self.telling = None
+            tabs, active, log = list(self.tabs), self.active, list(self.log)
+            picks = [p for p in self.picks if p["id"] not in self.told_picks]
+            if not log and not picks:
+                return
+            self.log = []
+            self.told_picks.update(p["id"] for p in picks)
+            self.told = max(self.told, time.time())
+        lines = ["The browser you share with the user:"]
         if tabs:
-            t = tabs[active]
+            t = tabs[min(active, len(tabs) - 1)]
             lines.append(f"page: {t.title or '(no title)'} — {t.url or 'about:blank'}"
                          + (f"  (tab {active + 1} of {len(tabs)})" if len(tabs) > 1 else ""))
-        elif self.saved:
-            t = self.saved[min(self.saved_active, len(self.saved) - 1)]
-            lines.append(f"page: {t.get('title') or '(no title)'} — {t.get('url')}  (closed for now: it opens again when used)")
-        else:
-            lines.append("page: none open yet")
         if log:
-            lines.append("since their last message, the user: " + "; ".join(log))
+            lines.append("the user: " + "; ".join(log))
         if picks:
-            lines.append("they picked (use these refs in the ag-browser tools, as e-refs):")
+            lines.append(f"they picked (use these refs in the {TOOL_PREFIX}* tools, as e-refs):")
             for p in picks:
                 lines.extend(_pick_lines(p))
-        lines.append("</browser_state>")
-        return f"{text}\n\n" + "\n".join(lines)
+        self.browsers.tell(self.key, "\n".join(lines))
 
     def sent(self) -> None:
-        """The message went: what it said of the user's actions and picks is told; an agent they stopped (`stop`)
-        may act again."""
+        """The user's next message to the agent, seen: what they picked before it is put away (its refs keep working);
+        an agent they stopped (`stop`) may act again."""
         with self.lock:
-            self.log, self.picks, self.told = [], [], time.time()
+            self.picks, self.told = [], max(self.told, time.time())
         self.halt.clear()
         self._publish()
 
     def stop(self) -> None:
         """The user's Esc: the agent's action about to be done (`Browsers._lead_in`) is not, nor the rest of its steps,
-        and every one after is refused until their next message (`sent`). One under way finishes."""
+        and every one after is refused until their next message to it (`sent`). One under way finishes."""
         self.halt.set()
         self.note("pressed Esc to stop you")
         self._publish()
@@ -2837,7 +2866,12 @@ def _clip(cdp: "Cdp", tab: "Tab", x: float, y: float, w: float, h: float, scale:
 
 
 def _save_png(data: str) -> str:
-    return home.save_upload("image/png", data)["path"]
+    folder = os.path.join(HOME, "dashboard", "uploads")      # where the dashboard saves a pasted picture
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, secrets.token_hex(16) + ".png")
+    with open(path, "wb") as fh:
+        fh.write(base64.b64decode(data, validate=True))
+    return path
 
 
 def _remote_text(arg: dict) -> str:
@@ -3424,13 +3458,15 @@ SELECTION_JS = r"""(() => { const a = document.activeElement;
 
 # ---- every Browser: made, found, its agent's tools -------------------------------------------------------------
 
-def instructions(root: str) -> str:
+def instructions() -> str:
+    """What its agent is told (app.toml's instructions_file: instructions.md, written by make.py)."""
     return (
         "# Browser\n\n"
         "You are the agent of a Browser in the ag dashboard: a Chrome tab you share with the user. They see the page "
         "live in the dashboard and can click, type and navigate in it themselves, at any time -- also while you work. "
-        f"For this browser use the {NAME} tools (snapshot, click, type, navigate, screenshot, ...), not other browser "
-        "tools: those drive a browser the user does not see.\n\n"
+        f"For this browser use its tools, named {TOOL_PREFIX}<tool> ({TOOL_PREFIX}snapshot, {TOOL_PREFIX}click, "
+        f"{TOOL_PREFIX}type, {TOOL_PREFIX}navigate, {TOOL_PREFIX}screenshot, ...; below each is called by its own name), "
+        "not other browser tools: those drive a browser the user does not see.\n\n"
         "## Click only when there is no other way\n\n"
         "Working through the page -- clicking, typing, scrolling, a new snapshot after each step -- is slow and breaks "
         "easily. Before you start, look at the tools you have, and use the first of these that can do the job:\n"
@@ -3455,16 +3491,16 @@ def instructions(root: str) -> str:
         "- To search a site whose search address you know (https://www.google.com/search?q=..., a site's own ?q= "
         "page), `navigate` to that address instead of typing into its search box: one call, and some sites -- Google "
         "among them -- answer a search typed into the page seconds slower than the same search opened by address.\n"
-        "- Each message from the user ends with <browser_state>: the page they were on, what they did in the browser "
-        "since their last message, and the elements or areas they picked to point at what they mean (p1, p2, ...: "
-        "refs the tools take, as e-refs, each with a picture of it you can read).\n"
+        "- What the user does in the browser is told you as a message from the Browser (the stream \"Browser\"), a "
+        "moment after they do it: the page they went to, what they clicked and typed into (never what they typed), "
+        "and the elements or areas they picked to point at what they mean (p1, p2, ...: refs the tools take, as "
+        "e-refs, each with a picture of it you can read).\n"
         "- For a login, a two-factor code, a captcha or a payment, ask the user to do it in the browser. Never ask them "
         "for a password.\n"
         "- Passkeys, Touch ID and security keys can't be used in this browser: a page asking for one just waits. Choose "
         "its other way (\"Other options\", \"Try another way\": a push to the user's phone, a code), or tell the user "
         "to.\n"
-        f"- Downloads go to {downloads_dir()} (or, if the Browser runs in the user's own Chrome, where it saves them). "
-        f"Your working directory is {root}.\n\n"
+        "- A download, once done, is told you with where it was saved.\n\n"
         "## Assume the user is using the page while you think\n\n"
         "The user may be using the browser at any moment, also while you are thinking and writing your next call: by "
         "the time it runs they may have typed into a field, ticked a box, sorted or filtered a list, scrolled, opened "
@@ -3502,33 +3538,6 @@ def instructions(root: str) -> str:
         "While the user watches, each action is shown to them a moment before it is done, and they can stop you with "
         "Esc. Then every action on the page is refused until their next message: tell them where you stopped, and "
         "wait for it.").strip()
-
-
-def launch_args(s: dict) -> List[str]:
-    """What a Browser's actor's harness is started with besides its own options (sessions.py), as its harness takes them
-    (harness_kit's `mcp_args`, `instruction_args`): the tools (the MCP server here) and its instructions. [] for any
-    other session."""
-    key = key_of(s)
-    if key is None:
-        return []
-    h = harness_kit.get(s.get("harness") or harness_kit.DEFAULT)
-    tools = h.mcp_args(NAME, f"{ORIGIN}/browser/w/{key}/mcp") if h is not None else None
-    if tools is None:
-        return []                                    # a harness given no MCP server's tools here: none to browse with
-    return [*tools, *h.instruction_args(instructions(s.get("cwd") or ""))]
-
-
-def key_of(s: dict) -> Optional[str]:
-    """The key of the Browser whose actor the session is (its `role`), or None."""
-    raw = str(s.get("role") or "")
-    if not raw.startswith("{"):
-        return None
-    try:
-        role = json.loads(raw)
-    except ValueError:
-        return None
-    key = role.get("browser") if isinstance(role, dict) else None
-    return key if isinstance(key, str) and KEY.fullmatch(key) else None
 
 
 def _tool(name: str, description: str, properties: Optional[dict] = None, required: Optional[list] = None) -> dict:
@@ -3674,8 +3683,8 @@ TOOLS = [
 class Browsers:
     """Every Browser the dashboard serves (module doc)."""
 
-    def __init__(self, started: sessions.Sessions):
-        self.started = started
+    def __init__(self, tell: Optional[Callable[[str, str], None]] = None):
+        self.tell_fn = tell                              # (key, text): what its agent is told (backend.py's)
         self.lock = threading.Lock()
         self.open: Dict[str, Browser] = {}
         self.owner: Dict[str, str] = {}                  # a tab's target id, and its session id -> its Browser's key
@@ -3690,22 +3699,15 @@ class Browsers:
 
     # -- which Browser
 
-    def create(self, gatherer: str, cwd: str, harness: str = harness_kit.DEFAULT, model: Optional[str] = None) -> dict:
-        """A new Browser, its actor a new session of `harness` in `gatherer`, in `cwd` (a new gatherer if none has the
-        name; its agent starts with its first message): its settings (`config`)."""
-        if not available():
-            raise BrowserError("no Chrome here: install Google Chrome (or Chromium), or name one in config.toml's "
-                               "[dashboard] browser", 409)
-        root = os.path.realpath(os.path.abspath(os.path.expanduser(cwd or "")))
-        if not os.path.isdir(root):
-            raise BrowserError(f"no directory {cwd}")
-        key = secrets.token_hex(8)
-        s = self.started.create(gatherer, root, "auto", harness if harness in sessions.HARNESSES else harness_kit.DEFAULT,
-                                model, role=json.dumps({"browser": key}))
+    def keep(self, key: str, root: str, gatherer: str) -> dict:
+        """A Browser of the app's (an instance the host opened, or adopted: backend.py), its row made if it has none
+        yet -- one the dashboard made before keeps its own, its tabs with it: its settings (`config`)."""
+        if not KEY.fullmatch(key or ""):
+            raise BrowserError("not a Browser's key")
         conn = _db()
         try:
-            conn.execute("INSERT INTO browser (key, gatherer, root, session_id, created_at) VALUES (?, ?, ?, ?, ?)",
-                         (key, gatherer, root, s["session_id"], time.time()))
+            conn.execute("INSERT OR IGNORE INTO browser (key, gatherer, root, session_id, created_at) VALUES (?, ?, ?, '', ?)",
+                         (key, gatherer, os.path.realpath(root) if root else "", time.time()))
         finally:
             conn.close()
         return self.config(key)
@@ -3731,15 +3733,17 @@ class Browsers:
         with self.lock:
             return self.open.setdefault(key, Browser(self, key, row))
 
-    def _session(self, sid: str) -> Optional[dict]:
-        listed = {s["session_id"]: s for s in self.started.list()}
-        return listed.get(sid) or next((s for s in listed.values() if s.get("started_as") == sid), None)
-
     def config(self, key: str) -> dict:
         r = self.row(key)
-        s = self._session(r["session_id"])
-        return {"key": key, "root": r["root"], "gatherer": r["gatherer"],
-                "channel": s["session_id"] if s else r["session_id"], "harness": (s or {}).get("harness") or harness_kit.DEFAULT}
+        return {"key": key, "root": r["root"], "gatherer": r["gatherer"]}
+
+    def tell(self, key: str, text: str) -> None:
+        """`text` told the agent of Browser `key` (`Browser._tell`): by the backend, into its channel."""
+        if self.tell_fn is not None:
+            try:
+                self.tell_fn(key, text)
+            except Exception:  # noqa: BLE001 - not told: the Browser goes on
+                pass
 
     def watched(self) -> bool:
         with self.lock:
@@ -3897,49 +3901,10 @@ class Browsers:
                     pass                                 # (its error, set and shown by `live`)
             self.chrome.later(again)
 
-    # -- the user's message
-
-    def compose(self, session: dict, text: str) -> Tuple[str, Optional[Browser]]:
-        """`text` as the session's agent is to get it: with <browser_state> if it is a Browser's (and the Browser, to
-        tell it the message went: its `sent`)."""
-        key = key_of(session)
-        if key is None:
-            return text, None
-        try:
-            b = self.get(key)
-        except BrowserError:
-            return text, None
-        self.name_actor(key)
-        return b.compose(text), b
-
-    def name_actor(self, key: str, name: Optional[str] = None) -> None:
-        """Its actor named `name`, else "Browser · <folder>", once, as its first message is sent -- once its gatherer
-        has it."""
-        r = self.row(key)
-        if r.get("named"):
-            return
-        conn = _db()
-        try:
-            conn.execute("UPDATE browser SET named = 1 WHERE key = ?", (key,))
-        finally:
-            conn.close()
-
-        def _name():
-            end, sid = time.time() + NAME_WAIT, r["session_id"]
-            now = (self._session(sid) or {}).get("session_id") or sid
-            while time.time() < end and not sessions._has_calls(r["gatherer"], now):
-                time.sleep(2)
-                now = (self._session(sid) or {}).get("session_id") or sid
-            try:
-                naming.record(r["gatherer"], now, name or f"Browser · {os.path.basename(r['root']) or r['root']}")
-            except naming.NamingError:
-                pass
-        threading.Thread(target=_name, name="ag-browser-name", daemon=True).start()
-
     # -- the agent's tools
 
     def call(self, key: str, name: str, args: dict) -> dict:
-        """A tool's result (mcp.py's `result`, or with a picture): what went wrong said as an error the agent reads.
+        """A tool's result (`_result`, or with a picture): what went wrong said as an error the agent reads.
         A tool that acts (ACTS) is run only with its checks (`expect`) all true, run twice: first as they are -- one
         false refused then, the user's input never held up for it -- then again right before the action, holding the
         Browser's `acts` from them until it has acted: the user's input waits those few milliseconds, as theirs is not
@@ -3963,7 +3928,7 @@ class Browsers:
             tab = b.tab()
             if tab.dialog and name not in ("dialog", "tabs", "console"):
                 d = tab.dialog
-                return mcp.result(f"The page shows {_a(d.get('type')).lower()} dialog: {json.dumps(d.get('message', ''))}"
+                return _result(f"The page shows {_a(d.get('type')).lower()} dialog: {json.dumps(d.get('message', ''))}"
                                   f"{' (default answer ' + json.dumps(d['default']) + ')' if d.get('default') else ''}. "
                                   "Answer it with the dialog tool first.", error=True)
             if acts:
@@ -3992,7 +3957,7 @@ class Browsers:
         except BrowserError as exc:
             if listed and formed:                        # (a call missing its checks: the agent's slip, not shown)
                 self._refused(b, name, args, ctx, str(exc))
-            return mcp.result(str(exc), error=True)
+            return _result(str(exc), error=True)
         finally:
             b.acted_on = None
             self._let_go(b)
@@ -4010,10 +3975,10 @@ class Browsers:
             except ValueError:
                 pass
         if not isinstance(steps, list) or not steps:
-            return mcp.result("Not done: `steps` needs a list of steps, each {\"tool\": ..., then that tool's own "
+            return _result("Not done: `steps` needs a list of steps, each {\"tool\": ..., then that tool's own "
                               "arguments, with its `expect`}", error=True)
         if len(steps) > MAX_STEPS:
-            return mcp.result(f"Not done: at most {MAX_STEPS} steps in one call", error=True)
+            return _result(f"Not done: at most {MAX_STEPS} steps in one call", error=True)
         b = self.get(key)
         with b.lock:
             b.playing += 1
@@ -4030,7 +3995,7 @@ class Browsers:
         for i, step in enumerate(steps, 1):
             tool = step.get("tool") if isinstance(step, dict) else None
             if tool not in STEP_TOOLS:
-                got = mcp.result(f"Not done: a step is a call of one of {', '.join(sorted(STEP_TOOLS))} "
+                got = _result(f"Not done: a step is a call of one of {', '.join(sorted(STEP_TOOLS))} "
                                  f"(\"tool\"), not {json.dumps(tool)}", error=True)
             else:
                 given = step.get("args") if isinstance(step.get("args"), dict) else {}
@@ -4386,7 +4351,7 @@ class Browsers:
         elif ui is not None and popup and popup["n"] > ui and popup["k"] == "picker":
             out.append(f"It is a {popup.get('type')} field, whose picker doesn't open for you: type its value into it, "
                        "or set it with evaluate.")
-        return mcp.result(" ".join(out))
+        return _result(" ".join(out))
 
     def _t_snapshot(self, b: Browser, args: dict) -> dict:
         tab = b.tab()
@@ -4419,7 +4384,7 @@ class Browsers:
         if len(text) > MAX_SNAPSHOT:
             cut = text[:MAX_SNAPSHOT].rsplit("\n", 1)[0]
             text = cut + f"\n… {text[len(cut):].count(chr(10))} more lines: snapshot a part (`ref`), or scroll"
-        return mcp.result(text)
+        return _result(text)
 
     def _t_click(self, b: Browser, args: dict) -> dict:
         cdp, tab, _, _, label, (x, y) = self._act(b, str(args.get("ref") or ""), "clicking")
@@ -4486,14 +4451,14 @@ class Browsers:
                                                   "arguments": [{"value": values}]}, tab.session)["result"].get("value")
         if isinstance(got, str):
             raise BrowserError(f"{label}: {got}")
-        return mcp.result(f"Chose {', '.join(json.dumps(v) for v in got)} in {label}.")
+        return _result(f"Chose {', '.join(json.dumps(v) for v in got)} in {label}.")
 
     def _t_hover(self, b: Browser, args: dict) -> dict:
         cdp, tab, _, _, label, (x, y) = self._act(b, str(args.get("ref") or ""), "hovering over")
         cdp.call("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": x, "y": y}, tab.session)
         self._let_go(b)
         time.sleep(SETTLE)
-        return mcp.result(f"The mouse is over {label}.")
+        return _result(f"The mouse is over {label}.")
 
     def _t_scroll(self, b: Browser, args: dict) -> dict:
         tab = b.tab()
@@ -4501,7 +4466,7 @@ class Browsers:
         direction = args.get("direction")
         if args.get("ref") and not direction:
             _, _, _, _, label, _ = self._act(b, str(args["ref"]), "showing")
-            return mcp.result(f"{label} is in view.")
+            return _result(f"{label} is in view.")
         w, h, _ = b.viewport
         x, y = w / 2, h / 2
         if args.get("ref"):
@@ -4515,7 +4480,7 @@ class Browsers:
         time.sleep(SETTLE + 0.2)
         pos = cdp.call("Runtime.evaluate", {"returnByValue": True, "expression":
                        "[scrollX, scrollY, document.documentElement.scrollHeight]"}, tab.session)["result"].get("value")
-        return mcp.result(f"Scrolled {direction or 'down'}" + (f": the page is at ({pos[0]}, {pos[1]}) of height {pos[2]}." if pos else "."))
+        return _result(f"Scrolled {direction or 'down'}" + (f": the page is at ({pos[0]}, {pos[1]}) of height {pos[2]}." if pos else "."))
 
     def _t_navigate(self, b: Browser, args: dict) -> dict:
         tab = b.tab()
@@ -4577,7 +4542,7 @@ class Browsers:
             except Unanswered as exc:                    # the tab opened, its page not
                 raise BrowserError(f"Opened a new tab ({len(b.tabs)}), shown now, but {exc}.") from None
             if not args.get("url"):
-                return mcp.result("Opened a new tab, blank, shown now.")
+                return _result("Opened a new tab, blank, shown now.")
             return self._after(b, tab, -1, len(b.tabs), "Opened a new tab, shown now.")
         if action == "switch":
             b.switch(i, by_user=False)
@@ -4587,7 +4552,7 @@ class Browsers:
             tabs, active = list(b.tabs), b.active
         listed = "\n".join(f"{n + 1}{' (shown)' if n == active else ''}: {t.title or '(no title)'} — {t.url}"
                            for n, t in enumerate(tabs)) or "no tab is open"
-        return mcp.result(listed)
+        return _result(listed)
 
     def _t_screenshot(self, b: Browser, args: dict) -> dict:
         tab = b.tab()
@@ -4619,7 +4584,7 @@ class Browsers:
         lines = list(tab.console)
         if args.get("clear"):
             tab.console.clear()
-        return mcp.result("\n".join(lines[-100:]) if lines else "(the console is empty)")
+        return _result("\n".join(lines[-100:]) if lines else "(the console is empty)")
 
     def _t_evaluate(self, b: Browser, args: dict) -> dict:
         expression = str(args.get("expression") or "")
@@ -4650,7 +4615,7 @@ class Browsers:
         r = got.get("result") or {}
         value = r.get("value") if "value" in r else r.get("description", r.get("type"))
         text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
-        return mcp.result(text if len(text) <= MAX_EVAL else text[:MAX_EVAL] + f"… ({len(text)} characters)")
+        return _result(text if len(text) <= MAX_EVAL else text[:MAX_EVAL] + f"… ({len(text)} characters)")
 
     def _t_wait(self, b: Browser, args: dict) -> dict:
         tab = b.tab()
@@ -4659,7 +4624,7 @@ class Browsers:
         text = args.get("text")
         if not text:
             time.sleep(seconds)
-            return mcp.result(f"Waited {seconds:g} s.")
+            return _result(f"Waited {seconds:g} s.")
         b.acting_on(f"waiting for {json.dumps(str(text))}")
         end = time.time() + seconds
         while True:
@@ -4668,7 +4633,7 @@ class Browsers:
                                f"(document.body ? document.body.innerText : '').includes({json.dumps(str(text))})"},
                                tab.session, timeout=5)
                 if (got.get("result") or {}).get("value"):
-                    return mcp.result(f"{json.dumps(str(text))} shows in the page.")
+                    return _result(f"{json.dumps(str(text))} shows in the page.")
             except BrowserError:
                 pass
             if time.time() >= end:
@@ -4678,7 +4643,7 @@ class Browsers:
     def _t_dialog(self, b: Browser, args: dict) -> dict:
         done = b.answer_dialog(bool(args.get("accept")), args.get("text") if isinstance(args.get("text"), str) else None,
                                by_user=False)
-        return mcp.result(done[:1].upper() + done[1:] + ".")
+        return _result(done[:1].upper() + done[1:] + ".")
 
     def _t_upload(self, b: Browser, args: dict) -> dict:
         paths = [os.path.abspath(os.path.expanduser(str(p))) for p in args.get("paths") or []]
@@ -4693,7 +4658,7 @@ class Browsers:
                 tab.chooser = None
         if answered:
             b._publish()
-        return mcp.result(f"Gave {label} {len(paths)} file{'s' if len(paths) != 1 else ''}.")
+        return _result(f"Gave {label} {len(paths)} file{'s' if len(paths) != 1 else ''}.")
 
 
 BUTTONS = {"left": 1, "right": 2, "middle": 4}
