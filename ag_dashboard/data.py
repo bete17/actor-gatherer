@@ -499,6 +499,10 @@ def _with_started(gatherers: List[dict], started: List[dict], now: Optional[floa
             result = answer_result(s["gatherer"], a["channel"], given["call"])
             a["answer"] = {**given, "result": _clip(result, ASK_CHARS) if result else None,
                            "recorded": answers.recorded(result, given.get("expect") or [])}
+            ask = a.get("asking") or {}
+            if ask.get("kind") == answers.PERMISSION and given.get("closed") and given.get("call") == ask.get("id"):
+                a["asking"], a["status"] = None, RUNNING     # answered here, its dialog seen closed (`_closed`), before
+                #                                              that is recorded
         if a.get("holder") and paths.runs_under(a["holder"]["pid"], s.get("pid")):
             a["holder"]["dashboard"] = True          # the dashboard's own agent or terminal (or a process under it)
         a["created"] = min((x for x in (a["created"], _seconds(s["created_at"])) if x), default=None)
@@ -755,14 +759,21 @@ def replies(conn, channel: str, tables: Optional[set] = None) -> List[dict]:
 
 
 def ask_view(f: Optional[dict], harness: Optional[str] = None) -> Optional[dict]:
-    """What an `asked` fact asks, for the page: {kind, harness (whose dialog answers it: answers.py), async (the turn
-    goes on while it asks), at, call, questions (clipped, each {id, header, question, multiSelect, options: [{label,
-    description}]}: a question's title for its words, an option given as its label alone, as some harnesses record
-    them) or plan}; None for None."""
+    """What an `asked` fact asks, for the page: {id (what an answer names: its call, or a permission's own key), kind,
+    harness (whose dialog answers it: answers.py), async (the turn goes on while it asks), at, call, questions (clipped,
+    each {id, header, question, multiSelect, options: [{label, description}]}: a question's title for its words, an
+    option given as its label alone, as some harnesses record them) or plan} -- a permission's {id, kind "permission",
+    tool, call (its tool call's id; None: not known), said (what the call is for, in a line), input (what it would run
+    with), view (how its harness shows the call: harness_kit's ToolCall.view), agent (the subagent asking; None: the
+    session)}; None for None."""
     if not f:
         return None
-    out = {"kind": f.get("kind") or "question", "harness": harness, "async": bool(f.get("async")), "at": f.get("at"),
-           "call": f.get("call")}
+    out = {"id": f.get("call"), "kind": f.get("kind") or "question", "harness": harness, "async": bool(f.get("async")),
+           "at": f.get("at"), "call": f.get("call")}
+    if out["kind"] == "permission":
+        return {**out, "call": f.get("tool_call"), "tool": str(f.get("tool") or ""), "said": _clip(f.get("said"), ASK_CHARS) or "",
+                "input": f.get("input") if isinstance(f.get("input"), dict) else {},
+                "view": f.get("view") if isinstance(f.get("view"), dict) else {}, "agent": f.get("agent")}
     if out["kind"] == "plan":
         out["plan"] = _clip(f.get("plan"), PLAN_CHARS)
         return out

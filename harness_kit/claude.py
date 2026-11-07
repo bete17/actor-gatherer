@@ -33,6 +33,7 @@ from typing import Dict, List, Optional, Tuple
 from .base import (Action, AnswerError, Box, Call, CallKind, Fact, Facts, Follower, Harness, Kind, Part, RenameError,
                    SaveError, Shape, ToolCall, ToolResult, TrustError, ask_arg, one_line, other_view, output_of, picked,
                    seconds, tool_title, typed_in)
+from .base import permission_choice
 
 # ---------------------------------------------------------------- Claude Code's own text, in the user's name
 
@@ -1211,6 +1212,19 @@ class ClaudeCode(Harness):
         return json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                                                   "permissionDecisionReason": why}})
 
+    def permission_hooks(self, url: str) -> Optional[dict]:
+        """`--settings`' hooks: its PermissionRequest hook POSTing to `url` (permission_hook_settings)."""
+        return permission_hook_settings(url)
+
+    def hooked(self, report: dict, at: float) -> List[Fact]:
+        """A PermissionRequest hook's report, the permission it asks (permission_asked)."""
+        got = permission_asked(report, at)
+        return [got] if got is not None else []
+
+    def permission_keys(self, choice: dict) -> List[str]:
+        """Its permission dialog's keys (permission_dialog_keys)."""
+        return permission_dialog_keys(choice)
+
     def tool_output(self, text: str) -> Tuple[str, Optional[str], Optional[str]]:
         """A failed command's "Exit code N" before its output, and the note after it that the shell's directory was put
         back, taken off (EXIT_LINE, CWD_NOTE)."""
@@ -1334,6 +1348,76 @@ def plan_path(payload) -> Optional[Tuple[str, Optional[str]]]:
         if isinstance(path, str) and PLAN_FILE.search(path):
             return path, got["content"] if isinstance(got.get("content"), str) else None
     return None
+
+
+# ---------------------------------------------------------------- the permissions it asks, as its hook reports them
+
+#: Its hook that runs as it is about to draw a permission dialog -- a tool its rules, its mode or auto mode's check
+#: won't let it run unasked -- with the tool and its input, but no call id. Its report: session_id, agent_id (a
+#: subagent's), tool_name, tool_input, permission_suggestions, mcp_server. An answer of {} decides nothing: the dialog
+#: is drawn as ever.
+PERMISSION_HOOK = "PermissionRequest"
+HOOK_SECONDS = 5                         # how long it waits on the hook's answer before drawing its dialog anyway
+#: Its permission dialog (2.1.319): "Do you want to proceed?", "1. Yes" first, then perhaps "always allow ..." and
+#: "switch to auto mode", "No" last. "1" picks Yes at once. Up from the first wraps round to the last, No: Enter
+#: there denies, and interrupts the turn (its record says so); Tab there opens a line for why not ("No, <why>"),
+#: which Enter sends the model, the turn going on.
+YES_KEY, TO_NO, WHY_KEY, ENTER_KEY = "1", "\x1b[A", "\t", "\r"
+INPUT_CHARS = 4000                       # a string in a tool's input, kept for the page: at most this much of it
+SAID_KEYS = ("description", "summary", "file_path", "notebook_path", "path", "url", "pattern", "command", "prompt",
+             "query")                    # what a call it asks to run says it is for, or acts on: the first given
+
+
+def permission_hook_settings(url: str) -> dict:
+    """Its settings (`--settings`) with the PermissionRequest hook POSTing its report to `url`, over HTTP."""
+    return {"hooks": {PERMISSION_HOOK: [{"hooks": [{"type": "http", "url": url, "timeout": HOOK_SECONDS}]}]}}
+
+
+def permission_said(tool: str, given: dict) -> str:
+    """What a call it asks to run is for, in a line: its own description (Bash's), else what it acts on -- a file, a
+    URL, a pattern, a command -- else the tool's name."""
+    for k in SAID_KEYS:
+        if isinstance(given.get(k), str) and given[k].strip():
+            return " ".join(given[k].split())[:200]
+    return tool
+
+
+def _clipped(value, depth: int = 0):
+    """A tool's input as the page keeps it: each string at most INPUT_CHARS, nesting at most four deep."""
+    if isinstance(value, str):
+        return value if len(value) <= INPUT_CHARS else value[:INPUT_CHARS] + "…"
+    if depth >= 4:
+        return None
+    if isinstance(value, dict):
+        return {str(k): _clipped(v, depth + 1) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_clipped(v, depth + 1) for v in value[:100]]
+    return value
+
+
+def permission_asked(report: dict, at: float) -> Optional[Fact]:
+    """The permission its PermissionRequest hook's `report` asks (None: not that hook's): an `asked` fact of kind
+    "permission" (Facts) -- and `view`, the call as its tool's view shows it (ToolCall.view: a command, an edit) --
+    keyed anew: the same call asked again, after a "No, <why>", is asked anew."""
+    if not isinstance(report, dict) or report.get("hook_event_name") != PERMISSION_HOOK:
+        return None
+    tool = str(report.get("tool_name") or "")
+    given = report.get("tool_input") if isinstance(report.get("tool_input"), dict) else {}
+    key = f"permission:{os.urandom(8).hex()}"
+    view = tool_call({"id": None, "name": tool, "input": given}).view
+    return Fact(Facts.ASKED, key, at, {"call": key, "kind": "permission", "tool": tool, "said": permission_said(tool, given),
+                                       "input": _clipped(given), "view": _clipped(view) if isinstance(view, dict) else None,
+                                       "agent": report.get("agent_id") or None, "mcp": report.get("mcp_server") or None,
+                                       "async": False, "turn": None})
+
+
+def permission_dialog_keys(choice: dict) -> List[str]:
+    """The keys that answer its permission dialog with `choice` ({"allow": bool, "text": why not}): "1" (Yes); Up and
+    Enter (No); Up, Tab, the words and Enter (No, with why)."""
+    allow, why = permission_choice(choice)
+    if allow:
+        return [YES_KEY]
+    return [TO_NO, WHY_KEY, why, ENTER_KEY] if why else [TO_NO, ENTER_KEY]
 
 
 # ---------------------------------------------------------------- its own record of a session

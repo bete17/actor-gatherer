@@ -80,6 +80,11 @@ own record of it (<its config folder>/projects/<dir>/<session>.jsonl; the folder
 `/c/`) is followed as it is written, and what it says that no call carries -- a message typed while it works, a
 question answered or dismissed in its terminal, Esc, a call given up on, a background task's end -- recorded as events
 of the session (harness_kit.claude's Record).
+
+Its hook's reports. A POST to HOOK_PATH (harness_kit's) is not a model call: it is Claude Code's PermissionRequest
+hook, which ag's launcher adds for the run, reporting a permission it is about to ask in its terminal. It is recorded
+as `asked` and answered {} at once, which decides nothing, so the dialog is drawn as ever. The session's next turn
+call, or the asking subagent's next call, settles it (proxy_hook.py's `reported`, `moved_on`).
 """
 
 import copy
@@ -169,7 +174,15 @@ class ClaudeContextManager(ProxyHook):
 
     async def __call__(self, request) -> Optional[dict]:
         body, since = request.body, time.time()
+        if self.reporting(request):                       # its own hook's report: a permission it asks (`reported`),
+            session = body.get("session_id") if isinstance(body, dict) else None     # answered {} at once: deciding
+            if isinstance(session, str) and session:                                  # nothing, its dialog drawn as ever
+                self.reported(request, *self.where(request, session))
+            return Answer(200, {})
         call = self.harness.call(request.method, request.path, request.headers, body)
+        if call is not None and call.session and call.kind in (CallKind.TURN, CallKind.SUBAGENT) and self.permissions:
+            agent = next((str(v) for k, v in (request.headers or {}).items() if k.lower() == AGENT_HEADER and v), None)
+            self.moved_on(*self.where(request, call.session), agent if call.kind == CallKind.SUBAGENT else None)
         if call is not None and call.session:              # its record of the session, followed (session_files.py)
             self.following(request, *self.where(request, call.session), call)
         if call is None or not call.detail.get("model") or call.kind == CallKind.SUBAGENT:

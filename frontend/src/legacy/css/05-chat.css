@@ -83,6 +83,13 @@
 .asking-note .own::placeholder { color: var(--muted); }
 .asking-note .own:focus { outline: none; border-color: var(--s1); box-shadow: 0 0 0 3px var(--selected); }
 .asking-note details > summary { cursor: pointer; font-size: 11px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+/* a permission asked: the call, as Chat shows one (permissionView) */
+.asking-note .perm { max-width: 900px; display: flex; flex-direction: column; gap: 6px; }
+.asking-note .perm-call { display: flex; align-items: baseline; gap: 8px; min-width: 0; color: var(--ink); }
+.asking-note .perm-call .arg { min-width: 0; overflow-wrap: anywhere; color: var(--ink-2); font-family: var(--mono); font-size: 12px; }
+.asking-note .perm :is(.perm-cmd, .perm-input) { margin: 0; padding: 8px 10px; max-height: 240px; overflow: auto; white-space: pre-wrap;
+  overflow-wrap: anywhere; font-family: var(--mono); font-size: 12px; background: var(--page); border: 1px solid var(--ring); border-radius: 8px; }
+.asking-note .perm .diff { max-height: 260px; overflow: auto; }
 .asking-note .plan { max-width: 900px; margin-top: 8px; padding: 2px 14px 10px; background: var(--page); border: 1px solid var(--ring); border-radius: 8px; }
 .asking-note .md :is(h1, h2, h3) { font-size: 14px; margin: 10px 0 4px; }
 /* codex's proposed plan in a message (markdown()'s): a card headed "Proposed plan", as the plan in the note above */

@@ -847,7 +847,8 @@ function nowLine(a, cls, d) {
   const line = (kind, lbl, text, extra) => el("div", { class: `c-now ${kind}` }, el("span", { class: "lbl", text: lbl }),
     text ? el("span", { class: "tx", text }) : null, extra || null);
   const since = (t) => t ? el("span", { class: "tm", "aria-hidden": "true", "data-ago": t, text: ago(t) }) : null;
-  if (cls === "asking" && a.asking) return line("ask", "Waiting for you:", a.asking.kind === "plan" ? "A plan to approve"
+  if (cls === "asking" && a.asking) return line("ask", "Waiting for you:", a.asking.kind === "permission" ? `Permission to ${permissionVerb(a.asking)}: ${a.asking.said || a.asking.tool}`
+    : a.asking.kind === "plan" ? "A plan to approve"
     : (a.asking.questions || []).map((q) => q.question).filter(Boolean).join(" · ") || "A question", since(a.asking.at));
   if (cls === "error" || cls === "failed") return line("err", "Error:", (a.failing && a.failing.error) || (a.stopped && a.stopped.text)
     || (cls === "failed" ? "Its agent failed to start" : "Its turn stopped on an error"), since((a.failing || a.stopped || {}).at));

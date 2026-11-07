@@ -8,6 +8,10 @@ insert`), as naming.py keeps a name -- so what the harness then did can be check
     terminal_input   keys typed into the session's terminal from the page: the first after QUIET_SECONDS of none --
                      what the check that nothing was typed since a question was asked needs (sessions.py's `answer`)
 
+and, of what the harness asked, what its own record or calls would say once they could: a permission answered here
+whose dialog the terminal then showed closed -- the tool it allowed may run long before its next call says so --
+as `ask_settled` (call, how "answered", by "dashboard"; harness_kit's Facts), the same event its hook records then.
+
 Each has an id of its own, made when the action is taken, and its time (`at`). Each is put in in the background: the
 action is never held up for it, and a failure is a line in the dashboard's log, never in the reader's way. Only a
 dashboard that serves a page keeps them (`ENABLED`, server.py's): a test's sessions keep none."""
@@ -21,6 +25,7 @@ import uuid
 from typing import Dict, List, Optional, Tuple
 
 CHAT_SENT, ANSWER_GIVEN, TERMINAL_INPUT = "chat_sent", "answer_given", "terminal_input"
+ASK_SETTLED = "ask_settled"     # a harness's fact (harness_kit's Facts), kept here for a permission answered here
 ACTIONS = (CHAT_SENT, ANSWER_GIVEN, TERMINAL_INPUT)
 QUIET_SECONDS = 2.0             # keys typed after this long with none: another terminal_input
 ENABLED = False                 # set by the server (server.py) that runs the page
@@ -76,6 +81,11 @@ def chat_sent(gatherer: str, channel: str, text: str, at: Optional[float] = None
 def answer_given(gatherer: str, channel: str, sent: dict) -> None:
     """`sent`: the answer as sessions.py's `answer` gives it -- {call, summary, expect, at}."""
     record(gatherer, channel, [_event(ANSWER_GIVEN, **{k: sent.get(k) for k in ("call", "summary", "expect")})])
+
+
+def ask_settled(gatherer: Optional[str], channel: str, call: str, summary: Optional[str] = None) -> None:
+    """A permission (`call`, its ask's key) answered here, its dialog seen closed: no longer asked."""
+    record(gatherer, channel, [_event(ASK_SETTLED, call=call, how="answered", result=None, by="dashboard", summary=summary)])
 
 
 def terminal_input(gatherer: Optional[str], channel: str, now: Optional[float] = None) -> None:

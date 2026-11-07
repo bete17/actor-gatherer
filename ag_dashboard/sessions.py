@@ -214,6 +214,7 @@ STOP_KEYS = ("\x1b", "\x03")       # keys that stop a turn: Esc, Ctrl+C
 KEYS_GAP = 0.1                     # around the dashboard's own keys (a paste, an answer): a stop key typed is kept this far off
 HOLD_MAX = 10.0                    # a stop key held while the dashboard's own keys go in, at most this long
 ANSWER_GAP = 0.3                   # between the keys of an answer typed into a dialog: several at once are one input to it
+CLOSE_SECONDS = 3.0                # a permission's keys typed in: how long its terminal is watched for its dialog to close
 CLEARED = b"\x1b[2J"               # a full screen clearing it, to draw it all again (Claude Code's, at its start and each resize)
 REDRAW_WAIT = 1.0                  # a full screen made a row shorter (`redraw`): how long it is given to draw, before it is put back
 BOX_SETTLE = 0.5                   # a terminal's message box not shown empty: how long its screen is watched for it to be (a
@@ -1720,15 +1721,21 @@ class Sessions:
         return typed
 
     def answer(self, session_id: str, ask: dict, choice: dict) -> dict:
-        """What the session's terminal asks (data.py's `asking`: a question, a plan to approve) answered with
-        `choice` (answers.py): its keys typed into the terminal one at a time, ANSWER_GAP apart, as if picked
+        """What the session's terminal asks (data.py's `asking`: a question, a plan to approve, a permission) answered
+        with `choice` (answers.py): its keys typed into the terminal one at a time, ANSWER_GAP apart, as if picked
         there. Refused where the dashboard has no terminal for the session, or where something was typed into
         it since it asked -- its dialog may no longer be as it first showed -- or, codex's, where the terminal
-        opened after it asked: codex does not ask again on resuming. -> the answer, as `list` then has it:
-        {call, summary, expect (what the harness's result for the call will hold), at}."""
+        opened after it asked: codex does not ask again on resuming. A permission is refused too where the terminal
+        opened after it asked (the process that asked is gone, and its dialog with it) or its screen shows no dialog
+        (`_box` not AWAY: the keys would go into its message box); once its keys are in, its dialog closing is what
+        settles it here (`_closed`). -> the answer, as `list` then has it: {call (what it answered: data.py's `id`),
+        summary, expect (what the harness's result for the call will hold), at}."""
+        permission = ask.get("kind") == answers.PERMISSION
         with self.lock:
             t = self.terms.get(session_id)
             if t is None:
+                # An actor the dashboard runs headless, with no terminal, is answered by its driver instead (its
+                # session's own asks): not here, by keys.
                 raise SessionError("the dashboard does not run this session's terminal: answer it in the one that does")
             if t.answering:
                 raise SessionError("an answer is being typed into it already")
@@ -1737,28 +1744,53 @@ class Sessions:
             if typed and ask.get("at") and typed >= ask["at"]:      # here, or as the gatherer kept it (terminal_input)
                 raise SessionError("something was typed into its terminal since it asked: finish answering there")
             rules = harness_kit.get(ask.get("harness") or harness_kit.DEFAULT)
-            if rules is not None and not rules.asks_shown_again and ask.get("at") and t.since > ask["at"]:
+            if (permission or rules is not None and not rules.asks_shown_again) and ask.get("at") and t.since > ask["at"]:
                 raise SessionError("its terminal opened after it asked, and does not ask it: answer in a message")
             keys = answers.keys(ask, choice)             # AnswerError, a ValueError: a choice that does not fit
-            sent = {"call": ask.get("call"), "summary": answers.summary(ask, choice),
+            harness = (self._row(session_id) or {}).get("harness") or t.harness or ""
+            if permission and self._box(t, harness) not in (Box.AWAY, None):
+                raise SessionError("its terminal doesn't show it asking: answer it there")
+            sent = {"call": ask.get("id") or ask.get("call"), "summary": answers.summary(ask, choice),
                     "expect": answers.expected(ask, choice), "at": time.time()}
             self.answered[session_id] = sent
             t.answering = True
             gatherer = (self._row(session_id) or {}).get("gatherer")
         actions.answer_given(gatherer, session_id, sent)        # kept in its gatherer
-        threading.Thread(target=self._keys, args=(t, keys), daemon=True).start()
+        after = (lambda: self._closed(t, harness, gatherer, session_id, sent)) if permission else None
+        threading.Thread(target=self._keys, args=(t, keys, after), daemon=True).start()
         self._changed(gatherer, session_id)
         return sent
 
-    def _keys(self, t: _Term, keys: List[str]) -> None:
+    def _keys(self, t: _Term, keys: List[str], after: Optional[Callable[[], None]] = None) -> None:
+        typed = False
         try:
             for k in keys:
                 self._write(t, k.encode("utf-8"))
                 time.sleep(ANSWER_GAP)
+            typed = True
         except SessionError:
             pass
         finally:
             t.answering = False
+        if typed and after is not None:
+            after()
+
+    def _closed(self, t: _Term, harness: str, gatherer: Optional[str], session_id: str, sent: dict) -> None:
+        """Once a permission's keys are in: its dialog closed, as the terminal's screen shows it (`_box`: no longer
+        AWAY) within CLOSE_SECONDS, settles it -- recorded (actions.py's `ask_settled`), `sent` marked `closed`, the page
+        told. The tool it allowed may run long before its harness calls its model again, which settles it too. A dialog
+        still shown (the keys not taken; or the next permission, asked at once) leaves it to that."""
+        end = time.time() + CLOSE_SECONDS
+        while time.time() < end:
+            box = self._box(t, harness)
+            if box is None:
+                return
+            if box != Box.AWAY:
+                sent["closed"] = time.time()
+                actions.ask_settled(gatherer, session_id, sent["call"], sent.get("summary"))
+                self._changed(gatherer or "", session_id)
+                return
+            time.sleep(0.2)
 
     def resize(self, session_id: str, cols: int, rows: int) -> None:
         """The terminal is `cols` x `rows` now: its process is told (SIGWINCH)."""

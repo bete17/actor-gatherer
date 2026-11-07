@@ -8,13 +8,21 @@ record of the session has the call's result (`settled`). Where the dashboard run
 note under the chat answers it: the keys are worked out from the tool call (answers.py) and typed into the dialog
 one at a time (sessions.py's `answer`).
 
+Claude Code's permission prompts ("Do you want to proceed?") are detected too: ag's launcher adds Claude Code's
+`PermissionRequest` hook for the run (`--settings`, beside the user's own hooks), which POSTs each prompt to the hook
+server as it is drawn. The hook server records it as `asked` (kind "permission", with the tool's input and its view),
+and settles it once that thread calls its model again or asks again, which also covers a deny with a reason.
+A plain "No" or Esc interrupts the turn, which Claude Code's record says. Chat's card types the dialog's keys:
+"1" allows; Up wraps to "No"; Tab then takes a reason.
+
+- [ ] **A permission allowed in the terminal itself**, for a tool that then runs long: it shows as waiting until the
+  tool ends and the next model call settles it. Answered from Chat, the dialog closing on the dashboard's own screen
+  settles it at once (sessions.py's `_closed`); keys typed into the terminal don't.
+- [ ] **A hook server restarted while a permission is asked** forgets it is open: it shows until the turn ends or a
+  new message opens one (`moved_on`).
+
 Not detected yet: the actor shows as Running while Claude Code waits.
 
-- [ ] **Permission prompts** ("Do you want to proceed?"). They never appear in what ag records. Claude Code's
-  `Notification` hook fires with `permission_prompt` when the dialog opens. ag's launcher could add that hook
-  for the run with `--settings`: it runs alongside the user's own hooks without replacing them, and it can POST
-  to the hook server ag already runs. The wait ends at the next model call, when a hook says the tool ran,
-  failed or was denied, or when keys are typed into the dashboard's terminal.
 - [ ] **Other dialogs**, such as an MCP server asking for input (elicitation). The same hook may cover some.
 - [ ] **Codex's approval prompts** ("Would you like to run the following command?"). Codex writes nothing of them to
   its rollout file, and ag records only the model's call asking for `require_escalated`. The dashboard runs codex
