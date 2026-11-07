@@ -752,12 +752,13 @@ function nameFolder(gname, id, parent, text) {
 // it) or its gatherer's row (to its top): `listDrag`, what is dragged, of its gatherer only. While one is, the list is
 // not drawn again (`later`, drawn once it is over) -- but to open the folder held over for DROP_OPEN_MS (`force`) -- so
 // the lines stay under the pointer. Over when its row says (dragend), or, its row drawn again meanwhile, once the page
-// has heard of the drag for DRAG_LOST_MS no more.
+// has heard of the drag for DRAG_LOST_MS no more. The rail's actors are dragged so too, onto its names (railActor,
+// railDragged: the folders it leaves out shown while one is).
 let listDrag = null;
 const DROP_OPEN_MS = 700, DRAG_LOST_MS = 3000;
 function startDrag(ev, g, what) {
   if (listDrag) endDrag();
-  listDrag = { g: g.name, cs: what.cs || null, folder: what.folder ?? null, later: false, force: false, seen: Date.now(), spring: null,
+  listDrag = { g: g.name, cs: what.cs || null, folder: what.folder ?? null, later: false, force: false, revealed: false, seen: Date.now(), spring: null,
     watch: setInterval(() => { if (listDrag && Date.now() - listDrag.seen > DRAG_LOST_MS) endDrag(); }, 500) };
   ev.dataTransfer.effectAllowed = "move";
   ev.dataTransfer.setData("text/plain", what.cs ? what.cs.join(",") : `folder:${what.folder}`);
@@ -769,12 +770,16 @@ function startDrag(ev, g, what) {
   }
   markDragged();
   cardHide();
+  railDragged();
 }
-// what is dragged, shown so -- again after the list is drawn mid-drag
+// what is dragged, shown so -- again after the list, or the rail, is drawn mid-drag (the rail's by their data-card, its
+// \u0000 one CSS.escape cannot write)
 function markDragged() {
   if (!listDrag) return;
   const keys = listDrag.cs ? listDrag.cs.map((c) => `${listDrag.g}/${c}`) : [`${listDrag.g}/folder:${listDrag.folder}`];
   for (const k of keys) for (const n of document.querySelectorAll(`#agents [data-key="${CSS.escape(k)}"]`)) n.classList.add("dragging");
+  const cards = new Set(listDrag.cs ? listDrag.cs.map((c) => key(listDrag.g, c)) : []);
+  for (const n of document.querySelectorAll("#rail .r-actor[data-card]")) if (cards.has(n.dataset.card)) n.classList.add("dragging");
 }
 function dragRow(row, g, a) {
   if (SNAPSHOT || isCoordinator(a)) return row;
@@ -795,8 +800,8 @@ function endDrag() {
   if (!d) return;
   listDrag = null;
   clearTimeout(d.spring); clearInterval(d.watch);
-  for (const n of document.querySelectorAll("#agents :is(.dragging, .drop-on)")) n.classList.remove("dragging", "drop-on");
-  if (d.later) renderAgents();
+  for (const n of document.querySelectorAll(":is(#agents, #rail) :is(.dragging, .drop-on)")) n.classList.remove("dragging", "drop-on");
+  if (d.later || d.revealed) renderAgents();         // the rail, its folders shown for the drag: as it was again
 }
 document.addEventListener("dragover", () => { if (listDrag) listDrag.seen = Date.now(); }, true);
 document.addEventListener("drop", () => { if (listDrag) setTimeout(endDrag, 0); }, true);   // anywhere: after the line's own

@@ -289,7 +289,17 @@ header .brand .list-btns { display: none; margin-left: -6px; }
 .rail .r-here .r-hname[aria-expanded="true"] .caret { transform: rotate(90deg); }
 .rail .r-here .r-hname:is(:hover, :focus-visible) { background: var(--wash); outline: none; }
 .rail .r-here.folder .r-hname { font-weight: 500; }
-.rail :is(.r-fname, .r-fhead, .r-gname).drop-on { background: color-mix(in srgb, var(--s1) 18%, transparent); }
+/* an actor dragged onto a name (05-agent-list.js "DRAGGING"): the name it would go in lit, as the list's folder line is;
+   what is dragged, faded; selected with Shift+click, tinted in the selection's colour, a check at its avatar's top right
+   (its bookmark and × are at its left) once two are */
+.rail :is(.r-fname, .r-fhead, .r-gname, .r-hname, .r-step).drop-on { background: color-mix(in srgb, var(--s1) 18%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--s1) 55%, transparent); }
+.rail .r-actor.dragging { opacity: .45; }
+.rail .r-actor.picked, .rail .r-actor.picked:hover { background: color-mix(in srgb, var(--pick) 15%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--pick) 55%, transparent); }
+.rail .r-actor .pick { position: absolute; right: -5px; top: -5px; width: 15px; height: 15px; border-radius: 50%; display: flex; align-items: center;
+  justify-content: center; background: var(--pick); box-shadow: 0 0 0 1.5px var(--side); color: #fff; cursor: pointer; }
+.rail .r-actor .pick svg { width: 11px; height: 11px; stroke-width: 2.2; }
 .rail .r-actor[aria-current="true"] .r-name { color: var(--ink); font-weight: 600; }
 .rail .r-none { color: var(--muted); font-size: 11px; text-align: center; padding: 8px 4px; }
 /* its foot (RAIL_FOOT): "Show…"; hovered, in focus from the keys, or pressed, its boxes -- folders, saved, closed --
