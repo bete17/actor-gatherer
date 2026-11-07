@@ -2,28 +2,9 @@
 // saved and closed lines in its folder; several actors moved at once; actors started in a folder; and in the rail, a
 // folder's and a gatherer's cards, with their buttons and their tree, what it shows over every gatherer, and where an
 // actor's bookmark sits however deep its folder.
-import type { Page } from "@playwright/test";
 import { expect, streamsAsRequests, test } from "./test";
 import { CLAUDE, CODEX, GATHERER, open } from "./home";
-
-type Tree = { folders: { id: number; parent: number | null; name: string }[]; filed: Record<string, number> };
-type Home = {
-  gatherers: { name: string; agents: { harness?: string; channel: string }[] }[];
-  saved?: Record<string, Record<string, string>>;
-  folders?: Record<string, Tree>;
-};
-const homeOf = async (page: Page) => (await (await page.request.get("/api/home")).json()) as Home;
-const treeOf = async (page: Page) => (await homeOf(page)).folders?.[GATHERER] || { folders: [], filed: {} };
-const newFolder = async (page: Page, name: string, parent: number | null = null) =>
-  (await (await page.request.post("/api/folders", { data: { gatherer: GATHERER, do: "new", name, parent } })).json())
-    .made as number;
-async function noFolders(page: Page) {
-  for (const f of (await treeOf(page)).folders)
-    await page.request.post("/api/folders", { data: { gatherer: GATHERER, do: "delete", id: f.id } });
-  const filed = Object.keys((await treeOf(page)).filed);
-  if (filed.length)
-    await page.request.post("/api/folders", { data: { gatherer: GATHERER, do: "file", channels: filed } });
-}
+import { homeOf, newFolder, noFolders, treeOf } from "./folder-tree";
 
 test("keeps actors in folders: made from the gatherer's row, filled by dragging, nested, renamed and deleted", async ({
   page,
