@@ -19,16 +19,19 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from harness_kit import AnswerError, ClaudeCode  # noqa: E402
-from harness_kit.base import HOOK_PATH, Box, permission_summary  # noqa: E402
-from harness_kit.claude import permission_asked, permission_dialog_keys, permission_hook_settings  # noqa: E402
+from harness_kit import AnswerError, ClaudeCode, Codex  # noqa: E402
+from harness_kit.codex import approval_shown  # noqa: E402
+from harness_kit.base import AT_DENY, HOOK_PATH, permission_summary  # noqa: E402
+from harness_kit.claude import (permission_asked, permission_dialog_keys, permission_hook_settings,  # noqa: E402
+                                permission_shown)
+from harness_kit.screen import Screen  # noqa: E402
 from ag.integrations.harnesses.claude.ag_orchestrator import context_manager as claude_ag  # noqa: E402
 from ag.integrations.harnesses.claude.setup import launch  # noqa: E402
 from ag.integrations.harnesses.codex.ag_orchestrator.ag_clients import AgClients  # noqa: E402
 from ag.integrations.tools.hook_server.hook_server import Answer  # noqa: E402
-from ag_dashboard import answers, data, server, sessions  # noqa: E402
+from ag_dashboard import answers, chat_view, data, server, sessions  # noqa: E402
 from ag_dashboard import home as dashboard_home  # noqa: E402
-from test_dashboard_answers import GathererBase  # noqa: E402
+from test_dashboard_answers import GathererBase, call  # noqa: E402
 from test_dashboard_sessions import SessionsBase  # noqa: E402
 
 #: What Claude Code 2.1.319's PermissionRequest hook POSTed for a Bash call, as it drew its dialog.
@@ -36,7 +39,11 @@ REPORT = {"session_id": "sess", "transcript_path": "/u/.claude/projects/-w/sess.
           "permission_mode": "default", "effort": {"level": "medium"}, "hook_event_name": "PermissionRequest",
           "tool_name": "Bash", "tool_input": {"command": "touch probe1.txt", "description": "Create empty file probe1.txt"},
           "permission_suggestions": [{"type": "addDirectories", "directories": ["/w"], "destination": "session"}]}
-UP, TAB, ENTER = "\x1b[A", "\t", "\r"
+UP, DOWN, TAB, ENTER = "\x1b[A", "\x1b[B", "\t", "\r"
+#: Claude Code's dialog in auto mode, drawn on a terminal: its cursor hidden.
+SCREEN = "\x1b[?25l" + "\r\n".join(["─" * 100, " Bash command", " Create empty file auto1.txt", "╌" * 100, " touch auto1.txt",
+                                     "╌" * 100, " Ask rule Bash(touch:*) overrides auto mode for this command.",
+                                     " Do you want to proceed?", " ❯ 1. Yes", "   2. No", "", " Esc to cancel · Tab to amend"])
 
 
 class HarnessTest(unittest.TestCase):
@@ -54,6 +61,8 @@ class HarnessTest(unittest.TestCase):
         [f] = ClaudeCode().hooked({**REPORT, "agent_id": "a1"}, 1.0)
         self.assertEqual(f.data["agent"], "a1")
         self.assertEqual(ClaudeCode().hooked({**REPORT, "hook_event_name": "PostToolUse"}, 1.0), [])
+        for tool in ("AskUserQuestion", "ExitPlanMode"):                # asked as a question, a plan: not again
+            self.assertEqual(ClaudeCode().hooked({**REPORT, "tool_name": tool, "tool_input": {"questions": []}}, 1.0), [])
         self.assertIsNone(permission_asked("not a report", 1.0))
 
     def test_what_a_call_is_for_without_a_description(self):
@@ -71,14 +80,65 @@ class HarnessTest(unittest.TestCase):
         """2.1.319's dialog: 1 is Yes; Up from it wraps round to No, the last; Tab there takes why not."""
         self.assertEqual(permission_dialog_keys({"allow": True}), ["1"])
         self.assertEqual(permission_dialog_keys({"allow": True, "text": "ignored"}), ["1"])
-        self.assertEqual(permission_dialog_keys({"allow": False}), [UP, ENTER])
-        self.assertEqual(permission_dialog_keys({"allow": False, "text": "  "}), [UP, ENTER])
-        self.assertEqual(permission_dialog_keys({"allow": False, "text": " use echo "}), [UP, TAB, "use echo", ENTER])
+        self.assertEqual(permission_dialog_keys({"allow": False}), [UP, AT_DENY, ENTER])
+        self.assertEqual(permission_dialog_keys({"allow": False, "text": "  "}), [UP, AT_DENY, ENTER])
+        self.assertEqual(permission_dialog_keys({"allow": False, "text": " use echo "}), [UP, AT_DENY, TAB, "use echo", ENTER])
         for bad in ({}, {"allow": "yes"}, {"allow": False, "text": "two\nlines"}, None):
             with self.assertRaises(AnswerError):
                 permission_dialog_keys(bad)
         self.assertEqual([permission_summary(c) for c in ({"allow": True}, {"allow": False}, {"allow": False, "text": "no"})],
                          ["Allowed", "Denied", "Denied: no"])
+
+    def test_its_dialog_read_off_its_screen(self):
+        screen = Screen(100, 30)
+        screen.feed(SCREEN.encode())
+        got = ClaudeCode().permission_shown(screen)
+        self.assertEqual(got, {"title": "Bash command", "question": "Do you want to proceed?",
+                               "lines": ["Create empty file auto1.txt", "touch auto1.txt",
+                                         "Ask rule Bash(touch:*) overrides auto mode for this command."],
+                               "options": ["Yes", "No"], "cursor": 0, "deny": 1})
+        screen.feed(b"\x1b[?25h")                                       # its message box has the keys
+        self.assertIsNone(ClaudeCode().permission_shown(screen))
+
+    def test_a_label_that_wraps_and_dialogs_that_are_not_permissions(self):
+        rows = ["─" * 60, " Bash command", " rm x", " Do you want to proceed?", " ❯ 1. Yes", "   2. Yes, and always allow",
+                "      access to /w from this project", "   3. No", "", " Esc to cancel · Tab to amend"]
+        got = permission_shown(rows)
+        self.assertEqual((got["options"][1], got["deny"]), ("Yes, and always allow access to /w from this project", 2))
+        trust = ["─" * 60, " Accessing workspace:", " ❯ 1. No, exit", "   2. Yes, I trust this folder", "",
+                 " Enter to confirm · Esc to cancel"]
+        self.assertIsNone(permission_shown(trust))
+        question = ["─" * 60, " Which size?", " ❯ 1. Small", "   2. Large", "", " Enter to select · Esc to cancel"]
+        self.assertIsNone(permission_shown(question))
+        yes_no = ["─" * 60, " Go on?", " ❯ 1. Yes", "   2. No", "", " Enter to select · ↑/↓ to navigate · Esc to cancel"]
+        self.assertIsNone(permission_shown(yes_no))                     # a question's foot, not a permission's
+
+    def test_its_keys_from_where_its_cursor_is(self):
+        shown = permission_shown(["─" * 60, " Bash command", " Do you want to proceed?", " ❯ 1. Yes", "   2. Yes, always",
+                                  "   3. No", "", " Esc to cancel"])
+        self.assertEqual(permission_dialog_keys({"allow": False}, shown), [DOWN, DOWN, AT_DENY, ENTER])
+        self.assertEqual(permission_dialog_keys({"allow": False, "text": "no"}, dict(shown, cursor=2)), [AT_DENY, TAB, "no", ENTER])
+        self.assertEqual(permission_dialog_keys({"allow": False}, dict(shown, cursor=1)), [DOWN, AT_DENY, ENTER])
+        self.assertEqual(permission_dialog_keys({"allow": True}, dict(shown, cursor=2)), ["1"])
+
+    def test_codex_s_approval_read_off_its_screen(self):
+        """Codex records nothing of the approvals it asks, and ag sees no call for them: its screen says it asks."""
+        rows = ["• Running curl -s https://example.com -o page.html", "", "  Would you like to run the following command?", "",
+                "  Environment: local", "", "  Reason: May I run curl with network access?", "",
+                "  $ curl -s https://example.com -o page.html", "", "",
+                "› 1. Yes, proceed (y)", "  2. Yes, and don't ask again for commands that start with `curl` (p)",
+                "  3. No, and tell Codex what to do differently (esc)", "", "  Press enter to confirm or esc to cancel", ""]
+        got = approval_shown(rows)
+        self.assertEqual(got, {"title": "Would you like to run the following command?",
+                               "question": "Would you like to run the following command?",
+                               "lines": ["Environment: local", "Reason: May I run curl with network access?",
+                                         "$ curl -s https://example.com -o page.html"],
+                               "options": ["Yes, proceed (y)", "Yes, and don't ask again for commands that start with `curl` (p)",
+                                           "No, and tell Codex what to do differently (esc)"], "cursor": 0, "deny": 2})
+        screen = Screen(100, 30)
+        screen.feed(("\x1b[?25l" + "\r\n".join(rows)).encode())
+        self.assertEqual(Codex().permission_shown(screen)["options"], got["options"])
+        self.assertIsNone(approval_shown(rows[:-3]))                    # no foot: not its dialog
 
     def test_its_hook_settings(self):
         got = permission_hook_settings("http://127.0.0.1:4113/h/g/ag/hooked")
@@ -248,15 +308,44 @@ class ViewTest(GathererBase):
 
     def test_the_answer_s_keys_and_words(self):
         ask = {"kind": "permission", "harness": "claude", "id": "permission:x"}
-        self.assertEqual(answers.keys(ask, {"allow": False, "text": "not now"}), [UP, TAB, "not now", ENTER])
+        self.assertEqual(answers.keys(ask, {"allow": False, "text": "not now"}), [UP, AT_DENY, TAB, "not now", ENTER])
+        self.assertEqual(answers.keys(ask, {"allow": False}, dialog()), [DOWN, DOWN, AT_DENY, ENTER])
         self.assertEqual((answers.summary(ask, {"allow": True}), answers.expected(ask, {"allow": True})), ("Allowed", []))
         with self.assertRaises(AnswerError):
             answers.expected(ask, {})
 
+    def test_a_dialog_no_hook_reported_once_shown_a_moment(self):
+        shown = {**dialog(), "since": 100.0}
+        self.assertIsNone(data.shown_ask(shown, "claude", now=100.5))        # its hook may record it yet
+        got = data.shown_ask(shown, "claude", now=101.5)
+        self.assertEqual({k: got[k] for k in ("kind", "harness", "title", "said", "options", "at")},
+                         {"kind": "dialog", "harness": "claude", "title": "Bash command", "said": "Do you want to proceed?",
+                          "options": dialog()["options"], "at": 100.0})
+        self.assertEqual(got["id"], data.shown_ask(dict(shown, cursor=2), "claude", now=102)["id"])   # the same one
+        self.assertIsNone(data.shown_ask(None, "claude"))
+
+    def test_chat_waits_on_it_where_nothing_was_recorded(self):
+        self.add([("model_call", {"kind": "turn", "harness": "claude", "derives": True}, None)])
+        self.pend([call("toolu_b", "Bash", {"command": "rm x"})])
+        conn = data._connect("g")
+        self.addCleanup(conn.close)
+        session = {"shown": {**dialog(), "since": time.time() - 5}, "harness": "claude"}
+        got = chat_view._state(conn, "s1", data._tables(conn), [{"n": 1, "began": time.time() - 9}], None, [], session, [])
+        self.assertEqual((got["state"], got["asking"]["kind"]), (chat_view.ASKING, "dialog"))
+        self.key = self.asked()                                          # its hook reported one: that one
+        got = chat_view._state(conn, "s1", data._tables(conn), [{"n": 1, "began": time.time() - 9}], None, [], session, [])
+        self.assertEqual(got["asking"]["kind"], "permission")
+
+
+def dialog(cursor=0, options=("Yes", "Yes, and always allow access to /w from this project", "No")):
+    """Claude Code's permission dialog as its screen shows it (permission_shown's)."""
+    return {"title": "Bash command", "question": "Do you want to proceed?", "lines": ["touch probe1.txt"],
+            "options": list(options), "cursor": cursor, "deny": len(options) - 1}
+
 
 class TypedTest(SessionsBase):
     """Typed into the dashboard's terminal for the session (the fake ag echoes each read); its dialog as its screen
-    shows it, stood in for (`_box`)."""
+    shows it, stood in for (`_shown`)."""
 
     def typed(self):
         return [x["typed"] for x in self.logged() if "typed" in x]
@@ -270,35 +359,90 @@ class TypedTest(SessionsBase):
     def ask(self, **extra):
         return {"id": "permission:k1", "kind": "permission", "harness": "claude", "call": None, "at": time.time(), **extra}
 
+    def screens(self, *shown):
+        """`_shown` giving each of `shown` in turn, then the last again."""
+        seen = list(shown)
+        return mock.patch.object(sessions.Sessions, "_shown", lambda *a: seen.pop(0) if len(seen) > 1 else seen[0])
+
     def test_allowed_then_its_dialog_seen_closed(self):
         sid = self.started()
-        boxes = iter([Box.AWAY, Box.AWAY, Box.EMPTY])                         # asking; the keys not taken yet; closed
-        with mock.patch.object(sessions.Sessions, "_box", lambda *a: next(boxes, Box.EMPTY)):
+        with self.screens(dialog(), dialog(), None):                  # asking; the keys not taken yet; closed
             sent = self.s.answer(sid, self.ask(), {"allow": True})
             self.assertEqual((sent["call"], sent["summary"], sent["expect"]), ("permission:k1", "Allowed", []))
             self.until(lambda: self.typed() == ["1"])
             self.until(lambda: self.session(sid)["answer"].get("closed"))
 
-    def test_denied_with_why_each_key_on_its_own(self):
+    def test_denied_with_why_its_cursor_moved_to_no_and_checked(self):
         sid = self.started()
-        with mock.patch.object(sessions.Sessions, "_box", lambda *a: Box.AWAY):
+        with self.screens(dialog(), dialog(cursor=2)):
             self.s.answer(sid, self.ask(), {"allow": False, "text": "use echo"})
-            self.until(lambda: len(self.typed()) == 4)
-            self.assertEqual(self.typed(), [UP, TAB, "use echo", ENTER])
+            self.until(lambda: len(self.typed()) == 5)
+            self.assertEqual(self.typed(), [DOWN, DOWN, TAB, "use echo", ENTER])
             time.sleep(0.4)
             self.assertNotIn("closed", self.session(sid)["answer"])            # its dialog still shown: not settled here
 
+    def test_a_dialog_that_opens_on_no(self):
+        """An ask that wants a person's no opens on No: Up from it would pick the option above."""
+        sid = self.started()
+        with self.screens(dialog(cursor=2)):
+            self.s.answer(sid, self.ask(), {"allow": False})
+            self.until(lambda: self.typed() == [ENTER])
+
+    def test_its_cursor_not_on_no_nothing_more_typed(self):
+        sid = self.started()
+        with self.screens(dialog(), dialog(cursor=1)), mock.patch.object(sessions, "DENY_SECONDS", 0.3):
+            self.s.answer(sid, self.ask(), {"allow": False})
+            self.until(lambda: len(self.typed()) == 2)
+            time.sleep(0.8)
+            self.assertEqual(self.typed(), [DOWN, DOWN])                # no Enter where the cursor isn't on No
+
     def test_refused_where_no_dialog_shows_or_its_terminal_opened_since(self):
         sid = self.started()
-        with mock.patch.object(sessions.Sessions, "_box", lambda *a: Box.EMPTY):
+        with self.screens(None):
             with self.assertRaisesRegex(sessions.SessionError, "doesn't show it asking"):
                 self.s.answer(sid, self.ask(), {"allow": True})
-        with mock.patch.object(sessions.Sessions, "_box", lambda *a: Box.AWAY):
+        with self.screens(dialog()):
             with self.assertRaisesRegex(sessions.SessionError, "opened after it asked"):
                 self.s.answer(sid, self.ask(at=time.time() - 60), {"allow": True})
             with self.assertRaises(answers.AnswerError):
                 self.s.answer(sid, self.ask(), {"allow": "yes"})
+        with self.screens(dialog(options=("Always", "No"))):
+            with self.assertRaisesRegex(answers.AnswerError, "not Yes"):
+                self.s.answer(sid, self.ask(), {"allow": True})
         self.assertEqual(self.typed(), [])
+
+
+class WatchTest(SessionsBase):
+    """A dialog the terminal's screen draws, read as it is drawn (`_watch_shown`)."""
+
+    def term(self, text):
+        t = sessions._Term(0, -1, open(os.devnull, "w"))
+        self.addCleanup(t.log.close)
+        t.harness, t.gatherer, t.screen = "claude", "g", Screen(100, 30)
+        t.screen.feed(text.encode())
+        return t
+
+    def test_a_dialog_drawn_is_shown_and_the_page_told_twice(self):
+        changed = []
+        self.s.on_change = lambda g, c: changed.append(c)
+        t = self.term(SCREEN)
+        with mock.patch.object(sessions, "SHOWN_SECONDS", 0.2):
+            self.s._watch_shown("sid", t)
+            self.assertEqual((t.shown["title"], t.shown["options"], t.shown["cursor"]), ("Bash command", ["Yes", "No"], 0))
+            self.assertEqual(changed, ["sid"])
+            self.s._watch_shown("sid", t)                                 # drawn again, the same: not again
+            self.assertEqual(changed, ["sid"])
+            self.until(lambda: changed == ["sid", "sid"])                 # still shown SHOWN_SECONDS on
+        t.screen.feed(b"\x1b[2J\x1b[H\x1b[?25h> ")                      # gone, the cursor back in its box
+        self.s._watch_shown("sid", t)
+        self.assertIsNone(t.shown)
+        self.assertEqual(len(changed), 3)
+
+    def test_its_message_box_with_the_keys_is_not_read(self):
+        t = self.term("\x1b[?25h" + SCREEN.replace("\x1b[?25l", ""))
+        with mock.patch.object(sessions.Sessions, "_shown", side_effect=AssertionError("read")):
+            self.s._watch_shown("sid", t)
+        self.assertIsNone(t.shown)
 
 
 @unittest.skipUnless(sessions.TERMINALS, "a terminal needs a Unix pseudo-terminal")
@@ -345,7 +489,7 @@ class EndpointTest(SessionsBase):
                          (now, typ, json.dumps(payload), sid, answer))
         conn.commit()
         conn.close()
-        with mock.patch.object(sessions.Sessions, "_box", lambda *a: Box.AWAY):
+        with mock.patch.object(sessions.Sessions, "_shown", lambda *a: dialog()):
             self.assertEqual(self.post({"session_id": sid, "id": "permission:other", "choice": {"allow": True}})[0], 400)
             code, got = self.post({"session_id": sid, "id": f.key, "choice": {"allow": True}})
         self.assertEqual((code, got["summary"], got["call"]), (200, "Allowed", f.key))

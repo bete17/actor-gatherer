@@ -33,10 +33,11 @@ def _harness(ask: dict) -> harness_kit.Harness:
     return h
 
 
-def keys(ask: dict, choice: dict) -> List[str]:
-    """The keys that answer `ask` with `choice` (module doc), each typed on its own."""
+def keys(ask: dict, choice: dict, shown: Optional[dict] = None) -> List[str]:
+    """The keys that answer `ask` with `choice` (module doc), each typed on its own; a permission's, into its dialog as
+    the terminal's screen shows it (`shown`: harness_kit's `permission_shown`)."""
     if ask.get("kind") == PERMISSION:
-        return _harness(ask).permission_keys(choice)
+        return _harness(ask).permission_keys(choice, shown)
     return _harness(ask).answer_keys(ask, choice)
 
 

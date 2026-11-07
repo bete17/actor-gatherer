@@ -257,8 +257,8 @@ def _state(conn, channel: str, tables: set, turns: List[dict], opening: Optional
             return dict(out, state=DONE)                 # its message taken back: the turn before was over
         return dict(out, state=STOPPED, stopped={"kind": "interrupted", "at": hung["at"], "text": None, "status": None,
                                                  "reason": None})
-    asking = data.record_of(conn, channel).asking()
-    if asking:
+    asking = data.record_of(conn, channel).asking() or data.shown_ask((session or {}).get("shown"), (session or {}).get("harness"))
+    if asking:                                           # or a dialog in its terminal no hook reported (`shown_ask`)
         return dict(out, state=ASKING, asking=asking)
     over = _over(conn, channel, tables)
     if over and not held:                                # held: the harness goes on with it as the turn ends

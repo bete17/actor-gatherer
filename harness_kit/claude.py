@@ -33,7 +33,7 @@ from typing import Dict, List, Optional, Tuple
 from .base import (Action, AnswerError, Box, Call, CallKind, Fact, Facts, Follower, Harness, Kind, Part, RenameError,
                    SaveError, Shape, ToolCall, ToolResult, TrustError, ask_arg, one_line, other_view, output_of, picked,
                    seconds, tool_title, typed_in)
-from .base import permission_choice
+from .base import AT_DENY, permission_choice, rule
 
 # ---------------------------------------------------------------- Claude Code's own text, in the user's name
 
@@ -1221,9 +1221,13 @@ class ClaudeCode(Harness):
         got = permission_asked(report, at)
         return [got] if got is not None else []
 
-    def permission_keys(self, choice: dict) -> List[str]:
+    def permission_keys(self, choice: dict, shown: Optional[dict] = None) -> List[str]:
         """Its permission dialog's keys (permission_dialog_keys)."""
-        return permission_dialog_keys(choice)
+        return permission_dialog_keys(choice, shown)
+
+    def permission_shown(self, screen) -> Optional[dict]:
+        """Its permission dialog, as its screen shows it (permission_shown): a dialog has the keys, its cursor hidden."""
+        return None if screen.cursor_shown else permission_shown(screen.lines())
 
     def tool_output(self, text: str) -> Tuple[str, Optional[str], Optional[str]]:
         """A failed command's "Exit code N" before its output, and the note after it that the shell's directory was put
@@ -1358,11 +1362,17 @@ def plan_path(payload) -> Optional[Tuple[str, Optional[str]]]:
 #: is drawn as ever.
 PERMISSION_HOOK = "PermissionRequest"
 HOOK_SECONDS = 5                         # how long it waits on the hook's answer before drawing its dialog anyway
-#: Its permission dialog (2.1.319): "Do you want to proceed?", "1. Yes" first, then perhaps "always allow ..." and
-#: "switch to auto mode", "No" last. "1" picks Yes at once. Up from the first wraps round to the last, No: Enter
-#: there denies, and interrupts the turn (its record says so); Tab there opens a line for why not ("No, <why>"),
-#: which Enter sends the model, the turn going on.
-YES_KEY, TO_NO, WHY_KEY, ENTER_KEY = "1", "\x1b[A", "\t", "\r"
+#: Its permission dialog (2.1.319): a head ("Bash command"), what the call is and why it asks, "Do you want to
+#: proceed?" (or its like: "Do you want to make this edit to a.py?"), then its options -- "1. Yes" first, perhaps
+#: "always allow ..." and "switch to auto mode" (not in auto mode), "No" last -- and "Esc to cancel" under them. "1"
+#: picks Yes at once. Up and Down move one option; Enter on No denies, and interrupts the turn (its record says so);
+#: Tab on No opens a line for why not ("No, <why>"), which Enter sends the model, the turn going on. An ask that wants
+#: a person's no (`defaultToNo`) opens on No, not on Yes.
+YES_KEY, UP_KEY, DOWN_KEY, WHY_KEY, ENTER_KEY = "1", "\x1b[A", "\x1b[B", "\t", "\r"
+TO_NO = UP_KEY                           # from Yes, as it first shows: Up wraps round to No, the last
+OPTION_ROW = re.compile(r"^\s*(❯\s*)?(\d+)\.\s+(.*?)\s*$")
+DIALOG_FOOT = "Esc to cancel"
+DASHED = re.compile(r"^\s*╌{8,}\s*$")
 INPUT_CHARS = 4000                       # a string in a tool's input, kept for the page: at most this much of it
 SAID_KEYS = ("description", "summary", "file_path", "notebook_path", "path", "url", "pattern", "command", "prompt",
              "query")                    # what a call it asks to run says it is for, or acts on: the first given
@@ -1398,10 +1408,13 @@ def _clipped(value, depth: int = 0):
 def permission_asked(report: dict, at: float) -> Optional[Fact]:
     """The permission its PermissionRequest hook's `report` asks (None: not that hook's): an `asked` fact of kind
     "permission" (Facts) -- and `view`, the call as its tool's view shows it (ToolCall.view: a command, an edit) --
-    keyed anew: the same call asked again, after a "No, <why>", is asked anew."""
+    keyed anew: the same call asked again, after a "No, <why>", is asked anew. Not its tools that ask the user (ASKS),
+    which it calls the hook for as it draws their dialogs: they are asked as what they are."""
     if not isinstance(report, dict) or report.get("hook_event_name") != PERMISSION_HOOK:
         return None
     tool = str(report.get("tool_name") or "")
+    if tool in ASKS:                                 # a question, a plan: asked as one already (`derived`), its hook
+        return None                                  # called for its dialog too
     given = report.get("tool_input") if isinstance(report.get("tool_input"), dict) else {}
     key = f"permission:{os.urandom(8).hex()}"
     view = tool_call({"id": None, "name": tool, "input": given}).view
@@ -1411,13 +1424,72 @@ def permission_asked(report: dict, at: float) -> Optional[Fact]:
                                        "async": False, "turn": None})
 
 
-def permission_dialog_keys(choice: dict) -> List[str]:
-    """The keys that answer its permission dialog with `choice` ({"allow": bool, "text": why not}): "1" (Yes); Up and
-    Enter (No); Up, Tab, the words and Enter (No, with why)."""
+def permission_dialog_keys(choice: dict, shown: Optional[dict] = None) -> List[str]:
+    """The keys that answer its permission dialog with `choice` ({"allow": bool, "text": why not}), as its screen shows
+    it (`shown`: permission_shown's): "1" (Yes, its first option); for No, the cursor moved from where it is to No,
+    AT_DENY, then Enter -- or Tab, the words and Enter (No, with why). Not shown: as it first shows, the cursor on Yes
+    (Up wraps round to No)."""
     allow, why = permission_choice(choice)
+    if shown is not None and (not shown.get("options") or shown.get("deny") is None):
+        raise AnswerError("its terminal doesn't show a dialog to answer: answer it there")
     if allow:
+        if shown is not None and not shown["options"][0].startswith("Yes"):
+            raise AnswerError(f"its dialog's first option is {shown['options'][0]!r}, not Yes: answer it in the terminal")
         return [YES_KEY]
-    return [TO_NO, WHY_KEY, why, ENTER_KEY] if why else [TO_NO, ENTER_KEY]
+    if shown is None:
+        moves = [TO_NO]
+    else:
+        gap = shown["deny"] - shown["cursor"]
+        moves = [DOWN_KEY] * gap if gap > 0 else [UP_KEY] * -gap
+    return [*moves, AT_DENY, WHY_KEY, why, ENTER_KEY] if why else [*moves, AT_DENY, ENTER_KEY]
+
+
+def permission_shown(lines: List[str]) -> Optional[dict]:
+    """Its permission dialog as a screen's rows show it (the last one in them): its options, numbered from 1 in rows
+    one under the other -- an option's label that wraps goes on in the rows under it -- the first "Yes", one "No",
+    a row starting "Esc to cancel" under them; the question in the row above them; its head the first row after the rule ("───")
+    above that, and what it shows between them, its dashed rules left out. None where the rows show none."""
+    for end in range(len(lines) - 1, -1, -1):
+        if not lines[end].strip().startswith(DIALOG_FOOT):     # a question's: "Enter to select · ... · Esc to cancel"
+            continue
+        r = end - 1
+        while r >= 0 and not lines[r].strip():
+            r -= 1
+        first = None
+        while r >= 0 and lines[r].strip():           # up to the row of its first option
+            m = OPTION_ROW.match(lines[r])
+            if m is not None and m.group(2) == "1":
+                first = r
+                break
+            r -= 1
+        if first is None:
+            continue
+        options: List[str] = []
+        cursor = 0
+        for row in lines[first:end]:
+            if not row.strip():
+                continue
+            m = OPTION_ROW.match(row)
+            if m is not None and int(m.group(2)) == len(options) + 1:
+                options.append(m.group(3))
+                cursor = len(options) - 1 if m.group(1) else cursor
+            else:
+                options[-1] = f"{options[-1]} {row.strip()}"
+        deny = next((i for i, o in enumerate(options) if o == "No" or o.startswith(("No,", "No "))), None)
+        if len(options) < 2 or not options[0].startswith("Yes") or deny is None:
+            continue
+        q = first - 1
+        while q >= 0 and not lines[q].strip():
+            q -= 1
+        if q < 0:
+            continue
+        top = q - 1
+        while top >= 0 and not rule(lines[top]):
+            top -= 1
+        said = [x.strip() for x in lines[top + 1:q] if x.strip() and not DASHED.match(x)]
+        return {"title": said[0] if said else "", "question": lines[q].strip(), "lines": said[1:], "options": options,
+                "cursor": cursor, "deny": deny}
+    return None
 
 
 # ---------------------------------------------------------------- its own record of a session

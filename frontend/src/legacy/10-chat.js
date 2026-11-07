@@ -213,10 +213,11 @@ function askingNote(info, answerable = true) {
   const reopened = !!(s.terminal && s.since && ask.at && s.since > ask.at
     && (harnessInfo(ask.harness || info.harness) || {}).asks_shown_again === false);
   const here = answerable && !SNAPSHOT && !!s.terminal && !touched && !reopened;
-  const key = askKey(ask), perm = ask.kind === "permission";
+  const key = askKey(ask), perm = ask.kind === "permission", dialog = ask.kind === "dialog";
   const sent = info.answer && info.answer.call === key ? info.answer : null;
   const who = info.harness ? harnessName(info.harness) : "The agent";
-  const what = perm ? `${who} asks to ${permissionVerb(ask)}${ask.agent ? " (a subagent of it)" : ""}`
+  const what = dialog ? `${who} is asking you in its terminal`
+    : perm ? `${who} asks to ${permissionVerb(ask)}${ask.agent ? " (a subagent of it)" : ""}`
     : ask.kind === "plan" ? `${who} has a plan for you to ${says.plan_verb}`
     : `${who} asked you ${qs.length > 1 ? plural(qs.length, "question") : "a question"}${ask.async ? " as it works" : ""}`;
   const d = draftOf(ask);
@@ -276,7 +277,8 @@ function askingNote(info, answerable = true) {
     el("summary", { text: "The plan" }), markdown(ask.plan)) : null;
   // the foot's line: how the answer sent goes, or why it is not answered here
   const said = (full) => {
-    const [cls, text] = sent ? [late ? "err" : "sent", late ? `Your answer (${sent.summary}) has not reached ${who}: answer it in the terminal.`
+    const [cls, text] = dialog ? ["", "Answer it in the terminal."]
+      : sent ? [late ? "err" : "sent", late ? `Your answer (${sent.summary}) has not reached ${who}: answer it in the terminal.`
         : `Typing your answer into the terminal: ${sent.summary}`]
       : d.error ? ["err", d.error]
       : !here ? ["", touched ? "Something was typed into its terminal since it asked: finish answering there."
@@ -325,7 +327,7 @@ function askingNote(info, answerable = true) {
         title: "Open the terminal", onclick: () => setChatView("terminal") }, strokeIcon(ICONS.terminal, 14), el("span", { class: "lbl", text: "Open the terminal" }))) : null),
     tabs,
     el("div", { class: "body", "data-keep": "asking-note", "data-morph": "" },
-      ...(perm ? [permissionView(ask, `perm-${key}`)] : here && qs.length > 1 ? [question(qs[tab], tab)] : qs.map(question)), plan),
+      ...(dialog ? [dialogView(ask)] : perm ? [permissionView(ask, `perm-${key}`)] : here && qs.length > 1 ? [question(qs[tab], tab)] : qs.map(question)), plan),
     foot);
 }
 const CHECK = "M3.5 8.5l3 3 6-7";
@@ -355,6 +357,15 @@ function permissionView(ask, id) {
   else if (s.body) out.push(s.body(id));
   else if (!SHAPES[v.shape] && Object.keys(call.input).length) out.push(el("pre", { class: "perm-input", text: JSON.stringify(call.input, null, 2) }));
   return el("div", { class: "perm" }, ...out);
+}
+// A dialog the actor's terminal shows that no hook reported (data.py's `shown_ask`), as its screen has it: its head,
+// what it shows, its question and its options -- answered in the terminal, so the options are not buttons.
+function dialogView(ask) {
+  return el("div", { class: "perm" },
+    ask.title && ask.title !== ask.said ? el("div", { class: "perm-call" }, el("b", { text: ask.title })) : null,
+    (ask.lines || []).length ? el("pre", { class: "perm-input", text: ask.lines.join("\n") }) : null,
+    el("div", { class: "qline" }, el("span", { class: "text", text: ask.said || "" })),
+    el("ol", { class: "shown-opts" }, ...(ask.options || []).map((o) => el("li", { text: o }))));
 }
 function draftOf(ask) {
   let d = answerDrafts.get(askKey(ask));

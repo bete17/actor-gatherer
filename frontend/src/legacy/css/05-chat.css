@@ -90,6 +90,9 @@
 .asking-note .perm :is(.perm-cmd, .perm-input) { margin: 0; padding: 8px 10px; max-height: 240px; overflow: auto; white-space: pre-wrap;
   overflow-wrap: anywhere; font-family: var(--mono); font-size: 12px; background: var(--page); border: 1px solid var(--ring); border-radius: 8px; }
 .asking-note .perm .diff { max-height: 260px; overflow: auto; }
+/* a dialog only its terminal shows (dialogView): its options as it lists them, answered there */
+.asking-note .shown-opts { margin: 0; padding-left: 22px; color: var(--ink-2); line-height: 1.6; }
+.asking-note .shown-opts li::marker { color: var(--muted); font-variant-numeric: tabular-nums; }
 .asking-note .plan { max-width: 900px; margin-top: 8px; padding: 2px 14px 10px; background: var(--page); border: 1px solid var(--ring); border-radius: 8px; }
 .asking-note .md :is(h1, h2, h3) { font-size: 14px; margin: 10px 0 4px; }
 /* codex's proposed plan in a message (markdown()'s): a card headed "Proposed plan", as the plan in the note above */

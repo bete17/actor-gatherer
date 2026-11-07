@@ -616,16 +616,27 @@ class Harness(ABC):
         asked -- an `asked` fact of kind "permission" (Facts). None by default."""
         return []
 
-    def permission_keys(self, choice: dict) -> List[str]:
+    def permission_keys(self, choice: dict, shown: Optional[dict] = None) -> List[str]:
         """The keys that answer a permission it asks in its terminal (`hooked`'s) with `choice` -- {"allow": bool,
-        "text": why not, on one line, or None} -- each typed on its own into its dialog as it first shows. Raises
-        AnswerError where it can't be answered so."""
+        "text": why not, on one line, or None} -- each typed on its own into its dialog as its screen shows it now
+        (`shown`: `permission_shown`'s; None: as it first shows). AT_DENY among them: before going on, the dialog's
+        cursor must be on its option that denies. Raises AnswerError where it can't be answered so."""
         raise AnswerError(f"{self.label or self.name or 'this harness'}'s permissions can't be answered from here")
+
+    def permission_shown(self, screen) -> Optional[dict]:
+        """The permission dialog its terminal's screen (harness_kit.screen's) shows now: {title (its head: "Bash
+        command"), question ("Do you want to proceed?"), lines (what it shows between them), options (their labels, in
+        order), cursor (the place of the option the cursor is on), deny (the place of the option that denies)}; None
+        where it shows none -- or the harness has no rule for it. What a reader goes by where no hook reported it."""
+        return None
 
 
 #: Where ag's launchers point a harness's own hooks (`permission_hooks`' url): its hook server's URL for the run, after
 #: /h/<gatherer>/ (and /c/<folder>/), then this -- a path no model endpoint has (ag's proxy_hook.py's `reported`).
 HOOK_PATH = "/ag/hooked"
+#: Among a permission's keys (`permission_keys`): not a key, but a check -- the dialog's cursor is on its option that
+#: denies, as its screen shows (`permission_shown`) -- the keys after it typed only then.
+AT_DENY = "\x00at-deny"
 
 
 def permission_choice(choice) -> Tuple[bool, Optional[str]]:

@@ -15,6 +15,18 @@ and settles it once that thread calls its model again or asks again, which also 
 A plain "No" or Esc interrupts the turn, which Claude Code's record says. Chat's card types the dialog's keys:
 "1" allows; Up wraps to "No"; Tab then takes a reason.
 
+Prompts no hook reports are read off the screen of a terminal the dashboard runs (harness_kit's `permission_shown`,
+sessions.py's `_watch_shown`): shown for a second with none recorded, the actor is "Waiting for you" and Chat shows
+the dialog as the screen has it, read-only, to answer in the terminal. That covers Claude Code's asks for a person
+alone (auto mode's "couldn't check this action", its Chrome block, some connector file sends: they skip the hook) and
+Codex's approvals, of which nothing is recorded. Allow and Deny type keys worked out from that same screen, the cursor
+checked to be on No before Enter.
+
+- [ ] **Codex's approvals answered from Chat**, and seen in a terminal outside the dashboard: Codex 0.164 has a
+  `PermissionRequest` hook, but as a command only (no HTTP) and trusted first (`hooks.state` hashes in its config;
+  `--dangerously-bypass-hook-trust` would trust a repo's own hooks too, so not that).
+- [ ] **Antigravity's approvals**: in its default mode agy ran a delete and a write outside its folder unasked, so
+  none was seen. Its steps have a WAITING status and it has a hooks.json with PreToolUse, if it does ask.
 - [ ] **A permission allowed in the terminal itself**, for a tool that then runs long: it shows as waiting until the
   tool ends and the next model call settles it. Answered from Chat, the dialog closing on the dashboard's own screen
   settles it at once (sessions.py's `_closed`); keys typed into the terminal don't.

@@ -112,7 +112,7 @@ from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import urlsplit
 
 import harness_kit
-from harness_kit.base import Box
+from harness_kit.base import AT_DENY, Box
 from harness_kit.screen import Screen
 
 from . import actions, answers, home
@@ -215,6 +215,9 @@ KEYS_GAP = 0.1                     # around the dashboard's own keys (a paste, a
 HOLD_MAX = 10.0                    # a stop key held while the dashboard's own keys go in, at most this long
 ANSWER_GAP = 0.3                   # between the keys of an answer typed into a dialog: several at once are one input to it
 CLOSE_SECONDS = 3.0                # a permission's keys typed in: how long its terminal is watched for its dialog to close
+DENY_SECONDS = 1.5                 # a permission's No: how long its dialog is watched for the cursor to reach it (AT_DENY)
+SHOWN_SECONDS = 1.0                # a permission dialog shown with none recorded this long: what its screen shows is what
+#                                    it asks (data.py's `shown_ask`) -- its hook, where it calls one, records it sooner
 CLEARED = b"\x1b[2J"               # a full screen clearing it, to draw it all again (Claude Code's, at its start and each resize)
 REDRAW_WAIT = 1.0                  # a full screen made a row shorter (`redraw`): how long it is given to draw, before it is put back
 BOX_SETTLE = 0.5                   # a terminal's message box not shown empty: how long its screen is watched for it to be (a
@@ -686,6 +689,7 @@ class _Term:
         self.harness: Optional[str] = None   # the session's harness and gatherer, as it was started
         self.gatherer: Optional[str] = None
         self.boxed: Optional[str] = None     # its message box as last seen after a stop key (`_read_terminal`)
+        self.shown: Optional[dict] = None    # the permission dialog its screen shows (`_watch_shown`), and `since`
         self.drafted = 0                # characters the reader typed into its input box and has not sent (`drafted`)
         self.kept = False               # put away (`put_away`): its end is kept
         self.drawn = -1                 # where in what it printed it last cleared its screen (CLEARED), to draw it all
@@ -776,15 +780,16 @@ class Sessions:
     def chat_row(self, session_id: str) -> Optional[dict]:
         """What Chat's view (chat_view.py) takes of a session the table has: {ended, queued (its messages waiting), sent
         (its latest messages from Chat, as each came), stopped_at (when a key that stops a turn was the last typed into
-        its terminal; None: something else was), box (since then, what its message box shows: a Box, or None)} -- None
-        for one it does not have."""
+        its terminal; None: something else was), box (since then, what its message box shows: a Box, or None), shown (the
+        permission dialog its terminal shows: `_watch_shown`), harness} -- None for one it does not have."""
         s = self._row(session_id)
         if s is None:
             return None
         with self.lock:
             a, t = self.agents.get(session_id), self.terms.get(session_id)
         got = {"ended": s.get("ended") or 0, "queued": list(a.queue) if a else [], "sent": list(self.sent.get(session_id, ())),
-               "stopped_at": (t.stopped or None) if t else None, "box": None}
+               "stopped_at": (t.stopped or None) if t else None, "box": None, "shown": t.shown if t else None,
+               "harness": s.get("harness")}
         if t is not None and t.stopped:                  # what its box shows since the stop key, as its screen has it
             got["box"] = self._box(t, s["harness"])
         return got
@@ -803,7 +808,7 @@ class Sessions:
                 a, t = self.agents.get(s["session_id"]), self.terms.get(s["session_id"])
                 out.append({**s, "queued": list(a.queue) if a else [], "terminal": t is not None,
                             "answer": self.answered.get(s["session_id"]), "typed": t.typed if t else None,
-                            "stopped_at": (t.stopped or None) if t else None,
+                            "stopped_at": (t.stopped or None) if t else None, "shown": t.shown if t else None,
                             "fullscreen": bool(t and t.fullscreen), "pid": t.pid if t else a.proc.pid if a else None,
                             "since": t.since if t else a.since if a else None,
                             "sent": list(self.sent.get(s["session_id"], ()))})
@@ -1526,6 +1531,7 @@ class Sessions:
                         t.screen.feed(chunk)
                     except Exception:  # noqa: BLE001 - a screen that cannot be read is not looked at again
                         t.screen = None
+            self._watch_shown(session_id, t)
             if t.stopped and time.time() - t.stopped < HOLD_MAX:    # a stop key typed lately: Chat's view of it
                 box = self._box(t, t.harness or "")                 # (chat_view.py) told what its box now shows
                 if box != t.boxed:
@@ -1746,46 +1752,66 @@ class Sessions:
             rules = harness_kit.get(ask.get("harness") or harness_kit.DEFAULT)
             if (permission or rules is not None and not rules.asks_shown_again) and ask.get("at") and t.since > ask["at"]:
                 raise SessionError("its terminal opened after it asked, and does not ask it: answer in a message")
-            keys = answers.keys(ask, choice)             # AnswerError, a ValueError: a choice that does not fit
             harness = (self._row(session_id) or {}).get("harness") or t.harness or ""
-            if permission and self._box(t, harness) not in (Box.AWAY, None):
+            shown = self._shown(t, harness) if permission else None
+            if permission and shown is None:
                 raise SessionError("its terminal doesn't show it asking: answer it there")
+            keys = answers.keys(ask, choice, shown)      # AnswerError, a ValueError: a choice that does not fit
             sent = {"call": ask.get("id") or ask.get("call"), "summary": answers.summary(ask, choice),
                     "expect": answers.expected(ask, choice), "at": time.time()}
             self.answered[session_id] = sent
             t.answering = True
             gatherer = (self._row(session_id) or {}).get("gatherer")
         actions.answer_given(gatherer, session_id, sent)        # kept in its gatherer
-        after = (lambda: self._closed(t, harness, gatherer, session_id, sent)) if permission else None
-        threading.Thread(target=self._keys, args=(t, keys, after), daemon=True).start()
+        after = (lambda: self._closed(t, harness, gatherer, session_id, sent, shown)) if permission else None
+        threading.Thread(target=self._keys, args=(t, keys, after, harness), daemon=True).start()
         self._changed(gatherer, session_id)
         return sent
 
-    def _keys(self, t: _Term, keys: List[str], after: Optional[Callable[[], None]] = None) -> None:
+    def _keys(self, t: _Term, keys: List[str], after: Optional[Callable[[], None]] = None, harness: str = "") -> None:
         typed = False
         try:
             for k in keys:
+                if k == AT_DENY:                     # not a key: the dialog's cursor on its No before going on
+                    self._at_deny(t, harness)
+                    continue
                 self._write(t, k.encode("utf-8"))
                 time.sleep(ANSWER_GAP)
             typed = True
-        except SessionError:
-            pass
+        except SessionError as exc:
+            t.log.write(f"--- {_now()} answer not typed in full: {exc}\n")
         finally:
             t.answering = False
         if typed and after is not None:
             after()
 
-    def _closed(self, t: _Term, harness: str, gatherer: Optional[str], session_id: str, sent: dict) -> None:
-        """Once a permission's keys are in: its dialog closed, as the terminal's screen shows it (`_box`: no longer
-        AWAY) within CLOSE_SECONDS, settles it -- recorded (actions.py's `ask_settled`), `sent` marked `closed`, the page
-        told. The tool it allowed may run long before its harness calls its model again, which settles it too. A dialog
-        still shown (the keys not taken; or the next permission, asked at once) leaves it to that."""
+    def _at_deny(self, t: _Term, harness: str) -> None:
+        """Waits, up to DENY_SECONDS, for the permission dialog's cursor to be on its option that denies, as its screen
+        shows; raises SessionError where it isn't -- the keys that would pick there not typed."""
+        end = time.time() + DENY_SECONDS
+        while True:
+            got = self._shown(t, harness)
+            if got is not None and got["cursor"] == got["deny"]:
+                return
+            if time.time() >= end:
+                raise SessionError(f"its dialog's cursor is not on No ({got and got['options'][got['cursor']]!r})")
+            time.sleep(0.1)
+
+    def _closed(self, t: _Term, harness: str, gatherer: Optional[str], session_id: str, sent: dict,
+                shown: Optional[dict] = None) -> None:
+        """Once a permission's keys are in: its dialog (`shown`) gone from the terminal's screen within CLOSE_SECONDS
+        settles it -- recorded (actions.py's `ask_settled`), `sent` marked `closed`, the page told. The tool it allowed
+        may run long before its harness calls its model again, which settles it too. Its dialog still shown (the keys
+        not taken) leaves it to that."""
+        same = lambda d: d is not None and shown is not None and (d["title"], d["question"]) == (shown["title"], shown["question"]) \
+            and d["options"][:d["deny"]] == shown["options"][:shown["deny"]]      # noqa: E731 - its No may hold the words
         end = time.time() + CLOSE_SECONDS
         while time.time() < end:
-            box = self._box(t, harness)
-            if box is None:
+            with t.screen_lock:
+                drawn = t.screen is not None
+            if not drawn:
                 return
-            if box != Box.AWAY:
+            if not same(self._shown(t, harness)):
                 sent["closed"] = time.time()
                 actions.ask_settled(gatherer, session_id, sent["call"], sent.get("summary"))
                 self._changed(gatherer or "", session_id)
@@ -1810,6 +1836,44 @@ class Sessions:
         with t.screen_lock:
             if t.screen is not None:
                 t.screen.resize(cols, rows)
+
+    def _shown(self, t: _Term, harness: str) -> Optional[dict]:
+        """The permission dialog the terminal's screen shows now (harness_kit's `permission_shown`); None: none, or not
+        known."""
+        h = harness_kit.get(harness)
+        with t.screen_lock:
+            if h is None or t.screen is None:
+                return None
+            try:
+                return h.permission_shown(t.screen)
+            except Exception:  # noqa: BLE001 - a rule that fails on a screen says nothing of it
+                return None
+
+    def _watch_shown(self, session_id: str, t: _Term) -> None:
+        """After the terminal drew: whether a permission dialog came or went on its screen (`shown`, with `since`) --
+        read only while something else than its message box has the keys (the cursor hidden), or one was shown. A
+        change wakes the page; one still shown SHOWN_SECONDS on, once more (data.py's `shown_ask`)."""
+        with t.screen_lock:
+            look = t.screen is not None and (t.shown is not None or not t.screen.cursor_shown)
+        if not look:
+            return
+        got = self._shown(t, t.harness or "")
+        sig = lambda d: (d["title"], d["question"], tuple(d["options"])) if d else None    # noqa: E731
+        if sig(got) == sig(t.shown):
+            return
+        t.shown = {**got, "since": time.time()} if got else None
+        with self.lock:
+            now_id = next((k for k, v in self.terms.items() if v is t), session_id)
+        self._changed(t.gatherer or "", now_id)
+        if got:
+            mark = t.shown
+
+            def again() -> None:
+                if t.shown is mark:
+                    self._changed(t.gatherer or "", now_id)
+            timer = threading.Timer(SHOWN_SECONDS + 0.1, again)
+            timer.daemon = True
+            timer.start()
 
     def _box(self, t: _Term, harness: str) -> Optional[str]:
         """What a message typed into the terminal now would go into, as its screen shows (harness_kit's `box`): a Box;
