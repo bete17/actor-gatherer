@@ -104,7 +104,9 @@ async function setSaved(gname, a, save) {
 // line counts those wanting the reader, stopped on an error, running); its terminals ("N terminals"), its saved actors
 // once closed ("N saved") and its other closed ones ("N closed"), each folded till opened, as before folders. A folder is folded till opened (kept in this browser);
 // folded, its actors open in a pane stay in view under it. Folders only organise the list: what a gatherer's actors
-// share of one another's context is the gatherer's, whatever folder each is in.
+// share of one another's context is the gatherer's, whatever folder each is in. A folder CLOSED (its ×, closeFolder:
+// folders.py's `close`) is listed in its parent's closed line, with its actors (shownClosed); deleted (its bin), what was
+// in it moves up a level.
 const FOLDER_CHARS = 60;
 const byName = (x, y) => x.localeCompare(y, undefined, { sensitivity: "base" }) || (x < y ? -1 : x > y ? 1 : 0);
 const treeOf = (gname) => (state.home.folders || {})[gname] || { folders: [], filed: {} };
@@ -154,6 +156,25 @@ function folderTally(g, id) {
   }
   return t;
 }
+// A CLOSED folder (folders.py's `close`: its actors closed, their bookmarks off, its terminals ended; then it, and the
+// folders in it, marked `closed`) is listed in its parent's closed line -- for as long as nothing in it is open again: no
+// terminal opened in it, no actor in it open and used since it was closed (messaged, opened again: active, or its process
+// started, since). Then it is listed with the open folders; its actor closed again, back in the closed line.
+const shellsWithin = (g, id) => (state.home.shells || []).filter((s) => s.gatherer === g.name && folderById(g.name, s.folder) && within(g.name, s.folder, id));
+function shownClosed(g, f) {
+  if (!f || !f.closed) return false;
+  const at = Date.parse(f.closed) / 1000;
+  if (shellsWithin(g, f.id).length) return false;
+  return !actorsWithin(g, f.id).some((a) => !["Saved", "Closed"].includes(groupOf(g, a))
+    && ((a.last || 0) > at || !!(a.session && (a.session.since || 0) > at)));
+}
+const closedKids = (g, id) => kidFolders(g.name, id).filter((f) => shownClosed(g, f));
+// What a box's closed line counts: its own closed actors (`own`), and every actor in its closed folders
+const closedCount = (g, id, own) => own + closedKids(g, id).reduce((n, f) => n + actorsWithin(g, f.id).length, 0);
+const closedSays = (g, id, own) => {
+  const n = closedCount(g, id, own), k = closedKids(g, id).length;
+  return n || !k ? `${n} closed` : plural(k, "closed folder");
+};
 // Each folder open or not (its key: its gatherer, its id), kept in this browser; a folder made, or one an actor is put
 // in, opened
 const FOLDERS_OPEN_KEY = "ag-dashboard-folders-open";
@@ -205,6 +226,11 @@ async function folderPost(gname, body, change = null) {
     return null;
   } finally { redrawList(); }
 }
+// A closed folder something is put in (or made in) open again, and the closed folders it is in (folders.py's `_opened`),
+// in the page's copy of its gatherer's tree
+function openUp(tree, id) {
+  for (let f = tree.folders.find((x) => x.id === id), n = 0; f && n < 500; f = tree.folders.find((x) => x.id === f.parent), n++) f.closed = null;
+}
 // Actors put in folder `id` (null: their gatherer's top), by the channels they are filed as (or will be): it opened
 function fileActors(gname, actors, id) {
   const channels = actors.map((a) => filedAs(gname, a) || a.channel);
@@ -212,6 +238,7 @@ function fileActors(gname, actors, id) {
   showFolder(gname, id, true);
   return folderPost(gname, { do: "file", channels, folder: id }, (tree) => {
     for (const c of channels) { if (id === null) delete tree.filed[c]; else tree.filed[c] = id; }
+    openUp(tree, id);
   });
 }
 // A folder made in `parent` (null: the gatherer's top), opened -- drawn once the server has made it (its id is the
@@ -231,6 +258,7 @@ function moveFolder(gname, id, parent) {
   return folderPost(gname, { do: "move", id, parent }, (tree) => {
     const f = tree.folders.find((x) => x.id === id);
     if (f) f.parent = parent;
+    openUp(tree, parent);
   });
 }
 // A folder deleted: what was in it -- its actors, its folders -- moved up into the one it was in
@@ -251,7 +279,7 @@ async function fileStarted(gname, id) {
   const fid = startIn.g === gname ? startIn.folder : null;
   if (fid === null || !id || !folderById(gname, fid)) return;
   showFolder(gname, fid, true);
-  await folderPost(gname, { do: "file", channels: [id], folder: fid }, (tree) => { tree.filed[id] = fid; });
+  await folderPost(gname, { do: "file", channels: [id], folder: fid }, (tree) => { tree.filed[id] = fid; openUp(tree, fid); });
 }
 const shellFolder = (gname) => startIn.g === gname && folderById(gname, startIn.folder) ? startIn.folder : null;
 // SELECTING several actors of one gatherer, to move them at once (or save, or close them): Shift+click adds an actor to
@@ -346,8 +374,8 @@ async function moveHidingToServer() {
 }
 // A gatherer's or a folder's actors as its box lists them (FOLDERS): [group, list] for each that has any -- its actors
 // open ("Open"), the newest first, whatever their status; then its shells, the oldest first (SHELLS), its saved actors
-// once closed ("Saved"), its other closed ones, the newest first ("Closed"). `id`: the folder; null, the gatherer's top.
-// The rail (railBox) has them so too.
+// once closed ("Saved"), its other closed ones, the newest first ("Closed") -- under which its closed folders are listed
+// too, first (closedKids). `id`: the folder; null, the gatherer's top. The rail (railBox) has them so too.
 const OPEN = "Open";
 function boxGroups(g, id) {
   const mine = g.agents.filter((a) => !isCoordinator(a) && folderOf(g.name, a) === id);
@@ -356,7 +384,8 @@ function boxGroups(g, id) {
   const shells = (state.home.shells || []).filter((s) => s.gatherer === g.name && (folderById(g.name, s.folder) ? s.folder : null) === id);
   groups.push([SHELLS, shells], ["Saved", mine.filter((a) => groupOf(g, a) === "Saved").sort(latest)],
     ["Closed", mine.filter((a) => groupOf(g, a) === "Closed").sort(latest)]);
-  return groups.filter(([, list]) => list.length);
+  // its closed line there too while it holds only closed folders (closedKids): drawn with them first
+  return groups.filter(([name, list]) => list.length || (name === "Closed" && closedKids(g, id).length));
 }
 // how many of its actors wait on the user, how many stopped on an error, and how many run now; nothing while none does
 function gathererCounts(g) {
@@ -430,6 +459,8 @@ function renderAgents() {
   else if (typing) { nameInput.focus({ preventScroll: true }); nameInput.setSelectionRange(...typing); }
   if (state.folderEdit && !(folderInput && folderInput.isConnected)) { state.folderEdit = null; folderInput = null; }   // folded away
   else if (folderTyping) { folderInput.focus({ preventScroll: true }); folderInput.setSelectionRange(...folderTyping); }
+  if (folderClosing && folderClosing.from === "list" && !document.querySelector("#agents .f-ask")) folderClosing = null;   // folded away
+  askRefocus();
   markDragged();                                     // drawn again mid-drag: what is dragged, still shown as it
   renderPickBar();
   const servers = state.home.hook_servers || [];     // in the dashboard's panel (the header's button)
@@ -628,37 +659,51 @@ function boxRows(g, id) {
   const out = [], edit = state.folderEdit;
   if (edit && edit.g === g.name && edit.id === null && edit.parent === id)
     out.push(el("div", { class: "folder-line editing", "data-key": `${g.name}/folder:new` }, folderBox()));
-  for (const f of kidFolders(g.name, id)) {
-    out.push(folderLine(g, f));
-    if (isOpenFolder(g.name, f.id)) {
-      const rows = boxRows(g, f.id);
-      out.push(el("div", { class: "f-kids" }, ...(rows.length ? rows
-        : [el("div", { class: "f-empty", text: SNAPSHOT ? "Empty" : "Empty: drag actors here, or start one with its +" })])));
-    } else {
-      const peek = openIn(g, f.id);                  // folded: those open in a pane, in view under it
-      if (peek.length) out.push(el("div", { class: "f-kids peek" }, ...peek.map((a) => agentRow(g, a, groupOf(g, a)))));
-    }
-  }
+  for (const f of kidFolders(g.name, id)) if (!shownClosed(g, f)) out.push(...folderRows(g, f));   // the closed: in its closed line
   for (const [name, list] of boxGroups(g, id)) {
     if (name in FOLD_KEYS) { out.push(...foldRows(g, id, name, list)); continue; }
     for (const a of list) out.push(agentRow(g, a, name));
   }
   return out;
 }
+// A folder's rows: its line, and under it, opened, its box, set in -- a closed one's (shownClosed) all it holds, as
+// closedRows has it -- or, folded, its actors open in a pane; under its line, while its × asks first, the question
+// (closeAsk).
+function folderRows(g, f) {
+  const out = [folderLine(g, f)], closed = shownClosed(g, f);
+  if (folderClosing && folderClosing.from === "list" && folderClosing.g === g.name && folderClosing.id === f.id) out.push(closeAsk(g, f));
+  if (isOpenFolder(g.name, f.id)) {
+    const rows = closed ? closedRows(g, f.id) : boxRows(g, f.id);
+    out.push(el("div", { class: "f-kids" }, ...(rows.length ? rows
+      : [el("div", { class: "f-empty", text: SNAPSHOT || closed ? "Empty" : "Empty: drag actors here, or start one with its +" })])));
+  } else {
+    const peek = openIn(g, f.id);                    // folded: those open in a pane, in view under it
+    if (peek.length) out.push(el("div", { class: "f-kids peek" }, ...peek.map((a) => agentRow(g, a, groupOf(g, a)))));
+  }
+  return out;
+}
+// What a closed folder holds, all closed: its folders, then its actors, the latest first -- under no line of their own
+function closedRows(g, id) {
+  const mine = g.agents.filter((a) => !isCoordinator(a) && folderOf(g.name, a) === id).sort((x, y) => (y.last || 0) - (x.last || 0));
+  return [...kidFolders(g.name, id).flatMap((f) => folderRows(g, f)), ...mine.map((a) => agentRow(g, a, groupOf(g, a)))];
+}
 // A box's fold: its line ("▸ N closed"), and under it, once opened, its actors (or shells) -- folded, those open in a
-// pane (no shell) -- open or not kept in this browser, for each box (boxKey).
+// pane (no shell) -- open or not kept in this browser, for each box (boxKey). Its closed line holds its closed folders
+// too, first, and counts their actors (closedSays).
 function foldRows(g, id, name, list) {
   const k = boxKey(g.name, id), shown = foldOpen[name].has(k), shells = name === SHELLS;
+  const kids = name === "Closed" ? closedKids(g, id) : [];
   const line = el("button", { class: "agent-group fold-line", type: "button", "aria-expanded": shown ? "true" : "false",
     "data-key": `${g.name}/${id === null ? "" : id}/${name}`,
     title: shells ? (shown ? "Hide the terminals" : "Show the terminals")
       : name === "Saved" ? `${shown ? "Hide" : "Show"} the saved actors that are closed: kept here, apart from the closed ones, till unsaved`
-      : `${shown ? "Hide" : "Show"} the closed actors`,
+      : `${shown ? "Hide" : "Show"} the closed ${kids.length ? "folders and actors" : "actors"}`,
     onclick: () => toggleFold(name, k) },
     `${shown ? "▾" : "▸"} `, name === "Saved" ? el("span", { class: "fold-mark", "aria-hidden": "true" }, saveIcon(true)) : null,
-    shells ? plural(list.length, "terminal") : `${list.length} ${name.toLowerCase()}`);
+    shells ? plural(list.length, "terminal") : name === "Closed" ? closedSays(g, id, list.length) : `${list.length} ${name.toLowerCase()}`);
   if (shells) return [line, ...(shown ? list.map((s) => shellRow(g, s)) : [])];
-  return [line, ...(shown ? list : list.filter((a) => inPane(g, a))).map((a) => agentRow(g, a, name))];
+  if (shown) return [line, ...kids.flatMap((f) => folderRows(g, f)), ...list.map((a) => agentRow(g, a, name))];
+  return [line, ...[...kids.flatMap((f) => openIn(g, f.id)), ...list.filter((a) => inPane(g, a))].map((a) => agentRow(g, a, groupOf(g, a)))];
 }
 // a folder's icon: the full-page view's folder headings (the list's lines have none, its caret and indent enough)
 const folderMark = (open) => el("span", { class: "folder-mark", "aria-hidden": "true" }, strokeIcon(open ? ICONS.folderOpen : ICONS.folder, 14));
@@ -677,24 +722,109 @@ const folderSays = (f, t) => `${f.name}: ${plural(t.open, "actor")} open${t.save
 // A folder's line: a button opening or folding it -- its caret, its name -- and at its right how many of the actors it
 // holds open (its folders' too) wait on the reader, stopped on an error, run, are idle (a click there too opens or
 // folds it). Hovered or in focus, its buttons over those counts: "+ actor" and "+ ⋯", started in it (startButtons), a
-// folder made in it, it renamed (F2), it deleted. Dragged: put in another folder, or onto its gatherer's row, at its
-// top; actors dropped on it are put in it, and it opens when one is held over it.
+// folder made in it, it renamed (F2), it deleted (its bin), it closed (its ×: closeFolder). A closed one (shownClosed),
+// greyed, says how many actors it holds, its buttons: rename, delete, reopen. Dragged: put in another folder, or onto its
+// gatherer's row, at its top; actors dropped on it are put in it (a closed one reopened), and it opens when one is held
+// over it.
 function folderLine(g, f) {
-  const open = isOpenFolder(g.name, f.id), t = folderTally(g, f.id), edit = state.folderEdit;
+  const open = isOpenFolder(g.name, f.id), t = folderTally(g, f.id), edit = state.folderEdit, closed = shownClosed(g, f);
   if (edit && edit.g === g.name && edit.id === f.id)
     return el("div", { class: "folder-line editing", "data-key": `${g.name}/folder:${f.id}` }, folderBox());
-  const toggle = () => toggleFolder(g.name, f.id);
-  const line = el("div", { class: "folder-line", "data-key": `${g.name}/folder:${f.id}`, "data-card": key(g.name, `folder:${f.id}`) },
+  const toggle = () => toggleFolder(g.name, f.id), held = t.open + t.saved + t.closed;
+  const acts = closed ? [
+    folderAct("rename", `Rename ${f.name} (F2)`, strokeIcon(ICONS.pencil, 13), () => startFolderEdit(g.name, f.id)),
+    folderAct("delete", `Delete ${f.name}: what is in it moves up a level`, strokeIcon(ICONS.bin, 14), () => deleteFolder(g.name, f.id)),
+    folderAct("reopen", `Reopen ${f.name}: back with the open folders, its actors still closed`, strokeIcon(ICONS.folderOpen, 14), () => reopenFolder(g.name, f.id)),
+  ] : [...startButtons(g, f),
+    folderAct("new", `New folder in ${f.name}`, strokeIcon(ICONS.folderNew, 14), () => startFolderEdit(g.name, null, f.id)),
+    folderAct("rename", `Rename ${f.name} (F2)`, strokeIcon(ICONS.pencil, 13), () => startFolderEdit(g.name, f.id)),
+    folderAct("delete", `Delete ${f.name}: what is in it moves up a level`, strokeIcon(ICONS.bin, 14), () => deleteFolder(g.name, f.id)),
+    folderAct("close", `Close ${f.name}: every actor in it closed, and it put in the closed line`, closeIcon(), () => pressClose(g, f, "list"))];
+  const line = el("div", { class: "folder-line" + (closed ? " closed" : ""), "data-key": `${g.name}/folder:${f.id}`, "data-card": key(g.name, `folder:${f.id}`) },
     el("button", { class: "fbtn", type: "button", "aria-expanded": open ? "true" : "false",
-      ...(HOVERS.matches ? {} : { title: folderSays(f, t) }), onclick: toggle,
+      ...(HOVERS.matches ? {} : { title: closed ? `${f.name}: closed, ${plural(held, "actor")} in it` : folderSays(f, t) }), onclick: toggle,
       onkeydown: (ev) => { if (ev.key === "F2" && !SNAPSHOT) { ev.preventDefault(); startFolderEdit(g.name, f.id); } } },
       el("span", { class: "caret", "aria-hidden": "true", text: "▶" }), el("span", { class: "fname", text: f.name })),
-    el("span", { class: "fill", onclick: toggle }, ...tallyChips(t, plural(t.open, "actor"), true),
-      SNAPSHOT ? null : el("span", { class: "f-acts", onclick: (ev) => ev.stopPropagation() }, ...startButtons(g, f),
-        folderAct("new", `New folder in ${f.name}`, strokeIcon(ICONS.folderNew, 14), () => startFolderEdit(g.name, null, f.id)),
-        folderAct("rename", `Rename ${f.name} (F2)`, strokeIcon(ICONS.pencil, 13), () => startFolderEdit(g.name, f.id)),
-        folderAct("delete", `Delete ${f.name}: what is in it moves up a level`, closeIcon(), () => deleteFolder(g.name, f.id)))));
+    el("span", { class: "fill", onclick: toggle },
+      ...(closed ? [held ? el("span", { class: "count closed", title: `${plural(held, "actor")} in it, closed` }, el("i", { "aria-hidden": "true" }), String(held)) : null]
+        : tallyChips(t, plural(t.open, "actor"), true)),
+      SNAPSHOT ? null : el("span", { class: "f-acts", onclick: (ev) => ev.stopPropagation() }, ...acts)));
   return dropOn(dragFolder(line, g, f), g, f.id, () => { if (!isOpenFolder(g.name, f.id)) toggle(); });
+}
+// CLOSING a folder (its ×, on its line or its card): at once, if all in it is closed already, none saved, no terminal in
+// it; else first the question under it (`folderClosing`: {g, id, from: "list" | "card"}) -- what closing it would close,
+// end, take off -- with "Close folder" and Cancel (Esc). Its buttons keep their focus through the list's redraws
+// (askRefocus).
+let folderClosing = null;
+function closeWhat(g, f) {
+  const inside = actorsWithin(g, f.id), t = folderTally(g, f.id);
+  return { open: t.open, busy: t.running + t.asking, marks: inside.filter((a) => savedAs(g.name, a)).length,
+    shells: shellsWithin(g, f.id).length };
+}
+function pressClose(g, f, from) {
+  const w = closeWhat(g, f);
+  if (!w.open && !w.marks && !w.shells) { closeFolder(g, f); return; }
+  folderClosing = { g: g.name, id: f.id, from, focus: "cancel" };
+  if (from === "card") cardDraw(); else renderAgents();
+  askRefocus(true);
+}
+function closeAsk(g, f) {
+  const w = closeWhat(g, f), up = parentOf(g.name, f), where = up === null ? titleOf(g) : folderById(g.name, up).name;
+  const parts = [w.open ? `closes ${plural(w.open, "actor")}${w.busy ? ` (${w.busy} mid-turn: cut off)` : ""}` : null,
+    w.shells ? `ends ${plural(w.shells, "terminal")}` : null, w.marks ? `removes ${plural(w.marks, "bookmark")}` : null].filter(Boolean);
+  const said = parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}` : parts[0] || "closes it";
+  const from = folderClosing.from;
+  const cancel = () => { folderClosing = null; if (from === "card") cardDraw(); else renderAgents(); };
+  const btn = (which, cls, text, fn) => el("button", { type: "button", class: `pb ${cls}`, "data-ask": which, onclick: (ev) => { ev.stopPropagation(); fn(); },
+    onfocus: () => { if (folderClosing) folderClosing.focus = which; } }, text);
+  return el("div", { class: "f-ask", role: "alertdialog", "aria-label": `Close ${f.name}?`, "data-key": `${g.name}/folder:${f.id}/ask`,
+    onclick: (ev) => ev.stopPropagation(),
+    onkeydown: (ev) => { if (ev.key === "Escape") { ev.preventDefault(); ev.stopPropagation(); cancel(); } },
+    // in a card, the focus gone from it (a click elsewhere): taken back, the card let go of once the pointer is off it
+    onfocusout: (ev) => {
+      if (from !== "card" || cardMoving || (ev.relatedTarget && hover.node && hover.node.contains(ev.relatedTarget))) return;
+      setTimeout(() => {
+        if (!folderClosing || folderClosing.from !== "card" || (hover.node && hover.node.contains(document.activeElement))) return;
+        folderClosing = null;
+        if (cardLive() && !hover.node.matches(":hover")) cardHide(); else cardDraw();
+      }, 0);
+    } },
+    el("p", {}, el("b", { text: `Close ${f.name}?` }), ` This ${said}. Everything in it becomes closed, and it moves into ${where}'s closed line.`),
+    el("div", { class: "f-ask-btns" },
+      btn("go", "go", "Close folder", () => { folderClosing = null; if (from === "card") cardHide(); closeFolder(g, f); }),
+      btn("cancel", "", "Cancel", cancel)));
+}
+// the question's button that had the focus, given it again once drawn anew (`now`: the question just asked -- Cancel)
+function askRefocus(now = false) {
+  if (!folderClosing) return;
+  const lost = !document.activeElement || document.activeElement === document.body;
+  if (!now && !lost) return;
+  const b = document.querySelector(`.f-ask [data-ask="${folderClosing.focus}"]`);
+  if (b) b.focus({ preventScroll: true });
+}
+// Closed (folders.py's `close`, by the server): every actor in it closed, its bookmark off, every terminal in it ended,
+// then it and the folders in it marked closed -- shown so at once, the server's answer (and the next home) having the
+// last word. Those it could not close said (`left`).
+async function closeFolder(g, f) {
+  folderClosing = null;
+  const tree = treeOf(g.name), ids = new Set(tree.folders.filter((x) => within(g.name, x.id, f.id)).map((x) => x.id));
+  const kept = { ...((state.home.saved || {})[g.name] || {}) };
+  for (const a of actorsWithin(g, f.id)) { const k = savedAs(g.name, a); if (k) delete kept[k]; }
+  for (const [c, at] of Object.entries(tree.filed)) if (ids.has(at)) delete kept[c];
+  state.home.saved = { ...(state.home.saved || {}), [g.name]: kept };
+  state.home.shells = (state.home.shells || []).filter((s) => !(s.gatherer === g.name && ids.has(s.folder)));
+  const asked = homesTaken, at = new Date().toISOString();
+  const got = await folderPost(g.name, { do: "close", id: f.id }, (t) => { for (const x of t.folders) if (ids.has(x.id)) x.closed = at; });
+  if (!got) return;
+  if (got.saved && !homeSince(asked)) { state.home.saved = got.saved; redrawList(); }
+  const left = got.left || [];
+  if (left.length) setLive(`${f.name} closed, but ${plural(left.length, "actor")} in it ${left.length === 1 ? "stays" : "stay"} open: ${left[0].why}`);
+}
+// Reopened: it and the folders in it with the open ones again, its actors as they are
+function reopenFolder(gname, id) {
+  const ids = new Set(treeOf(gname).folders.filter((x) => within(gname, x.id, id)).map((x) => x.id));
+  showFolder(gname, id, true);
+  return folderPost(gname, { do: "reopen", id }, (t) => { for (const x of t.folders) if (ids.has(x.id)) x.closed = null; });
 }
 // Naming a folder, new (`state.folderEdit.id` null, made in its `parent`) or not: a box in its line, kept through the
 // list's redraws as the actor's is (`folderInput`, `nameMoving`); Enter or leaving it keeps what is typed, Esc or nothing

@@ -11,6 +11,7 @@ Table `folders`, one row per folder, kept until it is deleted, empty or not:
     name        unique among the folders beside it, whatever its case; never holding "/", which joins a folder's
                 name to those it is in into its PATH (`Harnesses/Codex`), as `ag actors` names a folder
     at          when it was made (ISO, UTC)
+    closed      when it was CLOSED (ISO, UTC; NULL: open) -- by `close`, with every folder in it, at once
 
 Table `filed`, one row per actor in a folder (none: at its gatherer's top level):
 
@@ -24,16 +25,24 @@ Saving an actor (saved.py's bookmark) is apart from this: saved or not, an actor
 closed, is listed in its folder's "saved" line, not with the closed ones. A folder deleted, what was in it -- actors
 and folders -- moves up into the one it was in.
 
+A folder CLOSED (`close`): every actor in it, at any depth, closed as the list's x closes one (sessions.py's `stop`; one
+that never started, discarded), its bookmark taken off (saved.py), every terminal opened in it ended -- then it, and every
+folder in it, marked closed. The list shows a closed folder in its parent's "closed" line, with its actors, for as long as
+nothing in it is open again (an actor in it used since, a terminal opened in it). Reopened (`reopen`), it and the folders
+in it are open again, its actors as they are. Putting an actor or a folder in a closed folder, or making one there,
+reopens it, and the closed folders it is in.
+
 THE FOLDERS OF SAVED ACTORS that saved.py kept before this module (table `saved_folders`, column `saved.folder`) are
 copied here once, when this module first makes its tables: each one a folder at its gatherer's top level, each saved
 actor in one filed in it (and still saved). saved.py's are left as they were, no longer read."""
 
 import os
 import sqlite3
+import time
 from datetime import datetime, timezone
 from typing import Dict, Iterable, List, Optional
 
-from . import sessions
+from . import saved, sessions
 
 FOLDER_CHARS = 60               # the longest name a folder takes
 TOP = ("", "/", "top")          # what names the gatherer's top level, where a folder is asked for by path
@@ -44,7 +53,8 @@ SCHEMA = (
     gatherer TEXT NOT NULL,
     parent   INTEGER,
     name     TEXT NOT NULL,
-    at       TEXT NOT NULL
+    at       TEXT NOT NULL,
+    closed   TEXT
 )""",
     "CREATE UNIQUE INDEX IF NOT EXISTS folders_named ON folders (gatherer, ifnull(parent, 0), name COLLATE NOCASE)",
     """CREATE TABLE IF NOT EXISTS filed (
@@ -72,7 +82,8 @@ def folder_name(text) -> str:
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    """Now (ISO, UTC), by time.time(): the clock an actor's activity is told by, which a folder's `closed` is compared with."""
+    return datetime.fromtimestamp(time.time(), timezone.utc).isoformat()
 
 
 def _has(conn: sqlite3.Connection, table: str) -> bool:
@@ -97,11 +108,27 @@ def _from_saved(conn: sqlite3.Connection) -> None:
                 conn.execute("INSERT OR IGNORE INTO filed (gatherer, channel, folder, at) VALUES (?, ?, ?, ?)", (g, c, fid, at))
 
 
+def _with_closed(conn: sqlite3.Connection) -> None:
+    """Table `folders` as made before `closed`: given it (every folder open)."""
+    if "closed" in [r[1] for r in conn.execute("PRAGMA table_info(folders)")]:
+        return
+    try:
+        conn.execute("ALTER TABLE folders ADD COLUMN closed TEXT")
+    except sqlite3.OperationalError:                    # another gave it meanwhile
+        if "closed" not in [r[1] for r in conn.execute("PRAGMA table_info(folders)")]:
+            raise
+
+
 def _write() -> sqlite3.Connection:
     """The dashboard's database, for a change: this module's tables made the first time, saved.py's folders copied in."""
     os.makedirs(os.path.dirname(sessions.db_path()), exist_ok=True)
     conn = sqlite3.connect(sessions.db_path(), timeout=8, isolation_level=None)
     if _has(conn, "folders"):
+        try:
+            _with_closed(conn)
+        except BaseException:
+            conn.close()
+            raise
         return conn
     try:
         conn.execute("BEGIN IMMEDIATE")
@@ -124,8 +151,8 @@ def ensure() -> None:
 
 
 def stored() -> Dict[str, dict]:
-    """{gatherer: {folders: [{id, parent, name}] (by name, whatever its case), filed: {channel: folder id}}}, of every
-    gatherer with a folder: {} when there is none yet."""
+    """{gatherer: {folders: [{id, parent, name, closed}] (by name, whatever its case), filed: {channel: folder id}}}, of
+    every gatherer with a folder: {} when there is none yet."""
     if not os.path.exists(sessions.db_path()):
         return {}
     conn = sqlite3.connect(f"file:{sessions.db_path()}?mode=ro", uri=True, timeout=8)
@@ -135,8 +162,10 @@ def stored() -> Dict[str, dict]:
             ensure()                                    # made, and saved.py's copied, at the first read
             conn = sqlite3.connect(f"file:{sessions.db_path()}?mode=ro", uri=True, timeout=8)
         found: Dict[str, dict] = {}
-        for fid, g, parent, name in conn.execute("SELECT id, gatherer, parent, name FROM folders ORDER BY gatherer, lower(name), name"):
-            found.setdefault(g, {"folders": [], "filed": {}})["folders"].append({"id": fid, "parent": parent, "name": name})
+        closed = "closed" if "closed" in [r[1] for r in conn.execute("PRAGMA table_info(folders)")] else "NULL"   # before `closed`
+        for fid, g, parent, name, shut in conn.execute(f"SELECT id, gatherer, parent, name, {closed} FROM folders "
+                                                       "ORDER BY gatherer, lower(name), name"):
+            found.setdefault(g, {"folders": [], "filed": {}})["folders"].append({"id": fid, "parent": parent, "name": name, "closed": shut})
         for g, c, fid in conn.execute("SELECT gatherer, channel, folder FROM filed ORDER BY at"):
             found.setdefault(g, {"folders": [], "filed": {}})["filed"][c] = fid
         return found
@@ -190,6 +219,28 @@ def _beside(conn: sqlite3.Connection, gatherer: str, parent: Optional[int], name
     return row[0] if row else None
 
 
+def _opened(conn: sqlite3.Connection, fid: Optional[int]) -> None:
+    """The folder `fid`, something put in it, open -- and the folders it is in (module doc); None: the top."""
+    seen = set()
+    while fid is not None and fid not in seen:
+        seen.add(fid)
+        conn.execute("UPDATE folders SET closed = NULL WHERE id = ? AND closed IS NOT NULL", (fid,))
+        row = conn.execute("SELECT parent FROM folders WHERE id = ?", (fid,)).fetchone()
+        fid = row[0] if row else None
+
+
+def _inside(conn: sqlite3.Connection, fid: int) -> List[int]:
+    """The folder `fid` and every folder in it, at any depth: their ids."""
+    out, todo = [], [int(fid)]
+    while todo:
+        f = todo.pop()
+        if f in out:
+            continue
+        out.append(f)
+        todo.extend(r[0] for r in conn.execute("SELECT id FROM folders WHERE parent = ?", (f,)))
+    return out
+
+
 def make(gatherer: str, name: str, parent: Optional[int] = None) -> int:
     """A new folder, empty, in `parent` (None: the gatherer's top) -> its id. FolderError for no such parent, or one
     beside it already named so."""
@@ -198,6 +249,7 @@ def make(gatherer: str, name: str, parent: Optional[int] = None) -> int:
     def do(conn):
         if parent is not None:
             _folder(conn, gatherer, parent)
+            _opened(conn, int(parent))
         other = _beside(conn, gatherer, parent, name)
         if other is not None:
             raise FolderError(f'there is a folder "{other}" there already')
@@ -234,6 +286,7 @@ def move(gatherer: str, fid: int, parent: Optional[int]) -> None:
         if other is not None:
             raise FolderError(f'there is a folder "{other}" there already')
         conn.execute("UPDATE folders SET parent = ? WHERE id = ?", (parent, int(fid)))
+        _opened(conn, None if parent is None else int(parent))
     _change(gatherer, do)
 
 
@@ -272,7 +325,83 @@ def file(gatherer: str, channels: Iterable[str], folder: Optional[int]) -> None:
         conn.executemany("INSERT INTO filed (gatherer, channel, folder, at) VALUES (?, ?, ?, ?) "
                          "ON CONFLICT (gatherer, channel) DO UPDATE SET folder = excluded.folder, at = excluded.at",
                          [(gatherer, c, fid, at) for c in channels])
+        _opened(conn, fid)
     _change(gatherer, do)
+
+
+def mark(gatherer: str, fid: int, closed: bool) -> List[int]:
+    """The folder and every folder in it marked closed now (`closed`) or open -> their ids. FolderError for no such
+    folder. Its actors are `close`'s."""
+    def do(conn):
+        _folder(conn, gatherer, fid)
+        ids, at = _inside(conn, fid), _now() if closed else None
+        conn.executemany("UPDATE folders SET closed = ? WHERE id = ?", [(at, i) for i in ids])
+        return ids
+    return _change(gatherer, do)
+
+
+def reopen(gatherer: str, fid: int) -> None:
+    """The folder open again, and the folders in it (module doc): its actors as they are."""
+    mark(gatherer, fid, False)
+
+
+def _within(tree: dict, ids: set, a: dict) -> Optional[str]:
+    """The channel the actor `a` (data.home()'s) is filed as, if in one of the folders `ids` (its own, or the id the
+    dashboard started it under, as the page finds it); None: in none of them."""
+    filed, s = tree.get("filed") or {}, a.get("session") or {}
+    at = a["channel"] if a["channel"] in filed else s.get("started_as") if s.get("started_as") in filed else None
+    return at if at is not None and filed[at] in ids else None
+
+
+def close(gatherer: str, fid: int, started: "sessions.Sessions", home: dict) -> List[dict]:
+    """The folder CLOSED (module doc): every actor in it, at any depth -- as `home` (data.home()'s, read now) has them --
+    closed, its bookmark taken off, every terminal opened in it ended; then it, and every folder in it, marked closed.
+    -> the actors in it left open, each {channel, why}: one no process of the dashboard's runs for (a terminal outside
+    it has it, say), or one whose end failed. FolderError for no such folder."""
+    from . import data                                  # here: data.py imports this module
+    tree = of(gatherer)
+    try:
+        want = int(fid)
+    except (TypeError, ValueError):
+        raise FolderError(f"which folder? {fid!r} is none") from None
+    if not any(f["id"] == want for f in tree["folders"]):
+        raise FolderError(f"no folder {fid} in {gatherer}")
+    ids = {want}
+    while True:                                        # every folder in it, at any depth
+        more = {f["id"] for f in tree["folders"] if f["parent"] in ids} - ids
+        if not more:
+            break
+        ids |= more
+    g = next((x for x in home.get("gatherers") or [] if x.get("name") == gatherer), {"agents": []})
+    kept, left = saved.stored().get(gatherer) or {}, []
+    for a in g.get("agents") or []:
+        if a.get("role") == "coordinator" or _within(tree, ids, a) is None:
+            continue
+        s = a.get("session") or {}
+        for key in {a["channel"], s.get("started_as")} & set(kept):
+            saved.choose(gatherer, key, False)          # its bookmark off: closed, it goes with the closed ones
+        if a.get("status") == data.CLOSED:
+            continue
+        sid = s.get("session_id")
+        try:
+            if sid and (s.get("terminal") or s.get("pid") or s.get("kept")):
+                started.stop(sid)
+            elif sid and not a.get("events") and not a.get("reads"):
+                started.discard(sid)                    # never started: nothing of it kept, as the list's x does
+            else:
+                left.append({"channel": a["channel"], "why": "no process of the dashboard's runs for it"})
+        except sessions.SessionError as err:
+            left.append({"channel": a["channel"], "why": str(err)})
+    for key in [c for c, f in (tree.get("filed") or {}).items() if f in ids and c in kept]:
+        saved.choose(gatherer, key, False)              # saved, not in the home now: off too
+    for sh in started.shells():
+        if sh.get("gatherer") == gatherer and sh.get("folder") in ids:
+            try:
+                started.close_shell(sh["id"])
+            except sessions.SessionError:
+                pass                                    # ended meanwhile
+    mark(gatherer, want, True)
+    return left
 
 
 # ---- folders by path, as `ag actors` names them
