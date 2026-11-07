@@ -211,9 +211,11 @@ header .brand .list-btns { display: none; margin-left: -6px; }
    edge, so 1px off it in every tile, however deep its folder (a tile in a folder in a folder is 6px narrower). The
    bookmark on top, where every actor has it, the × under it (only one the dashboard can close has one), as the list
    has them left to right: shown while it is hovered, in focus or the one shown -- a saved one's too, filled (its card
-   says it is saved). Where there is no hovering, the one shown's, and the bookmarks filled. */
+   says it is saved). Where there is no hovering, the one shown's, and the bookmarks filled. No fade in: the rail is
+   drawn anew on each change of the home, and a new tile under a resting pointer -- the rail scrolled, set back where it
+   was -- is laid out once before it counts as hovered, so a fade would run again from nothing on each redraw (a flash). */
 .rail .r-actor :is(.save-btn, .close-btn) { position: absolute; left: calc(50% - 28px); display: flex; align-items: center; justify-content: center;
-  width: 12px; height: 12px; border-radius: 50%; color: var(--muted); cursor: pointer; opacity: 0; transition: opacity .12s; }
+  width: 12px; height: 12px; border-radius: 50%; color: var(--muted); cursor: pointer; opacity: 0; }
 .rail .r-actor .save-btn { top: 5px; }
 .rail .r-actor .close-btn { top: 20px; }
 .rail .r-actor :is(.save-btn, .close-btn) svg { width: 10px; height: 10px; display: block; pointer-events: none; }
