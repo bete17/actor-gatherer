@@ -82,6 +82,7 @@ import re
 import sqlite3
 import threading
 import time
+import zlib
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -503,6 +504,13 @@ def _with_started(gatherers: List[dict], started: List[dict], now: Optional[floa
             result = answer_result(s["gatherer"], a["channel"], given["call"])
             a["answer"] = {**given, "result": _clip(result, ASK_CHARS) if result else None,
                            "recorded": answers.recorded(result, given.get("expect") or [])}
+            ask = a.get("asking") or {}
+            if ask.get("kind") == answers.PERMISSION and given.get("closed") and given.get("call") == ask.get("id"):
+                a["asking"], a["status"] = None, RUNNING     # answered here, its dialog seen closed (`_closed`), before
+                #                                              that is recorded
+        shown = shown_ask(s.get("shown"), s.get("harness"))
+        if shown and a["status"] == RUNNING and not a.get("asking"):
+            a["asking"], a["status"] = shown, ASKING  # a dialog in its terminal no hook reported
         if a.get("holder") and paths.runs_under(a["holder"]["pid"], s.get("pid")):
             a["holder"]["dashboard"] = True          # the dashboard's own agent or terminal (or a process under it)
         a["created"] = min((x for x in (a["created"], _seconds(s["created_at"])) if x), default=None)
@@ -759,14 +767,21 @@ def replies(conn, channel: str, tables: Optional[set] = None) -> List[dict]:
 
 
 def ask_view(f: Optional[dict], harness: Optional[str] = None) -> Optional[dict]:
-    """What an `asked` fact asks, for the page: {kind, harness (whose dialog answers it: answers.py), async (the turn
-    goes on while it asks), at, call, questions (clipped, each {id, header, question, multiSelect, options: [{label,
-    description}]}: a question's title for its words, an option given as its label alone, as some harnesses record
-    them) or plan}; None for None."""
+    """What an `asked` fact asks, for the page: {id (what an answer names: its call, or a permission's own key), kind,
+    harness (whose dialog answers it: answers.py), async (the turn goes on while it asks), at, call, questions (clipped,
+    each {id, header, question, multiSelect, options: [{label, description}]}: a question's title for its words, an
+    option given as its label alone, as some harnesses record them) or plan} -- a permission's {id, kind "permission",
+    tool, call (its tool call's id; None: not known), said (what the call is for, in a line), input (what it would run
+    with), view (how its harness shows the call: harness_kit's ToolCall.view), agent (the subagent asking; None: the
+    session)}; None for None."""
     if not f:
         return None
-    out = {"kind": f.get("kind") or "question", "harness": harness, "async": bool(f.get("async")), "at": f.get("at"),
-           "call": f.get("call")}
+    out = {"id": f.get("call"), "kind": f.get("kind") or "question", "harness": harness, "async": bool(f.get("async")),
+           "at": f.get("at"), "call": f.get("call")}
+    if out["kind"] == "permission":
+        return {**out, "call": f.get("tool_call"), "tool": str(f.get("tool") or ""), "said": _clip(f.get("said"), ASK_CHARS) or "",
+                "input": f.get("input") if isinstance(f.get("input"), dict) else {},
+                "view": f.get("view") if isinstance(f.get("view"), dict) else {}, "agent": f.get("agent")}
     if out["kind"] == "plan":
         out["plan"] = _clip(f.get("plan"), PLAN_CHARS)
         return out
@@ -796,6 +811,25 @@ def _asking(rec: "Record", status: str, harness: Optional[str]) -> Optional[dict
         return ask_view({"kind": "question", **got, "async": True}, harness) if got else None
     got = rec.offer() if status == IDLE else None
     return ask_view({"kind": "plan", "call": got["call"], "at": got["at"], "plan": got["text"]}, harness) if got else None
+
+
+#: How long a permission dialog the dashboard's terminal shows (sessions.py's `shown`) goes unrecorded before it counts:
+#: its hook, where it calls one, records it sooner.
+SHOWN_SECONDS = sessions.SHOWN_SECONDS
+
+
+def shown_ask(shown: Optional[dict], harness: Optional[str], now: Optional[float] = None) -> Optional[dict]:
+    """A permission dialog the dashboard's terminal shows, no hook reported (some the harness asks of a person alone:
+    Claude Code's auto mode, when its check gave no verdict), shown SHOWN_SECONDS: what it asks, as its screen has it --
+    {id, kind "dialog", harness, at, title, said (its question), lines (what it shows), options}. Answered in the
+    terminal, not from the page. None for none."""
+    now = time.time() if now is None else now
+    if not shown or now - (shown.get("since") or now) < SHOWN_SECONDS:
+        return None
+    key = zlib.crc32(json.dumps([shown.get("title"), shown.get("question"), shown.get("lines")]).encode())
+    return {"id": f"dialog:{key:08x}", "kind": "dialog", "harness": harness, "async": False, "at": shown.get("since"),
+            "call": None, "title": shown.get("title") or "", "said": shown.get("question") or "",
+            "lines": list(shown.get("lines") or [])[:40], "options": list(shown.get("options") or [])}
 
 
 def asking_of(gatherer: str, channel: str, cwd: Optional[str] = None) -> Optional[dict]:

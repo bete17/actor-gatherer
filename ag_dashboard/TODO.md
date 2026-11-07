@@ -8,13 +8,44 @@ record of the session has the call's result (`settled`). Where the dashboard run
 note under the chat answers it: the keys are worked out from the tool call (answers.py) and typed into the dialog
 one at a time (sessions.py's `answer`).
 
+Claude Code's permission prompts ("Do you want to proceed?") are detected too: ag's launcher adds Claude Code's
+`PermissionRequest` hook for the run (`--settings`, beside the user's own hooks), which POSTs each prompt to the hook
+server as it is drawn. The hook server records it as `asked` (kind "permission", with the tool's input and its view),
+and settles it once that thread calls its model again or asks again, which also covers a deny with a reason.
+A plain "No" or Esc interrupts the turn, which Claude Code's record says. Chat's card types the dialog's keys:
+"1" allows; Up wraps to "No"; Tab then takes a reason.
+
+Prompts no hook reports are read off the screen of a terminal the dashboard runs (harness_kit's `permission_shown`,
+sessions.py's `_watch_shown`): shown for a second with none recorded, the actor is "Waiting for you" and Chat shows
+the dialog as the screen has it, read-only, to answer in the terminal. That covers Claude Code's asks for a person
+alone (auto mode's "couldn't check this action", its Chrome block, some connector file sends: they skip the hook) and
+Codex's approvals, of which nothing is recorded. Allow and Deny type keys worked out from that same screen, the cursor
+checked to be on No before Enter.
+
+- [ ] **Codex's approvals answered from Chat**, and seen in a terminal outside the dashboard. Today Codex gets only
+  the read-only card, from the screen of a terminal the dashboard runs (`approval_shown`), and only where it asks at
+  all: manual mode. In auto mode (`--approve-for-me`) its reviewer decides. Nothing of an approval is in its rollout,
+  and ag sees no model call for one. The way in is Codex 0.164's own `PermissionRequest` hook (it also has
+  `PreToolUse`, `PostToolUse`, `Stop`, `Interrupt`), with two catches:
+  - it runs a command only (no HTTP type): a small `ag` command reading the hook's JSON on stdin and POSTing it to
+    the run's hook server (HOOK_PATH), the way Claude Code's HTTP hook does;
+  - a hook must be trusted before Codex runs it (`hooks.state.<key>.trusted_hash` in its config). ag would pre-trust
+    its own, inline with `-c`, as it pre-trusts the folder, once the hash is known (from Codex's source).
+    `--dangerously-bypass-hook-trust` would also trust a repo's own hooks, so not that.
+  With the hook in place, Allow and Deny would type the dialog's keys as for Claude Code ("y"; Esc for No). Its
+  app-server's approval requests are the other route, for a Codex run without a terminal.
+  Before building, check how omnigent does it: it answers Claude Code's questions and plan approvals through the
+  `PermissionRequest` hook's own decision rather than keys, and may do the same with Codex's hook.
+- [ ] **Antigravity's approvals**: in its default mode agy ran a delete and a write outside its folder unasked, so
+  none was seen. Its steps have a WAITING status and it has a hooks.json with PreToolUse, if it does ask.
+- [ ] **A permission allowed in the terminal itself**, for a tool that then runs long: it shows as waiting until the
+  tool ends and the next model call settles it. Answered from Chat, the dialog closing on the dashboard's own screen
+  settles it at once (sessions.py's `_closed`); keys typed into the terminal don't.
+- [ ] **A hook server restarted while a permission is asked** forgets it is open: it shows until the turn ends or a
+  new message opens one (`moved_on`).
+
 Not detected yet: the actor shows as Running while Claude Code waits.
 
-- [ ] **Permission prompts** ("Do you want to proceed?"). They never appear in what ag records. Claude Code's
-  `Notification` hook fires with `permission_prompt` when the dialog opens. ag's launcher could add that hook
-  for the run with `--settings`: it runs alongside the user's own hooks without replacing them, and it can POST
-  to the hook server ag already runs. The wait ends at the next model call, when a hook says the tool ran,
-  failed or was denied, or when keys are typed into the dashboard's terminal.
 - [ ] **Other dialogs**, such as an MCP server asking for input (elicitation). The same hook may cover some.
 - [ ] **Codex's approval prompts** ("Would you like to run the following command?"). Codex writes nothing of them to
   its rollout file, and ag records only the model's call asking for `require_escalated`. The dashboard runs codex

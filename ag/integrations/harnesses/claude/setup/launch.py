@@ -38,6 +38,11 @@ terminal, the dashboard's chat -- runs it at once: `--session-id <id>`, `--resum
 `--continue`, which ag turns into `--resume` with the newest session of the directory, as Claude
 Code would pick it (`session_args`). `--resume` with no id (Claude Code's picker) is refused: ag
 could not tell which session it opens. `--fork-session` opens a new one, claimed on its first call.
+
+Claude Code's PermissionRequest hook is added for the run (`--settings`, beside the user's own hooks;
+the `permission_hook` setting, on by default): each permission it asks in its terminal is POSTed to
+the hook server as it is asked, which records it for the dashboard (proxy_hook.py's `reported`). A
+`--settings` given already, as JSON or a file, gets the hook in it (`with_settings`).
 """
 
 import http.server
@@ -50,6 +55,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import urlsplit
 
 from ag.cli.launch import Launch, Launcher, LaunchError, Run
+from harness_kit.base import HOOK_PATH
+from harness_kit.claude import permission_hook_settings
 from .hook_servers import HookServers, config_part
 
 SETUP = "ag.integrations.harnesses.claude.setup.setup"     # Claude Code's setup: the hook server with its hook
@@ -166,6 +173,47 @@ def session_args(args: List[str], env: Dict[str, str], cwd: str) -> Tuple[List[s
             out.append(a)
         i += 1
     return out, None if forks else session
+
+
+def _settings_of(value: str) -> Optional[Dict[str, Any]]:
+    """A `--settings` value as Claude Code reads it -- JSON, or the path of a JSON file -- None if it can't be read."""
+    text = value.strip()
+    if not text.startswith("{"):
+        try:
+            with open(os.path.expanduser(text), encoding="utf-8") as fh:
+                text = fh.read()
+        except OSError:
+            return None
+    try:
+        got = json.loads(text)
+    except ValueError:
+        return None
+    return got if isinstance(got, dict) else None
+
+
+def with_settings(args: List[str], extra: Dict[str, Any]) -> Tuple[List[str], Optional[str]]:
+    """(`args` with `extra`'s hooks added -- to each `--settings` given before `--`, its value made JSON; else a
+    `--settings` of their own, before `--`; a note when they could not be: a `--settings` that can't be read, kept as
+    it is). Each hook event's list is added to, never replaced."""
+    end = args.index("--") if "--" in args else len(args)
+    places = [i for i in range(end) if args[i] == "--settings" and i + 1 < end or args[i].startswith("--settings=")]
+    if not places:
+        return [*args[:end], "--settings", json.dumps(extra), *args[end:]], None
+    out = list(args)
+    for i in places:
+        given = out[i + 1] if out[i] == "--settings" else out[i].split("=", 1)[1]
+        got = _settings_of(given)
+        if got is None:
+            return args, f"ag's hooks not added: --settings {given!r} can't be read"
+        hooks = dict(got.get("hooks") or {}) if isinstance(got.get("hooks"), dict) else {}
+        for event, entries in (extra.get("hooks") or {}).items():
+            hooks[event] = [*(hooks.get(event) if isinstance(hooks.get(event), list) else []), *entries]
+        merged = json.dumps({**got, "hooks": hooks})
+        if out[i] == "--settings":
+            out[i + 1] = merged
+        else:
+            out[i] = f"--settings={merged}"
+    return out, None
 
 
 def claude_settings(env: Dict[str, str]) -> Dict[str, Any]:
@@ -301,7 +349,8 @@ def harness_limit(args: List[str], env: Dict[str, str], settings: Dict[str, Any]
 
 
 class ClaudeLauncher(Launcher):
-    defaults = {"command": ["claude"], "upstream": "", "port": 4113, "log_dir": "", "trace_root": "", "system_messages": "", "env": {}}
+    defaults = {"command": ["claude"], "upstream": "", "port": 4113, "log_dir": "", "trace_root": "", "system_messages": "", "env": {},
+                "permission_hook": True}
 
     def __init__(self, settings: Dict[str, Any], home: str):
         super().__init__(settings, home)
@@ -337,8 +386,13 @@ class ClaudeLauncher(Launcher):
         limit, how = harness_limit(args, run.env, claude_settings(run.env),
                                    lambda: probe(command, args, run.env))
         config = run.env.get("CLAUDE_CONFIG_DIR") or os.environ.get("CLAUDE_CONFIG_DIR")
-        url = base_url(server_url, run.gatherer, path, limit, os.path.abspath(os.path.expanduser(config)) if config else None)
+        folder = os.path.abspath(os.path.expanduser(config)) if config else None
+        url = base_url(server_url, run.gatherer, path, limit, folder)
         notes.append(f"ANTHROPIC_BASE_URL={url} -> {origin}{path}")
+        if self.settings.get("permission_hook", True) not in (False, "off", "false", 0):
+            hook = base_url(server_url, run.gatherer, HOOK_PATH, None, folder)
+            args, refused = with_settings(args, permission_hook_settings(hook))
+            notes.append(refused or f"its permission prompts reported to {hook} (the permission_hook setting)")
         notes.append(f"Claude Code's own limit: {limit} tokens, {how}; the context manager keeps under it")
         if options.get("system_messages"):
             notes.append(f"system messages: {options['system_messages']} (the system_messages setting)")

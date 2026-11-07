@@ -762,7 +762,9 @@ class Codex(Harness):
             p.detail["thinking"] = "\n\n".join(s.get("text", "") for s in item.get("summary") or [] if isinstance(s, dict))
         return p
 
-
+    def permission_shown(self, screen) -> Optional[dict]:
+        """Its approval dialog, as its screen shows it (approval_shown): it has the keys, its cursor hidden."""
+        return None if screen.cursor_shown else approval_shown(screen.lines())
 
 # ---------------------------------------------------------------- its own record of a thread: its rollout file
 
@@ -801,6 +803,56 @@ TAIL = 1 << 20                  # how much of a subagent's rollout's end is read
 #: What a line must hold to be one `take` reads: anything else (most of it) is not parsed at all.
 WANTED = (b'"task_started"', b'"task_complete"', b'"turn_aborted"', b'"SubAgentActivity"', b'"type":"Plan"',
           b'"name":"request_user_input', REPLY.encode(), b'"CommandExecution"', b'session_id', b'session ID')
+
+
+# ---------------------------------------------------------------- the approvals it asks in its terminal
+
+#: Its approval dialog (0.164): "Would you like to run the following command?" (or its like), what it says of the call
+#: -- "Environment: local", "Reason: ...", "$ <the command>" -- its options, the cursor's "›" before one, "Yes" first,
+#: "No, and tell Codex what to do differently (esc)" last, then "Press enter to confirm or esc to cancel". Nothing of
+#: it is in its rollout, and ag sees no call for it: its screen is all that says it asks.
+APPROVAL_FOOT = "Press enter to confirm or esc to cancel"
+APPROVAL_OPTION = re.compile(r"^\s*(›\s*)?(\d+)\.\s+(.*?)\s*$")
+APPROVAL_ASKS = re.compile(r"^\s*(Would you like|Do you want)\b")      # its question's row: the dialog's first
+APPROVAL_ROWS = 40                   # how far above its options its question is looked for
+
+
+def approval_shown(lines: List[str]) -> Optional[dict]:
+    """Its approval dialog as a screen's rows show it (the last one in them), in the shape harness_kit's
+    `permission_shown` gives: {title (its question), question, lines (what it says of the call), options, cursor,
+    deny}; None where the rows show none. Blank rows part each piece of it."""
+    for end in range(len(lines) - 1, -1, -1):
+        if not lines[end].strip().startswith(APPROVAL_FOOT):
+            continue
+        r = end - 1
+        while r >= 0 and not lines[r].strip():
+            r -= 1
+        while r >= 0 and lines[r].strip():           # up to the row of its first option
+            m = APPROVAL_OPTION.match(lines[r])
+            if m is not None and m.group(2) == "1":
+                break
+            r -= 1
+        if r < 0 or not lines[r].strip():
+            continue
+        options: List[str] = []
+        cursor = 0
+        for row in lines[r:end]:
+            m = APPROVAL_OPTION.match(row)
+            if m is not None and int(m.group(2)) == len(options) + 1:
+                options.append(m.group(3))
+                cursor = len(options) - 1 if m.group(1) else cursor
+            elif row.strip() and options:
+                options[-1] = f"{options[-1]} {row.strip()}"
+        deny = next((i for i, o in enumerate(options) if o.startswith(("No,", "No ")) or o == "No"), None)
+        if len(options) < 2 or not options[0].startswith("Yes") or deny is None:
+            continue
+        top = next((q for q in range(r - 1, max(-1, r - APPROVAL_ROWS), -1) if APPROVAL_ASKS.match(lines[q])), None)
+        if top is None:
+            continue
+        said = [x.strip() for x in lines[top + 1:r] if x.strip()]
+        return {"title": lines[top].strip(), "question": lines[top].strip(), "lines": said, "options": options,
+                "cursor": cursor, "deny": deny}
+    return None
 
 
 def _json_str(text: str) -> str:

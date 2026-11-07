@@ -197,7 +197,8 @@ function backgroundNote(info, term = false) {
 // it answered as if it had been picked there; elsewhere it is answered in the terminal that runs the session.
 // `answerable` false (a view to read by): shown, and answered in Chat or the terminal. Null while it waits on nothing.
 // Codex's questions asked as it goes on working (`async`) show while it runs; its plan, once its turn proposed one
-// and its terminal (the dashboard's) asks whether to implement it.
+// and its terminal (the dashboard's) asks whether to implement it. A permission it asks before a tool runs (`kind`
+// "permission", as its hook reported it): the call as its harness shows it, allowed or denied ({allow, text}).
 function askingNote(info, answerable = true) {
   const ask = info && (info.status === "asking" || (info.status === "running" && info.asking && info.asking.async)) ? info.asking : null;
   if (!ask) return null;
@@ -212,9 +213,12 @@ function askingNote(info, answerable = true) {
   const reopened = !!(s.terminal && s.since && ask.at && s.since > ask.at
     && (harnessInfo(ask.harness || info.harness) || {}).asks_shown_again === false);
   const here = answerable && !SNAPSHOT && !!s.terminal && !touched && !reopened;
-  const sent = info.answer && info.answer.call === ask.call ? info.answer : null;
+  const key = askKey(ask), perm = ask.kind === "permission", dialog = ask.kind === "dialog";
+  const sent = info.answer && info.answer.call === key ? info.answer : null;
   const who = info.harness ? harnessName(info.harness) : "The agent";
-  const what = ask.kind === "plan" ? `${who} has a plan for you to ${says.plan_verb}`
+  const what = dialog ? `${who} is asking you in its terminal`
+    : perm ? `${who} asks to ${permissionVerb(ask)}${ask.agent ? " (a subagent of it)" : ""}`
+    : ask.kind === "plan" ? `${who} has a plan for you to ${says.plan_verb}`
     : `${who} asked you ${qs.length > 1 ? plural(qs.length, "question") : "a question"}${ask.async ? " as it works" : ""}`;
   const d = draftOf(ask);
   const late = sent && Date.now() / 1000 - sent.at > ANSWER_LATE;
@@ -225,12 +229,12 @@ function askingNote(info, answerable = true) {
   const redraw = () => keepingPlace(renderMain);
   const send = async (choice) => {
     d.sending = true; d.error = ""; redraw();
-    try { await post("/api/answer", { session_id: s.session_id, call: ask.call, choice }); await refresh(); }
+    try { await post("/api/answer", { session_id: s.session_id, id: key, call: ask.call, choice }); await refresh(); }
     catch (err) { d.error = `Not answered: ${err.message}`; }
     finally { d.sending = false; redraw(); }
   };
   const busy = d.sending || !!sent;
-  const own = (i, placeholder, onEnter) => el("input", { class: "own", type: "text", placeholder, "data-sig": `${ask.call}:${i}:${d.cleared[i] || 0}`,
+  const own = (i, placeholder, onEnter) => el("input", { class: "own", type: "text", placeholder, "data-sig": `${key}:${i}:${d.cleared[i] || 0}`,
     value: i === "plan" ? d.change : d.answers[i].text, disabled: busy ? "" : null, "aria-label": placeholder,
     oninput: (ev) => { if (i === "plan") d.change = ev.target.value;
       else { d.answers[i].text = ev.target.value; if (ev.target.value) d.answers[i].options = []; } redraw(); },
@@ -273,7 +277,8 @@ function askingNote(info, answerable = true) {
     el("summary", { text: "The plan" }), markdown(ask.plan)) : null;
   // the foot's line: how the answer sent goes, or why it is not answered here
   const said = (full) => {
-    const [cls, text] = sent ? [late ? "err" : "sent", late ? `Your answer (${sent.summary}) has not reached ${who}: answer it in the terminal.`
+    const [cls, text] = dialog ? ["", "Answer it in the terminal."]
+      : sent ? [late ? "err" : "sent", late ? `Your answer (${sent.summary}) has not reached ${who}: answer it in the terminal.`
         : `Typing your answer into the terminal: ${sent.summary}`]
       : d.error ? ["err", d.error]
       : !here ? ["", touched ? "Something was typed into its terminal since it asked: finish answering there."
@@ -284,7 +289,19 @@ function askingNote(info, answerable = true) {
     return text ? el("span", { class: ["say", cls, full ? "full" : ""].filter(Boolean).join(" "), role: cls === "err" ? "alert" : "status", text }) : null;
   };
   let foot = null;
-  if (here && ask.kind === "plan") {
+  if (here && perm) {                                  // allowed, denied, or denied with what to do instead
+    const deny = (text) => send({ allow: false, text: text || null });
+    const instead = () => d.change.trim() && deny(d.change.trim());
+    foot = el("div", { class: "foot", "data-morph": "" },
+      said(true),
+      el("div", { class: "change", "data-morph": "" }, own("plan", "Or say what to do instead", instead),
+        el("button", { type: "button", disabled: busy || !d.change.trim() ? "" : null, onclick: instead,
+          title: "Deny it, with this for the agent to go on with" }, "Deny with this")),
+      el("div", { class: "acts" },
+        el("button", { type: "button", disabled: busy ? "" : null, onclick: () => deny(null), title: "Deny it" }, "Deny"),
+        el("button", { type: "button", class: "primary", disabled: busy ? "" : null, onclick: () => send({ allow: true }),
+          title: "Let it run, this once" }, d.sending ? "Answering…" : "Allow")));
+  } else if (here && ask.kind === "plan") {
     const change = () => d.change.trim() && send({ plan: "change", text: d.change.trim() });
     foot = el("div", { class: "foot", "data-morph": "" },
       said(true),
@@ -310,16 +327,49 @@ function askingNote(info, answerable = true) {
         title: "Open the terminal", onclick: () => setChatView("terminal") }, strokeIcon(ICONS.terminal, 14), el("span", { class: "lbl", text: "Open the terminal" }))) : null),
     tabs,
     el("div", { class: "body", "data-keep": "asking-note", "data-morph": "" },
-      ...(here && qs.length > 1 ? [question(qs[tab], tab)] : qs.map(question)), plan),
+      ...(dialog ? [dialogView(ask)] : perm ? [permissionView(ask, `perm-${key}`)] : here && qs.length > 1 ? [question(qs[tab], tab)] : qs.map(question)), plan),
     foot);
 }
 const CHECK = "M3.5 8.5l3 3 6-7";
 // The reader's answers as they make them, by the call they answer: kept across the page's redraws.
 const answerDrafts = new Map(), lateTimers = new Set(), answersSeen = new Set();
 const ANSWER_LATE = 12;                              // seconds after an answer is sent before it counts as lost
+// What an answer names an ask by (data.py's `id`): a question's or a plan's call, a permission's own key.
+const askKey = (ask) => ask.id || ask.call;
+// What a permission is for, after "asks to": by the call's shape, as its harness reads it (data.py's `view`).
+const PERMISSION_VERBS = { shell: "run a command", edit: "edit a file", write: "write a file", patch: "change files",
+  read: "read a file", search: "search files", web: "use the web", agent: "start an agent", skill: "use a skill" };
+function permissionVerb(ask) {
+  const v = ask.view || {};
+  return PERMISSION_VERBS[v.shape] || `use ${summary({ name: ask.tool, input: ask.input, view: v }).title}`;
+}
+// The call a permission is asked for, as Chat shows a call (summary's shapes): what it is for, then its command in
+// full, or the change it would make, or (a shape not known) its input.
+function permissionView(ask, id) {
+  const v = ask.view || {}, call = { name: ask.tool, input: ask.input || {}, view: v };
+  const s = summary(call);
+  const shown = [v.command, v.path, v.url, v.query, v.pattern].map((x) => x == null ? "" : str(x));
+  const out = [];
+  if (ask.said && !shown.includes(ask.said)) out.push(el("div", { class: "qline" }, el("span", { class: "text", text: ask.said })));
+  out.push(el("div", { class: "perm-call" }, el("b", { text: s.title }),
+    s.arg && v.shape !== "shell" ? el("span", { class: "arg", text: s.arg }) : null));
+  if (v.shape === "shell" && v.command) out.push(el("pre", { class: "perm-cmd" }, shellSpan(str(v.command))));
+  else if (s.body) out.push(s.body(id));
+  else if (!SHAPES[v.shape] && Object.keys(call.input).length) out.push(el("pre", { class: "perm-input", text: JSON.stringify(call.input, null, 2) }));
+  return el("div", { class: "perm" }, ...out);
+}
+// A dialog the actor's terminal shows that no hook reported (data.py's `shown_ask`), as its screen has it: its head,
+// what it shows, its question and its options -- answered in the terminal, so the options are not buttons.
+function dialogView(ask) {
+  return el("div", { class: "perm" },
+    ask.title && ask.title !== ask.said ? el("div", { class: "perm-call" }, el("b", { text: ask.title })) : null,
+    (ask.lines || []).length ? el("pre", { class: "perm-input", text: ask.lines.join("\n") }) : null,
+    el("div", { class: "qline" }, el("span", { class: "text", text: ask.said || "" })),
+    el("ol", { class: "shown-opts" }, ...(ask.options || []).map((o) => el("li", { text: o }))));
+}
 function draftOf(ask) {
-  let d = answerDrafts.get(ask.call);
-  if (!d) answerDrafts.set(ask.call, d = { answers: (ask.questions || []).map(() => ({ options: [], text: "" })), change: "",
+  let d = answerDrafts.get(askKey(ask));
+  if (!d) answerDrafts.set(askKey(ask), d = { answers: (ask.questions || []).map(() => ({ options: [], text: "" })), change: "",
     cleared: {}, sending: false, error: "", tab: 0 });
   return d;
 }
