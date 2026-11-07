@@ -547,12 +547,13 @@ class Coordination:
         return {"actors": [self._view(a, me, kept) for a in found], "folder": folders.path(folders.of(g), target)}
 
     def folders(self, actor: str) -> dict:
-        """The gatherer's folders as a tree: {gatherer, folders: [{name, path, actors, closed, folders}], actors,
+        """The gatherer's folders as a tree: {gatherer, folders: [{name, path, actors, closed, folders, shut}], actors,
         closed} -- at each level the folders in it (by name), the actors in it that are open or saved (the latest
-        first), and how many closed ones."""
+        first), and how many closed ones; `shut`, whether the folder was closed (folders.py's `close`)."""
         g, me, agents = self._asker(actor)
         tree, kept = folders.of(g), _kept(g)
-        nodes = {f["id"]: {"name": f["name"], "path": folders.path(tree, f["id"]), "actors": [], "closed": 0, "folders": []}
+        nodes = {f["id"]: {"name": f["name"], "path": folders.path(tree, f["id"]), "actors": [], "closed": 0, "folders": [],
+                           "shut": bool(f.get("closed"))}
                  for f in tree["folders"]}
         top = {"gatherer": g, "folders": [], "actors": [], "closed": 0}
         for f in tree["folders"]:                        # by name already

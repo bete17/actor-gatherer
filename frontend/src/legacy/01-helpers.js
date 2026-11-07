@@ -406,6 +406,7 @@ const ICONS = {
   folderOpen: "M1.75 12V4a1 1 0 0 1 1-1h3.4l1.5 1.6h4.6a1 1 0 0 1 1 1v1.2M1.75 12l1.7-4.7a1 1 0 0 1 .94-.66h9.1a.6.6 0 0 1 .56.8l-1.6 4.4a1 1 0 0 1-.94.66H2.75a1 1 0 0 1-1-1z",   // one opened
   folderNew: "M1.75 4a1 1 0 0 1 1-1h3.4l1.5 1.6h5.6a1 1 0 0 1 1 1v6.65a1 1 0 0 1-1 1H2.75a1 1 0 0 1-1-1zM8 7.1v4M6 9.1h4",   // one made
   pencil: "M10.6 2.6l2.8 2.8-7.9 7.9-3.4.6.6-3.4zM9.1 4.1l2.8 2.8",   // renamed
+  bin: "M2.75 4.25h10.5M6.25 4.25v-1.5h3.5v1.5M4.1 4.25l.65 8.6a1 1 0 0 0 1 .9h4.5a1 1 0 0 0 1-.9l.65-8.6M6.6 6.75v4.5M9.4 6.75v4.5",   // deleted
   power: "M8 1.75v5.5M4.6 3.9a5.25 5.25 0 1 0 6.8 0",                  // a shell terminated
   chevron: "M6 3.5 10.5 8 6 12.5",                                     // more, folded: turned down once shown
   wrap: "M2 3.5h12M2 7.5h9.25a2.25 2.25 0 0 1 0 4.5H8.5M10 10.5 8.5 12 10 13.5M2 11.5h3.5",   // long lines wrapped

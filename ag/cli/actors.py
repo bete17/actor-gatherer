@@ -337,7 +337,8 @@ def shown(op: str, got: dict) -> str:
             pad = "  " * depth
             for f in node["folders"]:
                 closed = f" ({f['closed']} closed)" if f["closed"] else ""
-                lines.append(f'{pad}- folder "{f["path"]}"' + ("" if f["actors"] or f["folders"] or f["closed"] else " (empty)") + closed)
+                lines.append(f'{pad}- folder "{f["path"]}"' + (" -- closed" if f.get("shut") else "")
+                             + ("" if f["actors"] or f["folders"] or f["closed"] else " (empty)") + closed)
                 lines.extend(f"{pad}    {_who({**a, 'folder': None})}" for a in f["actors"])
                 tree(f, depth + 1)
         tree(got, 0)

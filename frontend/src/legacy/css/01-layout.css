@@ -248,6 +248,8 @@ header .brand .list-btns { display: none; margin-left: -6px; }
 .rail :is(.r-fname, .r-fhead) .caret { flex: none; display: inline-block; font-size: 8px; position: relative; top: -1px; color: var(--muted); }
 .rail .r-fhead .caret { transform: rotate(90deg); }
 .rail :is(.r-fname, .r-fhead):is(:hover, :focus-visible) { color: var(--ink); background: var(--wash); outline: none; }
+/* a closed folder, in its closed line: greyed as a closed actor is */
+.rail :is(.r-ffold, .r-fopen).closed > :is(.r-fname, .r-fhead) { color: var(--muted); font-weight: 400; }
 .rail .r-fopen { position: relative; display: flex; flex-direction: column; align-items: stretch; flex: none; }
 /* its bracket 2px off the rail's edge, its arms reaching just into the folder's box, short of its caret */
 .rail .r-fopen::before, .rail .r-fname::before { content: ""; position: absolute; left: -2px; width: 3px; pointer-events: none;
@@ -363,7 +365,7 @@ header .brand .list-btns { display: none; margin-left: -6px; }
 .actor-card .c-acts .act.start.busy svg { animation: term-blink 1s ease-in-out infinite; }
 .actor-card .c-acts .act:disabled { cursor: default; opacity: .45; }
 .actor-card .c-acts .act.start + .act:not(.start) { margin-left: 8px; }
-.actor-card .c-acts .act.delete:hover { color: var(--critical); }
+.actor-card .c-acts .act:is(.delete, .close):hover { color: var(--critical); }
 .actor-card .c-counts { display: flex; flex-wrap: wrap; gap: 4px; }
 .actor-card .c-counts .count { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--ink-2); background: var(--wash);
   border-radius: 999px; padding: 1px 7px; font-variant-numeric: tabular-nums; }
