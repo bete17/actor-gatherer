@@ -81,7 +81,7 @@ function gfLine(f) {
       SNAPSHOT ? null : el("span", { class: "f-acts", onclick: (ev) => ev.stopPropagation() },
         folderAct("new", `New folder in ${f.name}`, strokeIcon(ICONS.folderNew, 14), () => startFolderEdit(GF, null, f.id)),
         folderAct("rename", `Rename ${f.name} (F2)`, strokeIcon(ICONS.pencil, 13), () => startFolderEdit(GF, f.id)),
-        folderAct("delete", `Delete ${f.name}: what is in it moves up a level`, closeIcon(), () => deleteFolder(GF, f.id)))));
+        folderAct("delete", `Delete ${f.name}: what is in it moves up a level`, strokeIcon(ICONS.bin, 14), () => deleteFolder(GF, f.id)))));
   return dropOn(dragFolder(line, GFS, f), GFS, f.id, () => { if (!isOpenFolder(GF, f.id)) toggle(); });
 }
 // A level of the rail (`id` null: its top), as the list's (gfLevel): each folder its name in a bracket, as a gatherer's
