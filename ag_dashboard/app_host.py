@@ -168,7 +168,11 @@ class AppHost:
         return path
 
     def close(self) -> None:
-        """Every backend stopped, and what is left to write written."""
+        """Every backend stopped, and what is left to write written. Once: closed again, nothing more."""
+        with self.lock:
+            if getattr(self, "_closed", False):
+                return
+            self._closed = True
         for h in list(self.apps.values()):
             if h.app is not None:
                 try:

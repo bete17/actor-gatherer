@@ -297,13 +297,8 @@ class Hosted(HomeBase):
     def new_host(self):
         h = app_host.AppHost(0, write=insert_here)
         self.addCleanup(h.close)
-        self.hosts = getattr(self, "hosts", []) + [h]
+        self.hosts.append(h)                                # closed before the home goes (HomeBase's tearDown)
         return h
-
-    def tearDown(self):
-        for h in getattr(self, "hosts", []):                # what they write, written while the home is the test's
-            h.flush()
-        super().tearDown()
 
     def request(self, inst, method, path, body=None, query=None):
         r = self.host.request("docwriter", inst, method, path, dict(query or {}),
@@ -556,8 +551,7 @@ class ServedTest(Hosted):
         self.httpd.app_host._write_fn = insert_here
         self.hosts.append(self.httpd.app_host)
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
-        self.addCleanup(self.httpd.server_close)
-        self.addCleanup(self.httpd.shutdown)
+        self.serving(self.httpd)                          # stopped before the home goes
         self.port = self.httpd.server_port
 
     def get(self, host, path, method="GET", body=None, origin=None):

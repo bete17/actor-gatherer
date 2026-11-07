@@ -98,8 +98,7 @@ class StreamsOverOneSocketTest(HomeBase):
         super().setUp()
         self.httpd = server.serve("127.0.0.1", 0, live_updates=False)
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
-        self.addCleanup(self.httpd.server_close)
-        self.addCleanup(self.httpd.shutdown)
+        self.serving(self.httpd)                          # stopped before the home goes
         self.port = self.httpd.server_port
         self.work = tempfile.mkdtemp(dir=self.tmp.name)
 

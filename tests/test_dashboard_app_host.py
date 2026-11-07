@@ -128,7 +128,6 @@ def insert_here(gatherer, properties, events, types):
 class HostBase(HomeBase):
     def setUp(self):
         super().setUp()
-        self.hosts = []
         self.apps_dir = os.path.join(self.tmp.name, "apps-src")
         write_app(self.apps_dir, "notes", NOTES)
         env = unittest.mock.patch.dict(os.environ, {app_host.PATH_ENV: self.apps_dir})
@@ -143,13 +142,8 @@ class HostBase(HomeBase):
     def new_host(self) -> "app_host.AppHost":
         h = app_host.AppHost(0, write=insert_here)
         self.addCleanup(h.close)
-        self.hosts.append(h)
+        self.hosts.append(h)                        # closed before the home goes (HomeBase's tearDown)
         return h
-
-    def tearDown(self):
-        for h in self.hosts:                        # what they were handed, written before the home goes
-            h.flush()
-        super().tearDown()
 
     def rows(self, sql, *args):
         conn = self.m._conn("g")
@@ -449,8 +443,7 @@ class GatewayServedTest(GatewayBase):
         rows = self.rows
         self.httpd.sessions.list = lambda: [dict(r) for r in rows]
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
-        self.addCleanup(self.httpd.server_close)
-        self.addCleanup(self.httpd.shutdown)
+        self.serving(self.httpd)                          # stopped before the home goes
         self.port = self.httpd.server_port
 
     def rpc(self, actor, method, params=None):
@@ -521,8 +514,7 @@ class ServedTest(HostBase):
         self.httpd.app_host._write_fn = insert_here
         self.hosts.append(self.httpd.app_host)
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
-        self.addCleanup(self.httpd.server_close)
-        self.addCleanup(self.httpd.shutdown)
+        self.serving(self.httpd)                          # stopped before the home goes
         self.port = self.httpd.server_port
 
     def ask(self, method, path, body=None, host=None, origin=None):

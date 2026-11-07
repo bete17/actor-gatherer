@@ -4,12 +4,23 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { expect, test } from "./test";
+import { expect, streamsAsRequests, test } from "./test";
 import { CLAUDE, openActor } from "./home";
 
 test("a DocWriter started from the menu: its page above, its actor below with its mark", async ({ page, request }) => {
   const folder = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ag-docwriter-")));
   fs.writeFileSync(path.join(folder, "draft.md"), "# A draft\n\nIts first line.\n");
+  // the home as the server has it, but with Claude Code set up here, whether or not it is on this machine (CI has
+  // neither harness: the menu then offers no DocWriter, which needs one for its agent); its stream held back, so the
+  // server's own home does not replace it. The actor's session is only made: no harness runs.
+  await page.route("**/api/home", async (route) => {
+    const home = await (await route.fetch()).json();
+    home.harnesses = ["claude"];
+    home.harness_info.claude = { ...home.harness_info.claude, runs: true };
+    await route.fulfill({ json: home });
+  });
+  await streamsAsRequests(page);
+  await page.route("**/api/stream*", (route) => route.abort()); // nor its fallback (the apps' own, /api/apps/stream, stays)
   await openActor(page, CLAUDE);
   const row = page.locator("#agents .gatherer-row").first();
   await row.hover();
@@ -54,7 +65,10 @@ test("a DocWriter started from the menu: its page above, its actor below with it
       })
     ).ok(),
   ).toBe(true);
-  const discarded = await request.post("/api/discard", { data: { session_id: actorKey.split("/").pop() } });
+  const sid = actorKey.split("/").pop();
+  const discarded = await request.post("/api/discard", { data: { session_id: sid } });
   expect(discarded.ok(), await discarded.text()).toBe(true);
-  await expect(page.locator(`#agents button.agent[data-key="${actorKey}"]`)).toHaveCount(0);
+  const home = await (await request.get("/api/home")).json(); // the server's (the page's stream is held back)
+  const all = home.gatherers.flatMap((g: { agents: { channel: string }[] }) => g.agents);
+  expect(all.some((a: { channel: string }) => a.channel === sid)).toBe(false);
 });
