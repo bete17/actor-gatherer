@@ -1,4 +1,5 @@
 // The list of actors (page.html: "the agent list", "the list folded, or over the whole page").
+import type { WebSocketRoute } from "@playwright/test";
 import { expect, streamsAsRequests, test } from "./test";
 import { CLAUDE, CODEX, GATHERER, masks, open } from "./home";
 
@@ -189,6 +190,66 @@ test("the rail's avatars have the list's bookmark and ×, over their corners: pr
   await expect.poll(() => stopped.length).toBe(1);
   expect(stopped[0]).toEqual({ session_id: "s-claude" });
   await expect(claude).toHaveAttribute("aria-current", "false");
+});
+
+test("a rail bookmark under a resting pointer stays shown, every frame, while the rail scrolled is drawn again", async ({
+  page,
+}) => {
+  // the home's stream passed through, its latest home kept, to be sent again with an actor moved on, as a running one's is
+  const seen: { home?: [string, { gatherers: { agents: { last?: number }[] }[] }]; ws?: WebSocketRoute } = {};
+  await page.routeWebSocket(/\/api\/ws$/, (ws) => {
+    seen.ws = ws;
+    const server = ws.connectToServer();
+    server.onMessage((m) => {
+      const [id, name, ...data] = typeof m === "string" ? m.split("\n") : [];
+      if (name === "home") seen.home = [id, JSON.parse(data.join("\n"))];
+      ws.send(m);
+    });
+  });
+  await page.setViewportSize({ width: 1300, height: 260 }); // short, so the rail scrolls
+  await open(page);
+  await page.locator("#agents .lb-fold").click();
+  const list = page.locator("#rail .r-actors");
+  await list.evaluate((n) => (n.scrollTop = 60));
+  await expect.poll(() => list.evaluate((n) => n.scrollTop)).toBeGreaterThan(0);
+  const tile = page.locator('#rail .r-actor[aria-current="false"]').first(); // the one shown has its buttons anyway
+  const card = await tile.getAttribute("data-card");
+  await tile.locator(".save-btn").hover();
+  await expect(tile.locator(".save-btn")).toHaveCSS("opacity", "1");
+  await expect.poll(() => !!seen.home).toBe(true);
+  // its bookmark's opacity each frame for a while, the home sent again twice meanwhile
+  const frames = page.evaluate(
+    (card) =>
+      new Promise<{ opacities: string[]; redrawn: boolean }>((done) => {
+        const mark = () =>
+          [...document.querySelectorAll<HTMLElement>("#rail .r-actor")]
+            .find((t) => t.dataset.card === card)!
+            .querySelector(".save-btn")!;
+        const first = mark(),
+          opacities: string[] = [],
+          t0 = performance.now();
+        let redrawn = false;
+        const tick = () => {
+          const b = mark();
+          redrawn ||= b !== first;
+          opacities.push(getComputedStyle(b).opacity);
+          if (performance.now() - t0 < 900) requestAnimationFrame(tick);
+          else done({ opacities, redrawn });
+        };
+        requestAnimationFrame(tick);
+      }),
+    card,
+  );
+  for (const k of [1, 2]) {
+    await page.waitForTimeout(250);
+    const [id, home] = seen.home!;
+    const again = structuredClone(home);
+    again.gatherers[0].agents[0].last = (again.gatherers[0].agents[0].last || 0) + k;
+    seen.ws!.send(`${id}\nhome\n${JSON.stringify(again)}`);
+  }
+  const { opacities, redrawn } = await frames;
+  expect(redrawn).toBe(true); // the rail was drawn anew under the pointer...
+  expect(opacities.filter((o) => o !== "1")).toEqual([]); // ...and its bookmark never faded out
 });
 
 test("shows every actor over the whole page", async ({ page }) => {
