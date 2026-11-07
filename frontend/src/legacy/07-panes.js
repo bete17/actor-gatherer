@@ -31,6 +31,7 @@ function pickBeside(g, c, ev) {
 // The actor in the pane in focus -- in `view`, if given; one open already, its pane focused instead.
 async function show(g, c, view = null) {
   const there = actorPanes().find((p) => isAt([p.g, p.c], g, c)) || (isAt(state.selected, g, c) ? panes.here : null);
+  if (there) showActorsApp(g, c);                    // shown already: its app's panel, closed since, opened again
   const p = there || panes.focus;
   if (p !== panes.here) {
     focusPane(p);
@@ -292,6 +293,14 @@ function appInterrupt(g, c) {
   const sid = appSessionOf(g, c);
   return sid ? post("/api/terminal/input", { session_id: sid, data: "\u001b" }) : Promise.resolve(null);
 }
+// The message box of the actor `c` of gatherer `g`, focused, if it is shown here (the pane in focus's): its keys taken
+// back from a native page first, in the desktop app.
+function appFocusAgent(g, c) {
+  const a = appActor(g, c);
+  if (!a || !isAt(state.selected, g, a.channel)) return;
+  window.agApp?.focusDashboard?.();
+  document.getElementById("composer-text")?.focus();
+}
 function addAppPane(app, instance, size = 1, held = false) {
   const p = { app, instance, g: instance.gatherer, size, held };
   p.panel = window.agNext.apps.pane(app, instance, {
@@ -301,7 +310,7 @@ function addAppPane(app, instance, size = 1, held = false) {
     selection: () => appsSelection(),
     agents: (g) => ((state.home && state.home.gatherers.find((x) => x.name === g)) || { agents: [] }).agents
       .filter((a) => !a.closed).map((a) => ({ channel: a.channel, name: (a.name && a.name.text) || a.last_user_message || a.channel })),
-    agentState: appAgentState, send: appSend, answer: appAnswer, interrupt: appInterrupt,
+    agentState: appAgentState, send: appSend, answer: appAnswer, interrupt: appInterrupt, focusAgent: appFocusAgent,
   });
   p.node = p.panel.node; p.frame = p.panel.frame;
   p.gutter = topGutter(p);
@@ -545,10 +554,8 @@ const noHarness = () => `None of ${runnableNames("or")} is set up here: install 
 // Last, its terminal button: a shell (isShell), in that same directory -- or, with none, the form asks for it too.
 const SHELL_START = "shell";                       // the terminal button's, where a harness's name goes
 const APP_START = "app:";                          // an app's with an agent of its own ([agent] start): app:<name>:<harness>
-const BW_START = "browser:";                       // a Browser's, where a harness's name goes: its actor's harness after it
 const startAny = (gatherer, cwd, harness) => harness === SHELL_START ? startShell(gatherer, cwd)
   : harness.startsWith(APP_START) ? startWithApp(gatherer, cwd, ...appStart(harness))
-  : harness.startsWith(BW_START) ? startBrowser(gatherer, cwd, harness.slice(BW_START.length))
   : startSession(gatherer, cwd, harness);
 const appStart = (v) => { const [name, ...h] = v.slice(APP_START.length).split(":"); return [name, h.join(":")]; };
 // The apps found whose menu entry starts an agent of their own (DocWriter, say): those a new actor is started with.
@@ -614,7 +621,7 @@ function startButtons(g, folder = null, prefix = "") {
       plus(), strokeIcon(ICONS.agent, 16));
   const others = moreStarts(g, hs, where, moreKey);
   const more = others.length ? el("button", { class: "act start new-more" + (starting === SHELL_START || starting === BRANCH_START
-      || starting.startsWith(APP_START) || starting.startsWith(BW_START) ? " busy" : ""), type: "button", ...off, "data-pop": moreKey,
+      || starting.startsWith(APP_START) ? " busy" : ""), type: "button", ...off, "data-pop": moreKey,
     title: `More to start in ${place}: ${others.map((o) => o.text.replace("…", "").toLowerCase()).join(", ")}`,
     "aria-label": `More to start in ${place}`, "aria-haspopup": "menu", "aria-expanded": String(rowPop.key === moreKey),
     onclick: (ev) => { aimStart(g.name, fid); openMoreMenu(g, hs, ev.currentTarget, moreKey, place); } }, plus(), strokeIcon(ICONS.more, 16)) : null;
@@ -623,17 +630,13 @@ function startButtons(g, folder = null, prefix = "") {
 // The "+ more" drop-down's starts: what each is, said under it, and what choosing it does. `key`: its button's data-pop.
 function moreStarts(g, hs, where, key = `more:${g.name}`) {
   const there = where ? `in ${where}` : "in a directory you choose";
-  const tooled = hs.filter((h) => (harnessInfo(h) || {}).mcp);    // an app's and a Browser's agent: given their tools
+  const tooled = hs.filter((h) => (harnessInfo(h) || {}).mcp);    // an app's agent: given its tools
   return [
     hs.length ? { icon: ICONS.branch, text: "Actor on a branch…", note: "in a worktree of a project: its changes merged into the project",
       run: (button) => openBranchMenu(g, button) } : null,
     ...(tooled.length ? startingApps() : []).map((a) => ({ icon: ICONS.app, mark: a.mark ? appMarkImg(a) : null,
       text: `${a.label}…`, note: a.description || "an app, with an agent of its own",
       run: (button) => openPop(key, button, appStartBox(g, tooled, a)) })),
-    tooled.length && state.home.browser ? { icon: ICONS.globe, text: "Browser…", note: "a browser you and an agent use together: point it at what you mean",
-      run: (button) => tooled.length > 1 ? openPop(key, button, popMenu("New Browser, its agent on",
-        tooled.map((h) => ({ mark: harnessBadge(h), text: harnessName(h), run: () => addSession(g, BW_START + h) }))))
-        : addSession(g, BW_START + tooled[0]) } : null,
     state.home.terminals !== false ? { icon: ICONS.terminal, text: "Terminal", note: there, run: () => addSession(g, SHELL_START) } : null,
     ...(PANE || SNAPSHOT ? [] : window.agNext.apps.found()).filter((a) => !(a.agent && a.agent.start)).map((a) => ({ icon: ICONS.app,
       text: a.label, note: a.description || "an app", run: () => openApp(g.name, a.name, startCwd(g)) })),
@@ -903,20 +906,6 @@ async function startWithApp(gatherer, cwd, name, harness) {
     }
   } finally { state.starting = null; renderAgents(); }
 }
-// A Browser started (browser.py's `create`): its actor listed, then shown in the Browser's view.
-async function startBrowser(gatherer, cwd, harness) {
-  state.starting = { gatherer, harness: BW_START + harness };
-  renderAgents();
-  try {
-    const cfg = await post("/api/browser", { gatherer, cwd, harness });
-    await fileStarted(gatherer, cfg.channel);
-    state.adding = null;
-    collapsed.delete(gatherer);
-    await loadHome();
-    kindViewId.browser = "browser";
-    await show(gatherer, cfg.channel);
-  } finally { state.starting = null; renderAgents(); }
-}
 // A shell started: shown in the pane in focus, its terminal opened at once (sessions.py's `shell`), at the size of the
 // terminal this page draws now, if it draws one (fitted to its pane once drawn there).
 async function startShell(gatherer, cwd) {
@@ -1135,16 +1124,12 @@ function newForm() {
     value: `${APP_START}${a.name}:${h}`, class: adding.harness === `${APP_START}${a.name}:${h}` ? "primary" : "",
     title: `${a.label}, its agent on ${harnessName(h)}`, ...(state.starting ? { disabled: "" } : {}) },
     a.mark ? appMarkImg(a) : strokeIcon(ICONS.app, 14), a.label, harnessBadge(h)));
-  if (state.home.browser) for (const h of hs) starts.push(el("button", { type: "submit", value: BW_START + h,
-    class: adding.harness === BW_START + h ? "primary" : "", title: `Browser, its agent on ${harnessName(h)}`,
-    ...(state.starting ? { disabled: "" } : {}) }, strokeIcon(ICONS.globe, 14), "Browser", harnessBadge(h)));
   if (state.home.terminals !== false) starts.push(el("button", { type: "submit", value: SHELL_START, class: shell ? "primary" : "",
     ...(state.starting ? { disabled: "" } : {}) }, strokeIcon(ICONS.terminal, 14), "Terminal"));
   const appAt = String(adding.harness || "").startsWith(APP_START) ? window.agNext.apps.named(appStart(adding.harness)[0]) : null;
-  const bwing = String(adding.harness || "").startsWith(BW_START);
   const form = el("form", { class: "newform", "aria-label": "New session" },
     el("div", { class: "desc", text: shell ? `A new terminal, listed under ${fixed}` : appAt ? `A new ${appAt.label} in ${fixed}`
-      : bwing ? `A new Browser in ${fixed}` : `A new session in ${fixed}` }),
+      : `A new session in ${fixed}` }),
     el("label", {}, "Working directory", cwd),
     err,
     el("div", { class: "row" }, el("button", { type: "button", onclick: () => { state.adding = null; renderAgents(); } }, "Cancel"), ...starts));

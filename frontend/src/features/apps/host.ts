@@ -7,6 +7,7 @@
 import { get, post } from "../../core/api/client";
 import { stream, type Stream } from "../../core/api/stream";
 import "./apps.css";
+import { desktop, nativePanes, nativeSoon, type NativePlace } from "./native";
 
 export interface AppInfo {
   name: string;
@@ -52,6 +53,8 @@ export interface PaneHooks {
   send: (gatherer: string, channel: string, text: string) => Promise<unknown>;
   answer: (gatherer: string, channel: string, call: string, choice: unknown) => Promise<unknown>;
   interrupt: (gatherer: string, channel: string) => Promise<unknown>;
+  /** The message box of an actor's pane focused, if one shows it (its keys taken back from a native page first). */
+  focusAgent: (gatherer: string, channel: string) => void;
 }
 /** What a panel is told of an attached agent (the SDK's agents.state). */
 export interface AgentState {
@@ -191,6 +194,8 @@ export class AppPane {
   private ready = false;
   private held: [string, string, Record<string, unknown>][] = []; // intents for a panel not yet connected
   private readonly onMessage = (ev: MessageEvent) => this.take(ev);
+  /** Where its panel asks a native page of its app kept (ag.native.show), in the frame's own coordinates. */
+  native: NativePlace | null = null;
 
   constructor(
     readonly app: AppInfo,
@@ -249,6 +254,9 @@ export class AppPane {
 
   destroy(): void {
     window.removeEventListener("message", this.onMessage);
+    this.native = null;
+    nativePanes.delete(this);
+    nativeSoon();
     this.base?.close();
     for (const s of this.subs.values()) s.stream.close();
     this.subs.clear();
@@ -348,6 +356,7 @@ export class AppPane {
         return {
           info: { ...w, label: this.app.label, title: this.instance.title },
           attached: this.attached,
+          native: !!desktop() && !!this.app.capabilities?.native_view,
           states: this.states(),
           selection: this.hooks.selection(),
           theme: theme(),
@@ -391,6 +400,26 @@ export class AppPane {
         if (m.op === "agents.answer") return this.hooks.answer(w.gatherer, ch, String(m.call || ""), m.choice);
         return this.hooks.interrupt(w.gatherer, ch);
       }
+      case "agents.focus":
+        this.hooks.focusAgent(w.gatherer, this.mine(m.channel));
+        return null;
+      case "native.place": {
+        if (!desktop() || !this.app.capabilities?.native_view)
+          throw new Error(`${this.app.label} shows no native page`);
+        const p = m.place as NativePlace | null;
+        this.native = p && typeof p.target === "string" ? p : null;
+        if (this.native) nativePanes.add(this);
+        else nativePanes.delete(this);
+        nativeSoon();
+        return null;
+      }
+      case "native.drawn":
+        desktop()?.stillDrawn?.(String(m.target || ""));
+        return null;
+      case "native.release":
+        desktop()?.focusDashboard?.();
+        this.frame.focus();
+        return null;
       case "agents.transcript": {
         if (!this.app.capabilities?.transcript)
           throw new Error(`${this.app.label} may not read its agents' transcript`);
@@ -460,6 +489,11 @@ export class AppPane {
   /** The agents attached to it, as it was last told. */
   agents(): string[] {
     return [...this.attached];
+  }
+
+  /** A native page's still picture for its panel (the desktop app's, while something covers it), or none. */
+  still(target: string, url: string | null): void {
+    this.push("still", { value: { target, url } });
   }
 
   /** A channel a panel names, if it is one of its attached agents' (or a codex agent's thread its channel became). */

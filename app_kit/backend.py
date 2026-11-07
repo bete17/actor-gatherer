@@ -18,7 +18,7 @@ import base64
 import json
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from .manifest import Manifest
 
@@ -106,14 +106,25 @@ class ToolResult:
 
 @dataclass
 class Response:
-    """The backend's answer to a request its panel made (`App.request`)."""
+    """The backend's answer to a request its panel made (`App.request`): a body; or, `events`, server-sent events
+    (`Response.stream`) -- an app run inside the dashboard only (an app in its own process answers with a body)."""
     status: int = 200
     body: bytes = b""
     headers: Dict[str, str] = field(default_factory=dict)
+    events: Optional[Tuple[Callable[[float], Optional[List[Tuple[str, Any]]]], Optional[Callable[[], None]]]] = None
 
     @classmethod
     def json(cls, value: Any, status: int = 200) -> "Response":
         return cls(status, json.dumps(value).encode(), {"Content-Type": "application/json"})
+
+    @classmethod
+    def stream(cls, take: Callable[[float], Optional[List[Tuple[str, Any]]]],
+               close: Optional[Callable[[], None]] = None) -> "Response":
+        """Server-sent events to the panel (its EventSource), until `take` says the stream is over: `take(wait)`,
+        called again and again in a thread of its own, returns within `wait` seconds the events to send, each
+        (name, JSON value) -- [] none yet (a keepalive goes), None the end. `close()` is called once, when it is over,
+        however (the panel gone, the end, the server stopping): what the stream held let go."""
+        return cls(200, b"", {"Content-Type": "text/event-stream"}, (take, close))
 
 
 class Host(ABC):
@@ -194,6 +205,14 @@ class App:
 
     def detached(self, instance: Instance, channel: str) -> None:
         """An agent was detached from the instance."""
+
+    def native(self, send: Callable[[str], None], close: Callable[[], None]) -> Optional[Callable[[Optional[str]], None]]:
+        """The ag desktop app connected (an app whose manifest asks `native_view`, run inside the dashboard): its link,
+        over which the app drives its native pages with the Chrome DevTools Protocol, the desktop app playing the
+        browser (desktop/DESIGN.md, "The app link"; the pages this app makes are its own, apart from another app's).
+        `send(text)` a message to it, `close()` the link ended. Returns what takes each message from it (None: the link
+        gone) -- or None, not taken."""
+        return None
 
     def guard(self, instance: Instance, path: str, caller: Caller) -> Optional[str]:
         """An agent attached to the instance is about to change `path` with its harness's own edit tools (an app whose

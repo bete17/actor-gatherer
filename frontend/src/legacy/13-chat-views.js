@@ -55,32 +55,22 @@
 const CHAT_VIEWS = new Map();
 const CHAT_VIEW_KEY = "ag-dashboard-chat-view";
 state.chatViewId = (PANE && PANE_URL.get("view")) || (() => { try { return localStorage.getItem(CHAT_VIEW_KEY) || "files"; } catch (e) { return "files"; } })();
-// A Browser's actor (bwKey) opens in the Browser's view each time it is selected; another picked for it (its Terminal,
-// say) lasts while it stays selected, apart from the other actors' choice. A view with `when(info)` is offered only to
-// the actors it says (the Browser's, to theirs). An app's actor (19-app-actors.js) is shown as any actor is: its app's
-// panel is above the panes.
-const KIND_VIEWS = { browser: "browser" };
-const kindViewId = { ...KIND_VIEWS };              // the view each kind's actor is shown in, while selected
-const kindOf = (info) => bwKey(info) ? "browser" : null;
+// A view with `when(info)` is offered only to the actors it says. An app's actor (19-app-actors.js) is shown as any
+// actor is: its app's panel is above the panes.
 const offeredTo = (v, info) => !!v && (!v.when || !!v.when(info));
 // The views offered to the selected actor, those for it alone (`when`) first.
 const offeredViews = () => [...CHAT_VIEWS.values()].filter((v) => offeredTo(v, selectedInfo()))
   .sort((a, b) => (b.when ? 1 : 0) - (a.when ? 1 : 0));
 const chatView = () => {
-  const info = selectedInfo(), kind = kindOf(info);
-  const v = CHAT_VIEWS.get(kind ? kindViewId[kind] : state.chatViewId);
-  return offeredTo(v, info) ? v : CHAT_VIEWS.get(kind && CHAT_VIEWS.has(KIND_VIEWS[kind]) ? KIND_VIEWS[kind] : "files");
+  const info = selectedInfo(), v = CHAT_VIEWS.get(state.chatViewId);
+  return offeredTo(v, info) ? v : CHAT_VIEWS.get("files");
 };
 async function setChatView(id) {
   if (id === "history" && chatView().id !== "history") hist.askedFor = hist.group = hist.stay = null;   // opened again: built again
                                                      // if due, and at its tasks if it has them
-  const kind = kindOf(selectedInfo());
-  if (kind) kindViewId[kind] = id;                   // a DocWriter's, a Browser's actor: while it stays selected
-  else {
-    state.chatViewId = id;
-    if (PANE) { paneUrl(); PANE.viewed(window, id); }  // a frame's: kept with its pane, not as every page's
-    else try { localStorage.setItem(CHAT_VIEW_KEY, id); } catch (e) { /* this page only */ }
-  }
+  state.chatViewId = id;
+  if (PANE) { paneUrl(); PANE.viewed(window, id); }  // a frame's: kept with its pane, not as every page's
+  else try { localStorage.setItem(CHAT_VIEW_KEY, id); } catch (e) { /* this page only */ }
   await loadChat();
   keepingPlace(renderMain);
   chatToEnd();

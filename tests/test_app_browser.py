@@ -1,8 +1,8 @@
-"""A Browser in the dashboard (ag_dashboard/browser.py): which Chrome it runs, what its actor is started with, the
-user's message with what they did and picked, the snapshot's outline, the keys and addresses it takes, the server's
-/browser/w/<key>/ routes -- and, where a Chrome is installed, the whole of it against a real one: the agent's tools,
-the user's input and picks (also on a page asking for a passkey), the screen streamed, its tabs opened again after
-the Chrome stopped."""
+"""The Browser app (ag_apps/browser/: core.py, backend.py): which Chrome it runs, what its agent is told of what the
+user did and picked, the snapshot's outline, the keys and addresses it takes, its tools only for its own agent, its
+panel's routes on the app's own origin -- and, where a Chrome is installed, the whole of it against a real one: the
+agent's tools, the user's input and picks (also on a page asking for a passkey), the screen streamed, its tabs opened
+again after the Chrome stopped. Moved from test_dashboard_browser.py with the Browser."""
 import base64
 import functools
 import http.server
@@ -22,7 +22,9 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from ag_dashboard import browser, home as dashboard_home, mcp, sessions  # noqa: E402
+import secrets  # noqa: E402
+
+from ag_apps.browser import core as browser  # noqa: E402
 
 #: A check that holds on any page: for the tests of other things than checks, which an acting tool needs (ExpectTest).
 HOLDS = [{"js": "document.documentElement !== null"}]
@@ -100,9 +102,12 @@ class Home(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.saved, dashboard_home.HOME = dashboard_home.HOME, os.path.join(self.tmp.name, "home")
-        self.addCleanup(setattr, dashboard_home, "HOME", self.saved)
-        os.makedirs(dashboard_home.HOME)
+        self.saved = browser.HOME, browser.DB_PATH
+        browser.HOME = os.path.join(self.tmp.name, "home")
+        browser.DB_PATH = os.path.join(browser.HOME, "apps", "browser", "data", "browser.db")
+        self.addCleanup(lambda: setattr(browser, "HOME", self.saved[0]) or setattr(browser, "DB_PATH", self.saved[1]))
+        os.makedirs(browser.HOME)
+        self.told_to = []                                 # what each Browser told its agent: (key, text)
         self.root = os.path.join(os.path.realpath(self.tmp.name), "site")
         os.makedirs(self.root)
         self.write("index.html", PAGE)
@@ -114,8 +119,17 @@ class Home(unittest.TestCase):
             fh.write(text)
         return path
 
+    def browsers(self) -> "browser.Browsers":
+        """The app's Browsers, what they tell their agents kept (`told`)."""
+        return browser.Browsers(lambda key, text: self.told_to.append((key, text)))
+
+    def told(self, b: "browser.Browser") -> str:
+        """Everything Browser `b` told its agent, what it was about to tell told now."""
+        b._tell()
+        return "\n".join(t for k, t in self.told_to if k == b.key)
+
     def config(self, text: str) -> None:
-        with open(os.path.join(dashboard_home.HOME, "config.toml"), "w") as fh:
+        with open(os.path.join(browser.HOME, "config.toml"), "w") as fh:
             fh.write(text)
 
 
@@ -258,46 +272,11 @@ class MineTest(Home):
 
     def test_with_its_debugging_off_the_user_is_told_how_to_turn_it_on(self):
         self.config('[dashboard]\nbrowser_profile = "mine"\n')
-        bs = browser.Browsers(sessions.Sessions())
+        bs = self.browsers()
         self.addCleanup(bs.close)
         with mock.patch.dict(browser.USER_DIRS, {sys.platform: [os.path.join(self.tmp.name, "none")]}):
             with self.assertRaisesRegex(browser.BrowserError, "chrome://inspect/#remote-debugging"):
                 bs.chrome.cdp()
-
-
-class RoleTest(unittest.TestCase):
-    """What a Browser's actor is: a session whose `role` names its Browser, started with its tools and instructions."""
-
-    def test_a_browser_role_is_known_and_names_its_key(self):
-        role = json.dumps({"browser": "0123456789abcdef"})
-        self.assertTrue(sessions.known_role(role))
-        self.assertEqual(browser.key_of({"role": role}), "0123456789abcdef")
-        self.assertIsNone(browser.key_of({"role": json.dumps({"browser": "../etc"})}))
-        self.assertIsNone(browser.key_of({"role": "coordinator"}))
-        self.assertIsNone(browser.key_of({"role": json.dumps({"docwriter": "0123456789abcdef"})}))
-
-    def test_claude_code_gets_the_mcp_server_and_the_instructions(self):
-        with mock.patch.object(browser, "ORIGIN", "http://127.0.0.1:4999"):
-            args = sessions.extra_args({"role": json.dumps({"browser": "0123456789abcdef"}), "harness": "claude",
-                                        "cwd": "/work"})
-        self.assertEqual(args[0], "--mcp-config")
-        server = json.loads(args[1])["mcpServers"][browser.NAME]
-        self.assertEqual(server, {"type": "http", "url": "http://127.0.0.1:4999/browser/w/0123456789abcdef/mcp",
-                                  "alwaysLoad": True})                     # not held back behind its tool search
-        self.assertEqual(args[2], "--append-system-prompt")
-        self.assertIn("<browser_state>", args[3])
-        self.assertIn("/work", args[3])
-        self.assertIn("Click only when there is no other way", args[3])      # dedicated tools first, the page last
-
-    def test_codex_gets_them_as_its_config(self):
-        with mock.patch.object(browser, "ORIGIN", "http://127.0.0.1:4999"):
-            args = sessions.extra_args({"role": json.dumps({"browser": "0123456789abcdef"}), "harness": "codex", "cwd": "/w"})
-        self.assertEqual(args[:2], ["-c", f'mcp_servers.{browser.NAME}.url="http://127.0.0.1:4999/browser/w/0123456789abcdef/mcp"'])
-        self.assertTrue(args[3].startswith("developer_instructions="))
-
-    def test_an_actor_like_any_other_gets_nothing(self):
-        self.assertEqual(browser.launch_args({"role": None, "harness": "claude"}), [])
-        self.assertEqual(sessions.extra_args({"role": "coordinator", "harness": "claude"}), [])
 
 
 class WordsTest(unittest.TestCase):
@@ -402,59 +381,51 @@ class Picked(Home):
 
     def setUp(self):
         super().setUp()
-        self.bs = browser.Browsers(sessions.Sessions())
+        self.bs = self.browsers()
         self.addCleanup(self.bs.close)
         with mock.patch.object(browser, "available", lambda: True):
-            self.cfg = self.bs.create("g", self.root, "claude")
+            self.cfg = self.bs.keep(secrets.token_hex(8), self.root, "g")
         self.b = self.bs.get(self.cfg["key"])
 
-    def test_the_message_ends_with_the_page_what_the_user_did_and_picked(self):
+    def test_the_agent_is_told_the_page_what_the_user_did_and_picked(self):
         tab = browser.Tab("T1", "S1", "http://localhost:3000/cart", "Cart")
         self.b.tabs = [tab]
-        self.b.note("opened http://localhost:3000/cart")
-        self.b.note("the page went to http://localhost:3000/cart")       # the same move, told once
-        self.b.note("clicked button \"Checkout\"")
-        self.b.note("clicked button \"Checkout\"")
+        with mock.patch.object(browser, "TELL_AFTER", 30):                # told when the test says
+            self.b.note("opened http://localhost:3000/cart")
+            self.b.note("the page went to http://localhost:3000/cart")   # the same move, told once
+            self.b.note("clicked button \"Checkout\"")
+            self.b.note("clicked button \"Checkout\"")
         pick = {"kind": "element", "id": "p1", "label": 'button "Pay"', "selector": "form > button", "tag": "button",
                 "html": '<button class="pay">Pay</button>', "styles": {"color": "red"}, "image": "/up/p1.png",
                 "target": "T1", "node": 7}
         area = {"kind": "area", "id": "p2", "label": "an area 30×20", "box": [1, 2, 30, 20], "text": "Total $42",
                 "image": "/up/p2.png"}
         self.b.picks, self.b.kept_picks = [pick, area], {"p1": pick, "p2": area}
-        s = next(x for x in self.bs.started.list() if x["session_id"] == self.cfg["channel"])
-        with mock.patch.object(self.bs, "name_actor"):
-            text, told = self.bs.compose(s, "Make it blue")
-        self.assertIs(told, self.b)
-        words, state = text.split("\n\n", 1)
-        self.assertEqual(words, "Make it blue")
-        self.assertEqual(state.splitlines()[0], "<browser_state>")
+        state = self.told(self.b)
+        self.assertEqual(state.splitlines()[0], "The browser you share with the user:")
         self.assertIn("page: Cart — http://localhost:3000/cart", state)
-        self.assertIn('since their last message, the user: opened http://localhost:3000/cart; clicked button "Checkout"\n', state)
+        self.assertIn('the user: opened http://localhost:3000/cart; clicked button "Checkout"\n', state)
+        self.assertIn("they picked (use these refs in the browser_* tools, as e-refs):", state)
         self.assertIn('[p1] button "Pay"\n  where: form > button\n  html: <button class="pay">Pay</button>\n'
                       '  styles: color red\n  image: /up/p1.png', state)
         self.assertIn('[p2] an area 30×20 at (1, 2) of the page\n  text in it: "Total $42"\n  image: /up/p2.png', state)
-        self.assertTrue(state.endswith("</browser_state>"))
-        told.sent()
-        self.assertEqual((self.b.picks, self.b.log), ([], []))
+        self.assertEqual(self.b.log, [])                                   # told: not again
+        n = len(self.told_to)
+        self.b._tell()
+        self.assertEqual(len(self.told_to), n)                             # nothing new: nothing told
+        self.b.sent()                                                      # their next message seen
+        self.assertEqual(self.b.picks, [])
         self.assertEqual(set(self.b.kept_picks), {"p1", "p2"})              # their refs work on
-        self.assertNotIn("picked", self.b.compose("again"))
 
-    def test_another_actor_s_message_is_as_typed(self):
-        self.assertEqual(self.bs.compose({"role": None}, "hi"), ("hi", None))
-
-    def test_its_actor_is_named_once_by_the_name_given_else_by_its_folder(self):
-        named = queue.Queue()
-        with mock.patch.object(browser, "NAME_WAIT", 0), \
-                mock.patch.object(browser, "available", lambda: True), \
-                mock.patch.object(browser.naming, "record",
-                                  lambda g, channel, name: named.put((g, channel, browser.naming.clean(name)))):
-            self.bs.name_actor(self.cfg["key"], "Checkout")
-            self.assertEqual(named.get(timeout=5), ("g", self.cfg["channel"], "Checkout"))
-            self.bs.name_actor(self.cfg["key"])              # named already: not again
-            other = self.bs.create("g", self.root, "claude")
-            self.bs.name_actor(other["key"])
-            self.assertEqual(named.get(timeout=5), ("g", other["channel"], "Browser · site"))
-            self.assertTrue(named.empty())
+    def test_a_pick_is_told_at_once_and_the_rest_after_a_while(self):
+        with mock.patch.object(browser, "TELL_AFTER", 0.2):
+            self.b.note('clicked button "Next"')
+            time.sleep(0.05)
+            self.assertEqual(self.told_to, [])                             # a run of clicks and typing: one message
+            end = time.time() + 5
+            while not self.told_to and time.time() < end:
+                time.sleep(0.02)
+        self.assertIn('the user: clicked button "Next"', self.told_to[-1][1])
 
     def test_refs_say_why_they_do_not_work(self):
         self.b.ref_n = 5
@@ -473,100 +444,14 @@ class Picked(Home):
             self.bs.get("../x")
 
 
-class ServerTest(Home):
-    """The routes, through the dashboard's server: made, messaged, its MCP server's tools, the page's only."""
-
-    def setUp(self):
-        super().setUp()
-        from ag_dashboard import server
-        self.httpd = server.serve("127.0.0.1", 0, live_updates=False)
-        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
-        self.addCleanup(self.httpd.server_close)
-        self.addCleanup(self.httpd.shutdown)
-        self.url = f"http://127.0.0.1:{self.httpd.server_port}"
-        with mock.patch.object(browser, "available", lambda: True):
-            self.cfg = self.post("/api/browser", {"gatherer": "g", "cwd": self.root, "harness": "claude"})
-
-    def post(self, path: str, body, headers=None):
-        req = urllib.request.Request(self.url + path, data=json.dumps(body).encode(),
-                                     headers={"Content-Type": "application/json", **(headers or {})}, method="POST")
-        with urllib.request.urlopen(req, timeout=10) as res:
-            raw = res.read()
-        return json.loads(raw) if raw else None
-
-    def test_made_its_actor_listed_with_its_role(self):
-        s = next(x for x in self.httpd.sessions.list() if x["session_id"] == self.cfg["channel"])
-        self.assertEqual(browser.key_of(s), self.cfg["key"])
-        self.assertEqual(os.path.realpath(s["cwd"]), self.root)
-
-    def test_a_message_to_it_carries_the_browser_state_and_its_picks_are_told(self):
-        b = self.httpd.apps["browser"].get(self.cfg["key"])
-        b.picks = [{"kind": "area", "id": "p1", "label": "an area", "box": [0, 0, 5, 5]}]
-        sent = []
-        with mock.patch.object(sessions.Sessions, "send", lambda self, sid, text, *a: sent.append(text) or {"ok": 1}), \
-                mock.patch.object(self.httpd.apps["browser"], "name_actor"):
-            self.post("/api/send", {"session_id": self.cfg["channel"], "text": "look here"})
-            self.post("/api/send", {"session_id": self.cfg["channel"], "text": "/compact"})
-        self.assertTrue(sent[0].startswith("look here\n\n<browser_state>"))
-        self.assertIn("[p1] an area", sent[0])
-        self.assertEqual(sent[1], "/compact")                               # a command, as typed
-        self.assertEqual(b.picks, [])
-
-    def test_its_mcp_server_lists_the_tools(self):
-        base = f"/browser/w/{self.cfg['key']}/mcp"
-        init = self.post(base, {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
-        self.assertEqual(init["result"]["serverInfo"]["name"], browser.NAME)
-        listed = self.post(base, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
-        self.assertEqual([t["name"] for t in listed["result"]["tools"]], [t["name"] for t in browser.TOOLS])
-
-    def test_only_the_dashboard_s_own_page_may_post(self):
-        with self.assertRaises(urllib.error.HTTPError) as got:
-            self.post(f"/browser/w/{self.cfg['key']}/nav", {"url": "example.com"}, {"Origin": "http://evil.example"})
-        self.assertEqual(got.exception.code, 403)
-
-    def test_what_the_page_shows_is_answered_and_a_file_kept_for_it_through_the_routes(self):
-        key = self.cfg["key"]
-        with self.assertRaises(urllib.error.HTTPError) as got:     # a list gone (or never there): nothing set
-            self.post(f"/browser/w/{key}/choose", {"n": 7, "index": 0})
-        self.assertEqual(got.exception.code, 409)
-        fid = self.post(f"/browser/w/{key}/file", {"name": "a.txt", "data": base64.b64encode(b"hi").decode()})["id"]
-        with open(self.httpd.apps["browser"].get(key).uploads[fid]) as fh:
-            self.assertEqual(fh.read(), "hi")
-        with self.assertRaises(urllib.error.HTTPError) as got:
-            self.post(f"/browser/w/{key}/file", {"name": "a.txt", "data": "not base64!"})
-        self.assertEqual(got.exception.code, 400)
-        with self.assertRaises(urllib.error.HTTPError) as got:
-            self.post(f"/browser/w/{key}/reveal", {"i": 3})
-        self.assertEqual(got.exception.code, 404)
-        b = self.httpd.apps["browser"].get(key)
-        self.post(f"/browser/w/{key}/stop", {})                              # the user's Esc: until their next message
-        self.assertTrue(b.state()["halted"])
-        b.sent()
-        self.assertFalse(b.state()["halted"])
-        viewer = b.join(page="pg1", visible=True)
-        self.addCleanup(b.leave, viewer)
-        self.assertTrue(b.watching())
-        self.post(f"/browser/w/{key}/watch", {"page": "pg1", "visible": False})   # its tab behind another
-        self.assertFalse(b.watching())
-
-    def test_an_unknown_browser_is_not_found(self):
-        for path in (f"/browser/w/{'0' * 16}/nav", "/browser/w/zz/nav"):
-            with self.assertRaises(urllib.error.HTTPError) as got:
-                self.post(path, {"url": "x"})
-            self.assertEqual(got.exception.code, 404)
-        with self.assertRaises(urllib.error.HTTPError) as got:
-            urllib.request.urlopen(f"{self.url}/browser/w/{'0' * 16}/stream", timeout=5)
-        self.assertEqual(got.exception.code, 404)
-
-
 class ChromeBase(Home):
     """A Browser in a real Chrome, headless, and the tests' ways to use it."""
 
     def setUp(self):
         super().setUp()
-        self.bs = browser.Browsers(sessions.Sessions())
+        self.bs = self.browsers()
         self.addCleanup(self.bs.close)
-        self.cfg = self.bs.create("g", self.root, "claude")
+        self.cfg = self.bs.keep(secrets.token_hex(8), self.root, "g")
         self.key = self.cfg["key"]
         self.b = self.bs.get(self.key)
 
@@ -662,7 +547,7 @@ class ChromeTest(ChromeBase):
                       {"type": "text", "text": "!"}])
         self.assertEqual(self.text("evaluate", expression="email.value"), "me@x.or!")
         time.sleep(0.5)
-        message = self.b.compose("make p1 blue")
+        message = self.told(self.b)
         self.assertIn('typed into textbox "Email"', message)
         self.assertIn('clicked textbox "Email"', message)
         self.assertIn("[p1] button", message)
@@ -773,7 +658,7 @@ class ChromeTest(ChromeBase):
             time.sleep(0.1)
         self.assertEqual([t.url.rsplit("/", 1)[-1] for t in self.b.tabs], ["index.html", "two.html", "two.html"])
         self.assertEqual(self.b.active, 0)                                # behind, as Chrome opens them
-        self.assertIn("a new tab opened behind", self.b.compose(""))
+        self.assertIn("a new tab opened behind", self.told(self.b))
 
     def test_a_page_asking_for_a_passkey_still_takes_the_user_s_clicks(self):
         """No passkey can be given here (PASSKEYS in browser.py): the request waits on the page, and the user can
@@ -1123,7 +1008,7 @@ class ExpectTest(ChromeBase):
             self.assertIn("expect", listed[name]["required"], name)
         self.assertNotIn("expect", listed["snapshot"].get("properties", {}))
         self.assertIn("expect", listed["tabs"]["properties"])
-        self.assertIn("Assume the user is using the page while you think", browser.instructions(self.root))
+        self.assertIn("Assume the user is using the page while you think", browser.instructions())
 
     def test_rows_the_user_sorted_the_check_follows_the_row_and_the_right_one_is_deleted(self):
         delete = self.delete_in_row_1()
@@ -1589,7 +1474,7 @@ class StepsTest(ChromeBase):
         self.assertIn("needs a list of steps", self.said(self.bs.call(self.key, "steps", {"steps": []})))
         listed = {t["name"]: t for t in browser.TOOLS}
         self.assertEqual(listed["steps"]["inputSchema"]["required"], ["steps"])
-        self.assertIn("## Several actions in one call", browser.instructions(self.root))
+        self.assertIn("## Several actions in one call", browser.instructions())
 
 
 @unittest.skipUnless(browser.available(), "no Chrome here")
@@ -1664,7 +1549,7 @@ class WatchedTest(ChromeBase):
         self.assertEqual(self.b.state()["actions"][-1]["text"], "Didn't click \"Agent's\": you stopped it (Esc)")
         self.assertIn("the user stopped you (Esc)", self.said(self.call("click", ref=self.b_)))
         self.assertIn("page: Invoices", self.text("snapshot"))              # looking still is
-        self.assertIn("pressed Esc to stop you", self.b.compose("why?"))    # told with their message
+        self.assertIn("pressed Esc to stop you", self.told(self.b))        # told the agent
         self.b.sent()
         self.b.watch("pg", False)
         self.text("click", ref=self.b_)
@@ -1716,9 +1601,9 @@ class UsersChromeTest(Home):
         dirs = mock.patch.dict(browser.USER_DIRS, {sys.platform: [self.user]})
         dirs.start()
         self.addCleanup(dirs.stop)
-        self.bs = browser.Browsers(sessions.Sessions())
+        self.bs = self.browsers()
         self.addCleanup(self.bs.close)
-        self.cfg = self.bs.create("g", self.root, "claude")
+        self.cfg = self.bs.keep(secrets.token_hex(8), self.root, "g")
         self.b = self.bs.get(self.cfg["key"])
 
     def text(self, name: str, **args) -> str:
@@ -1826,7 +1711,7 @@ class ImportLoginsTest(Home):
         return {c["name"]: c for c in bs.chrome.cdp().call("Storage.getCookies", {})["cookies"]}
 
     def test_the_picked_sites_logins_are_copied_for_every_browser_and_kept(self):
-        bs = browser.Browsers(sessions.Sessions())
+        bs = self.browsers()
         listed = {s["site"]: s["cookies"] for s in bs.login_sites()["sites"]}
         self.assertEqual((listed.get("figma.test"), listed.get("else.test")), (2, 1))
         self.assertNotIn("secret-1", json.dumps(listed))
@@ -1838,13 +1723,13 @@ class ImportLoginsTest(Home):
         self.assertIn("pref", ours)
         self.assertNotIn("other", ours)                             # a site not picked: not copied
         bs.close()                                                  # its Chrome stopped: the cookies written to disk
-        again = browser.Browsers(sessions.Sessions())
+        again = self.browsers()
         self.addCleanup(again.close)
         self.assertEqual(self.ours(again)["sid"]["value"], "secret-1")
 
     def test_with_the_user_s_chrome_used_already_there_is_nothing_to_import(self):
         self.config('[dashboard]\nbrowser_profile = "mine"\n')
-        bs = browser.Browsers(sessions.Sessions())
+        bs = self.browsers()
         self.addCleanup(bs.close)
         with self.assertRaisesRegex(browser.BrowserError, "own Chrome"):
             bs.login_sites()

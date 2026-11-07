@@ -144,7 +144,7 @@ function open(): void {
   wire(w);
   pages = new Pages(w, log, (target, url) => !w.isDestroyed() && w.webContents.send("ag:still", { target, url }), {
     pagePreload: path.join(HERE, "page-preload.cjs"),
-    downloads: path.join(home, "dashboard", "downloads"), // (ag's own Chrome's: browser.py's downloads_dir)
+    downloads: path.join(home, "dashboard", "downloads"), // (ag's own Chrome's: ag_apps/browser/core.py's downloads_dir)
     permissions: path.join(app.getPath("userData"), "permissions.json"),
   });
   // Closing the window is not quitting (desktop/DESIGN.md): on a Mac it is hidden, its Browsers' pages kept open (the

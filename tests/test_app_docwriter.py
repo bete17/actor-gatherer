@@ -373,7 +373,8 @@ class AppTest(Hosted):
                 {"session_id": "c9", "gatherer": "g", "cwd": self.root, "role": json.dumps({"browser": "34" * 8})}]
         with mock.patch.object(again, "adopt", wraps=again.adopt) as adopted:
             app_agents.adopt_all(type("S", (), {"list": lambda self: rows})(), again)
-        self.assertEqual([c.args[:3] for c in adopted.call_args_list], [("docwriter", "g", key)])   # the Browser's: not an app yet
+        self.assertEqual([c.args[:3] for c in adopted.call_args_list],
+                         [("docwriter", "g", key), ("browser", "g", "34" * 8)])        # each app's own, as its app
 
     def request_on(self, h, inst, method, path, body=None):
         r = h.request("docwriter", inst, method, path, {}, json.dumps(body).encode() if body is not None else b"")

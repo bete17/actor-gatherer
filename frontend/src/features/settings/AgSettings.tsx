@@ -1,11 +1,9 @@
 // ag's settings, at the top of the dashboard's panel: the Gatherer's model, a new gatherer's defaults, the harnesses
-// ag runs, Browser logins, and config.toml itself in a dialog over the page. The markup and its classes are the page's
+// ag runs, and config.toml itself in a dialog over the page (a Browser's logins: its panel's own menu). The markup and its classes are the page's
 // before (frontend/index.html's #cfg, src/legacy/css/00-base.css), so it looks as it did.
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { createPortal } from "react-dom";
-import { post } from "../../core/api/client";
 import type { Settings } from "../../core/api/types";
-import { useDashboard } from "../../core/store";
 import { unset, useSettings } from "./store";
 
 const MODELS = [
@@ -17,9 +15,6 @@ const MODELS = [
 ];
 const NO_MODEL =
   "No model set: every Gatherer call fails until one is. A coding agent on its own login (claude-code/…, codex/…), or any LiteLLM provider/model.";
-const LOGINS_NOTE =
-  "Every Browser here uses ag's own Chrome, and its logins. Copy sites' logins from your Chrome: it asks you to allow it, once.";
-const LOGINS_MINE = 'Browsers here run in your own Chrome (browser_profile = "mine"): they have its logins already.';
 
 type Note = { text: string; kind?: "bad" | "err" };
 const noteClass = (n: Note) => "cfg-note" + (n.kind ? " " + n.kind : "");
@@ -60,7 +55,6 @@ export function AgSettings({ closePanel }: AgSettingsProps) {
         <h4>Harnesses</h4>
         <Harnesses s={s} />
       </div>
-      <Logins />
       <div className="row">
         <span className="cfg-path" id="cfg-path" title={s.path}>
           {s.path}
@@ -306,138 +300,6 @@ function Harnesses({ s }: { s: Settings }) {
       ) : (
         <span className="cfg-note">ag writes them here the first time it runs a harness.</span>
       )}
-    </div>
-  );
-}
-
-/** Browser logins: the user's Chrome's, copied into ag's own -- the profile every Browser of this dashboard uses
- * (browser.py's `login_sites`, `import_logins`): the sites listed (names and counts only), those picked imported. */
-function Logins() {
-  const home = useDashboard((x) => x.home);
-  const [sites, setSites] = useState<{ site: string; cookies: number }[] | null>(null);
-  const [picked, setPicked] = useState<Set<string>>(new Set());
-  const [filter, setFilter] = useState("");
-  const [note, setNote] = useState<Note>({ text: LOGINS_NOTE });
-  const [count, setCount] = useState<Note | null>(null);
-  const [reading, setReading] = useState(false);
-  const [importing, setImporting] = useState(false);
-  const filterBox = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    if (sites) filterBox.current?.focus();
-  }, [sites]);
-  const on = !!home?.browser;
-  const mine = on && home?.browser_profile === "mine";
-  if (!on) return null;
-  const read = async () => {
-    setReading(true);
-    setNote({ text: "Waiting for your Chrome: click Allow in its “Allow remote debugging?” dialog…" });
-    try {
-      const got = (
-        await post<{ sites: { site: string; cookies: number }[] }>("/api/browser/logins", { action: "sites" })
-      ).sites;
-      setSites(got);
-      setPicked(new Set());
-      setFilter("");
-      setCount(null);
-      setNote({
-        text: `Your Chrome has cookies for ${got.length} sites. Pick those whose logins every Browser here, and its agent, may use.`,
-      });
-    } catch (e) {
-      setNote({ text: (e as Error).message, kind: "err" });
-    } finally {
-      setReading(false);
-    }
-  };
-  const take = async () => {
-    setImporting(true);
-    try {
-      const got = await post<{ imported: { site: string; cookies: number }[]; reloaded?: number }>(
-        "/api/browser/logins",
-        {
-          action: "import",
-          sites: [...picked],
-        },
-      );
-      const done = got.imported.map((i) => `${i.site} (${i.cookies} cookie${i.cookies === 1 ? "" : "s"})`).join(", ");
-      const again = got.reloaded ? ` ${got.reloaded} tab${got.reloaded === 1 ? "" : "s"} on them loaded again.` : "";
-      setSites(null);
-      setPicked(new Set());
-      setNote({ text: `Imported: ${done}.${again}` });
-      setImporting(false);
-    } catch (e) {
-      setCount({ text: (e as Error).message, kind: "err" });
-      setImporting(false);
-    }
-  };
-  const q = filter.trim().toLowerCase();
-  const shown = (sites || []).filter((x) => !q || x.site.includes(q));
-  const pick = (site: string, on: boolean) => {
-    const next = new Set(picked);
-    if (on) next.add(site);
-    else next.delete(site);
-    setPicked(next);
-    setCount(
-      next.size
-        ? { text: `${next.size} picked: ${[...next].slice(0, 3).join(", ")}${next.size > 3 ? ", …" : ""}` }
-        : null,
-    );
-  };
-  return (
-    <div className="cfg-logins" id="cfg-logins">
-      <h4>Browser logins</h4>
-      <div className={noteClass(mine ? { text: LOGINS_MINE } : note)} id="cfg-logins-note">
-        {mine ? LOGINS_MINE : note.text}
-      </div>
-      <div className="row" hidden={mine}>
-        <span></span>
-        <button type="button" id="cfg-logins-read" disabled={reading} onClick={() => void read()}>
-          Import from your Chrome…
-        </button>
-      </div>
-      <div className="cfg-logins-pick" id="cfg-logins-pick" hidden={mine || !sites}>
-        <input
-          ref={filterBox}
-          id="cfg-logins-filter"
-          placeholder="Filter sites"
-          spellCheck={false}
-          autoComplete="off"
-          aria-label="Filter sites"
-          value={filter}
-          onChange={(ev) => setFilter(ev.target.value)}
-        />
-        <div className="cfg-logins-list" id="cfg-logins-list" role="group" aria-label="Sites">
-          {shown.length ? (
-            shown.map((x) => (
-              <label key={x.site}>
-                <input
-                  type="checkbox"
-                  value={x.site}
-                  checked={picked.has(x.site)}
-                  onChange={(ev) => pick(x.site, ev.target.checked)}
-                />
-                <span>{x.site}</span>
-                <span className="n">{`${x.cookies}`}</span>
-              </label>
-            ))
-          ) : (
-            <span className="cfg-note">{q ? "No site matches." : "Your Chrome has no cookies."}</span>
-          )}
-        </div>
-        <div className="row">
-          <span className={count ? noteClass(count) : "cfg-note"} id="cfg-logins-count">
-            {count?.text ?? ""}
-          </span>
-          <button
-            className="primary"
-            type="button"
-            id="cfg-logins-import"
-            disabled={!picked.size || importing}
-            onClick={() => void take()}
-          >
-            Import
-          </button>
-        </div>
-      </div>
     </div>
   );
 }

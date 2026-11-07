@@ -25,6 +25,7 @@ GET its panel's files (`/` is its entry), the panels' SDK (/_ag/app.js) and the 
 apps (/_ag/lib/..., libs.py), and /api/<path>?gatherer&instance (any method) its backend's `request`. A
 write there only from that origin. No other route of the dashboard answers there, its WebSocket included."""
 
+import asyncio
 import hmac
 import mimetypes
 import os
@@ -33,7 +34,7 @@ from typing import Optional
 from urllib.parse import parse_qsl, unquote
 
 import anyio
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, WebSocket, WebSocketDisconnect
 from starlette.datastructures import Headers
 from starlette.responses import Response
 
@@ -41,8 +42,9 @@ import app_kit
 import harness_kit
 from app_kit import AppError, Caller, remote
 
-from .. import app_agents, app_host, libs, mcp, tool_gateway
-from .common import Body, Errors, Parts, answer, failure, local_only, not_found, queue_events
+from .. import app_agents, app_host, desktop, editor, libs, mcp, tool_gateway
+from .common import (KEEPALIVE_EVENT, Body, Errors, Events, Parts, answer, blocking, event, failure, local_only, named_here, not_found,
+                     queue_events)
 
 router = APIRouter(route_class=Errors)
 ORIGIN_HOST = re.compile(r"^([a-z][a-z0-9-]{0,23})\.localhost(?::\d+)?$")
@@ -50,6 +52,9 @@ SDK_PATH = "/_ag/app.js"                         # the panels' SDK (app_kit/js/a
 LIB_PATH = "/_ag/lib/"                           # the libraries the dashboard shares with apps (libs.py)
 #: A backend request naming its instance in its path, /api/w/<gatherer>/<instance>/<rest>, for URLs a panel can't add a
 #: query to (an image, a page in a frame, a viewer's file): the same as <rest>?gatherer=..&instance=..
+DESKTOP_FIRST_WAIT = 10.0                        # seconds the desktop app's token is waited for
+APP_MAX_BODY = 40_000_000                        # the largest request body an app's panel sends its backend (a file
+                                                 # given a page, as base64 in JSON: the Browser takes up to 22 MB)
 IN_PATH = re.compile(r"^w/([^/]+)/([0-9a-f]{16})(?:/(.*))?$")
 SDK = os.path.join(os.path.dirname(os.path.abspath(app_kit.__file__)), "js", "app.js")
 
@@ -228,6 +233,60 @@ def apps_mark(srv: Parts, name: str) -> Response:
                                                                      "content-security-policy": "script-src 'none'"})
 
 
+@router.websocket("/api/desktop")
+async def desktop_link(ws: WebSocket) -> None:
+    """The ag desktop app's link (desktop/DESIGN.md, "The app link"; desktop.py): one WebSocket the desktop app opens to
+    its dashboard, over which it plays the browser for the native pages of the apps that ask `native_view` -- the
+    Chrome DevTools Protocol, each message JSON text, as Chrome's own connection carries them, each tagged with its app
+    ("app": app_host.py's `native_link`) -- until either side closes. The desktop app opens no port of its own: nothing
+    connects to it. Only the desktop app may use it: its first message is the home's token (desktop.py's `app_token`),
+    which it reads from the home and no web page can; and a page's socket always says where the page is (Origin),
+    where the desktop app's says nothing."""
+    srv = ws.app.state.server
+    h = getattr(srv, "app_host", None) if srv is not None else None
+    if h is None or ws.headers.get("origin") or not named_here(ws.headers.get("host"), srv):
+        await ws.close(code=1008)
+        return
+    await ws.accept()
+    try:
+        token = await asyncio.wait_for(ws.receive_text(), DESKTOP_FIRST_WAIT)
+    except (asyncio.TimeoutError, WebSocketDisconnect, KeyError):
+        await _close_socket(ws)
+        return
+    if not hmac.compare_digest(token.encode("utf-8"), desktop.app_token().encode("utf-8")):
+        await _close_socket(ws, 1008)
+        return
+    loop = asyncio.get_running_loop()
+    out: "asyncio.Queue" = asyncio.Queue()       # to the desktop app, from any thread: `send`; None, `close`
+    got = await anyio.to_thread.run_sync(h.native_link, lambda text: loop.call_soon_threadsafe(out.put_nowait, text),
+                                         lambda: loop.call_soon_threadsafe(out.put_nowait, None))
+
+    async def to_app() -> None:
+        while True:
+            text = await out.get()
+            if text is None:
+                break
+            await ws.send_text(text)
+        await _close_socket(ws)
+
+    sending = asyncio.create_task(to_app())
+    try:
+        while True:
+            got(await ws.receive_text())
+    except (WebSocketDisconnect, KeyError, RuntimeError):
+        pass
+    finally:
+        got(None)                                # the link gone: the apps' native pages with it (paused)
+        sending.cancel()
+
+
+async def _close_socket(ws: WebSocket, code: int = 1000) -> None:
+    try:
+        await ws.close(code=code)
+    except Exception:                            # noqa: BLE001 - closed already
+        pass
+
+
 @router.post("/api/apps/start")
 def apps_start(srv: Parts, body: Body) -> Response:
     """{app, gatherer, cwd, harness?, model?}: a new instance of an app that starts an agent of its own ([agent] start),
@@ -336,7 +395,10 @@ class Origins:
         if path == "/api" or path.startswith("/api/"):
             if method != "GET" and headers.get("origin") != origin:
                 return await send_plain(403, b"only the app's own panel may do that", scope, receive, send)
-            body = await _read_body(receive)
+            try:
+                body = await _read_body(receive)
+            except _TooLarge:
+                return await send_plain(413, b"too large a request", scope, receive, send)
             query = dict(parse_qsl((scope.get("query_string") or b"").decode("latin-1")))
             rest = path[len("/api/"):]
             at = IN_PATH.match(rest)              # /api/w/<gatherer>/<instance>/...: what a URL with no query names
@@ -349,6 +411,8 @@ class Origins:
                 r = await anyio.to_thread.run_sync(h.request, hosted.manifest.name, inst, method, rest, query, body)
             except AppError as exc:
                 return await _failed(exc)(scope, receive, send)
+            if r.events is not None:                     # server-sent events (Response.stream), as they come
+                return await _streamed(*r.events)(scope, receive, send)
             return await Response(r.body, r.status, headers=_with_framed(r.headers, srv))(scope, receive, send)
         if method != "GET":
             return await send_plain(405, b"its panel's files are read only", scope, receive, send)
@@ -383,6 +447,20 @@ def _with_framed(headers: dict, srv) -> dict:
     return {**out, **framed, "content-security-policy": csp}
 
 
+def _streamed(take, close) -> Events:
+    """An app's server-sent events (app_kit's Response.stream): `take` asked in a thread till it says the end."""
+    async def events():
+        while True:
+            got = await blocking(take, editor.GONE_CHECK)
+            if got is None:
+                return
+            if not got:
+                yield KEEPALIVE_EVENT
+            for name, value in got:
+                yield event(name, value)
+    return Events(events(), close=close)
+
+
 def _panel_file(manifest, path: str) -> Optional[str]:
     """The file of the app's panel a path names: `/` its entry; anything outside its panel's folder, none."""
     entry = manifest.panel_path()
@@ -396,11 +474,20 @@ def _panel_file(manifest, path: str) -> Optional[str]:
     return full
 
 
+class _TooLarge(Exception):
+    pass
+
+
 async def _read_body(receive) -> bytes:
-    chunks, more = [], True
+    """A request's body, at most APP_MAX_BODY bytes (more: _TooLarge, answered 413)."""
+    chunks, more, size = [], True, 0
     while more:
         msg = await receive()
-        chunks.append(msg.get("body", b""))
+        chunk = msg.get("body", b"")
+        size += len(chunk)
+        if size > APP_MAX_BODY:
+            raise _TooLarge()
+        chunks.append(chunk)
         more = msg.get("more_body", False)
     return b"".join(chunks)
 

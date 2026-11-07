@@ -7,6 +7,20 @@ user's own input there work on them; and so do find, downloads, sites' permissio
 A throwaway prototype (an Electron shell around a test dashboard, kept outside the repo) tried each risky part on
 2026-11-04; what it showed is below.
 
+**Since the Browser became an app (2026-11-07, app_kit/DESIGN.md step 8):** the Browser's code is
+`ag_apps/browser/` (`core.py` was `ag_dashboard/browser.py`, `video.py` was `browser_video.py`), its view a panel in
+an iframe on its own origin above its actor. What below names those files means them there. Three things work
+differently, and generally -- for any app that asks the `native_view` capability, not the Browser alone:
+- **Where a page goes:** the page no longer marks its panes for the preload to scan. The app's panel reports where its
+  screen is (app_kit's `ag.native.show`), the page offsets that by the panel's frame, checks the dashboard's own
+  overlays over it, and hands the list to the preload (`agApp.place`); a still picture goes back through the page to
+  the panel, which says once it is drawn (`agApp.onStill`, `agApp.stillDrawn`).
+- **The link** (`/api/desktop`) is the app host's (ag_dashboard/api/apps.py, `desktop.py`'s token): it hands it to each
+  such app, every message tagged with its app ("app"). The desktop app keeps each app's pages apart -- made, seen,
+  driven and placed for that app alone -- each app in a profile of its own; the Browser's is `persist:browsers`, as
+  before, so its logins stay. A message naming no app is the Browser's.
+- **Hiding a page:** closing its panel, not switching the actor's view; clicking its actor opens the panel again.
+
 The app is the dashboard in a window of its own, with one difference: a Browser's page is a real, native Chromium
 page inside the Browser pane, not a streamed picture of a hidden Chrome tab.
 

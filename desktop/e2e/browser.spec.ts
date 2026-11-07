@@ -1,8 +1,10 @@
-// Step 2 end to end (desktop/DESIGN.md): in the app, a Browser's tab is a native page kept over its pane; the agent's
-// tools act on it through the app's link; a page's popup opens as a real one and hands its result back; quitting the app
-// pauses the Browser, and opening it again brings its tabs back. A real dashboard from this checkout, a local test site.
-import { _electron as electron, expect, test, type ElectronApplication, type Page } from "@playwright/test";
-import { spawn, type ChildProcess } from "node:child_process";
+// Step 2 end to end (desktop/DESIGN.md): in the app, a Browser's tab is a native page kept over its panel's screen (the
+// Browser app's: ag_apps/browser/, its panel an iframe on its own origin that says where its screen is: app_kit's
+// ag.native); the agent's tools act on it through the app's link; a page's popup opens as a real one and hands its result
+// back; quitting the app pauses the Browser, and opening it again brings its tabs back. A real dashboard from this
+// checkout, a local test site.
+import { _electron as electron, expect, test, type ElectronApplication, type FrameLocator, type Page } from "@playwright/test";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
@@ -38,6 +40,7 @@ let home = "";
 let port = 0;
 let site = "";
 let key = "";
+let agent = ""; // the Browser's actor: its tools called as it calls them
 let dashboard: ChildProcess | null = null;
 let siteServer: http.Server | null = null;
 
@@ -56,17 +59,19 @@ const freePort = () =>
     });
   });
 
-/** A request to the dashboard, as its own page makes one: its JSON answer. */
-function ask(route: string, body?: unknown): Promise<Record<string, unknown>> {
+/** A request to the dashboard, as its own page makes one: its JSON answer. `app`: to that app's own origin, as its panel
+ * makes one (the Browser's routes, /api/w/<gatherer>/<instance>/...). */
+function ask(route: string, body?: unknown, app?: string): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     const data = body === undefined ? undefined : JSON.stringify(body);
+    const host = app ? `${app}.localhost:${port}` : `127.0.0.1:${port}`;
     const req = http.request(
       {
         host: "127.0.0.1",
         port,
         path: route,
         method: data === undefined ? "GET" : "POST",
-        headers: { "content-type": "application/json", origin: `http://127.0.0.1:${port}` },
+        headers: { "content-type": "application/json", origin: `http://${host}`, host },
       },
       (res) => {
         let text = "";
@@ -85,13 +90,28 @@ function ask(route: string, body?: unknown): Promise<Record<string, unknown>> {
   });
 }
 
-/** One of the agent's tools, as its harness calls it: the tool's text. */
+/** One of the agent's tools, as its harness calls it (the tool gateway's browser_<tool>): the tool's text. */
 async function tool(name: string, args: Record<string, unknown>): Promise<{ text: string; error: boolean }> {
-  const got = (await ask(`/browser/w/${key}/mcp`, { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } })) as {
-    result: { content: { text: string }[]; isError?: boolean };
+  const got = (await ask("/api/apps/agent/call", { actor: agent, tool: `browser_${name}`, args: { ...args, instance: key } })) as {
+    content: { text: string }[];
+    isError?: boolean;
   };
-  return { text: got.result.content.map((c) => c.text ?? "").join("\n"), error: !!got.result.isError };
+  return { text: got.content.map((c) => c.text ?? "").join("\n"), error: !!got.isError };
 }
+
+/** A request of the Browser's panel to its backend (its routes, on the app's own origin). */
+const browserAsk = (what: string, body: unknown = {}) => ask(`/api/w/g/${key}/${what}`, body, "browser");
+
+/** The Browser's panel, above its actor: its frame. */
+const panel = (page: Page): FrameLocator => page.frameLocator("#top-row .app-pane[data-app=browser] iframe");
+/** The panel's frame itself, to run a script in. */
+const panelFrame = (page: Page) => page.frames().find((f) => f.url().startsWith(`http://browser.localhost:${port}/`))!;
+/** The Browser's panel closed (its × in the top row: the Browser stays open), and opened again by its actor. */
+const closePanel = (page: Page) => page.locator("#top-row .app-pane[data-app=browser] .app-close").click();
+const openPanel = async (page: Page) => {
+  await page.locator(".agent:not(.coordinator)").first().click();
+  await expect(panel(page).locator(".bw-stage")).toBeVisible();
+};
 
 const ref = (snapshot: string, starts: string) => {
   const line = snapshot.split("\n").find((l) => l.trim().startsWith(`- ${starts}`));
@@ -145,8 +165,8 @@ async function launch(): Promise<{ app: ElectronApplication; page: Page }> {
   if (process.env.AG_E2E_DEBUG) app.process().stdout?.on("data", (d) => process.stdout.write(`[app] ${d}`));
   const page = await app.firstWindow();
   await page.waitForURL(`http://127.0.0.1:${port}/`, { timeout: 60_000 });
-  await page.locator(".agent:not(.coordinator)").first().click(); // the Browser's actor: it opens in the Browser view
-  await expect(page.locator(".bw-stage").first()).toBeVisible();
+  await page.locator(".agent:not(.coordinator)").first().click(); // the Browser's actor: its Browser opens above it
+  await expect(panel(page).locator(".bw-stage")).toBeVisible();
   return { app, page };
 }
 
@@ -156,8 +176,17 @@ test.beforeAll(async () => {
   const root = path.join(scratch, "site");
   mkdirSync(home);
   mkdirSync(root);
-  // No harness started by a view (headless chat); a model set, so no Settings panel opens over a fresh home's page.
-  writeFileSync(path.join(home, "config.toml"), '[dashboard]\nchat = "headless"\n\n[policies.llm]\nmodel = "claude-code/haiku"\n');
+  // ag's own config for a new home, with: no harness started by a view (headless chat); a model set, so no Settings
+  // panel opens over a fresh home's page. And gatherer g's database, as its first agent's first call makes it: what
+  // the Browser tells its agent is kept there (a gatherer with none holds it until it has one).
+  execFileSync(PYTHON, ["-c", [
+    "import os",
+    "from ag.ag_harness.home import home",
+    "h = home(); h.ensure()",
+    "p = os.path.join(h.root, 'config.toml'); s = open(p).read()",
+    "open(p, 'w').write(s.replace('model = \"\"', 'model = \"claude-code/haiku\"', 1) + '\\n[dashboard]\\nchat = \"headless\"\\n')",
+    "home().manager('g').init('g')",
+  ].join("\n")], { cwd: REPO, env: { ...env(), AG_HOME: home } });
   for (const [name, text] of [["index.html", SHOP], ["login.html", LOGIN], ["popup.html", POPUP], ["dialogs.html", DIALOGS],
     ["red.html", RED], ["notes.txt", "the notes\n"]])
     writeFileSync(path.join(root, name), text);
@@ -174,10 +203,15 @@ test.beforeAll(async () => {
   await new Promise<void>((r) => siteServer!.listen(0, "127.0.0.1", r));
   site = `http://127.0.0.1:${(siteServer.address() as AddressInfo).port}/`;
   port = await freePort();
-  dashboard = spawn(PYTHON, ["-m", "ag_dashboard", "--home", home, "--port", String(port)], { cwd: REPO, env: env(),
+  // ag run from this checkout (as the dashboard's own tests run it: tests/web_home.py), not one installed: the app's
+  // events are written with it
+  const withAg = { ...env(), AG_COMMAND: `${PYTHON} ${path.join(REPO, "ag", "cli", "ag")}` };
+  dashboard = spawn(PYTHON, ["-m", "ag_dashboard", "--home", home, "--port", String(port)], { cwd: REPO, env: withAg,
     stdio: process.env.AG_E2E_DEBUG ? ["ignore", "inherit", "inherit"] : "ignore" });
   await until(async () => (await ask("/api/home").catch((): Record<string, unknown> => ({}))).home === home);
-  key = String((await ask("/api/browser", { gatherer: "g", cwd: root, harness: "claude" })).key);
+  const made = await ask("/api/apps/start", { app: "browser", gatherer: "g", cwd: root, harness: "claude" });
+  key = String((made.instance as { id: string }).id);
+  agent = String((made.session as { session_id: string }).session_id);
 });
 
 test.afterAll(async () => {
@@ -193,9 +227,9 @@ test.afterAll(async () => {
 test("a Browser's tab is a native page over its pane, and the agent's tools act on it", async () => {
   const { app, page } = await launch();
   try {
-    expect((await ask(`/browser/w/${key}/nav`, { url: site })).done).toBe(site);
+    expect((await browserAsk("nav", { url: site })).done).toBe(site);
     await until(async () => (await pagesOf(app)).some((p) => p.url === site && p.visible));
-    const stage = await page.locator(".bw-stage").first().boundingBox();
+    const stage = await panel(page).locator(".bw-stage").boundingBox();
     const shown = (await pagesOf(app)).find((p) => p.url === site && p.visible)!;
     expect(Math.abs(shown.bounds.x - stage!.x)).toBeLessThan(2);
     expect(Math.abs(shown.bounds.y - stage!.y)).toBeLessThan(2);
@@ -208,7 +242,7 @@ test("a Browser's tab is a native page over its pane, and the agent's tools act 
     expect((await tool("click", { ref: pay, expect: still })).error).toBe(false);
     await until(async () => (await pageText(app, site, "#out")) === "paid app@example.com");
 
-    await page.getByRole("button", { name: "Terminal" }).click(); // another view: the page hidden, kept
+    await closePanel(page); // its panel closed: the page hidden, kept
     await until(async () => (await pagesOf(app)).every((p) => !p.visible));
   } finally {
     await app.close();
@@ -219,7 +253,7 @@ test("a page's popup opens as a real one and hands its result back", async () =>
   const { app } = await launch();
   try {
     await until(async () => (await pagesOf(app)).some((p) => p.url === site)); // its tab back, from before
-    expect((await ask(`/browser/w/${key}/nav`, { url: `${site}login.html` })).done).toBe(`${site}login.html`);
+    expect((await browserAsk("nav", { url: `${site}login.html` })).done).toBe(`${site}login.html`);
     const signIn = await refOnce('button "Sign in with popup"');
     const still = [{ js: "document.title === 'Login'", why: "the login page" }];
     expect((await tool("click", { ref: signIn, expect: still })).error).toBe(false);
@@ -232,7 +266,7 @@ test("a page's popup opens as a real one and hands its result back", async () =>
 
 test("quitting the app pauses the Browser; the agent is told to ask for the app", async () => {
   const { app } = await launch();
-  expect((await ask(`/browser/w/${key}/nav`, { url: `${site}login.html` })).done).toBe(`${site}login.html`);
+  expect((await browserAsk("nav", { url: `${site}login.html` })).done).toBe(`${site}login.html`);
   await refOnce('button "Sign in with popup"'); // loaded: its address is the tab's now
   await app.close();
   let said = "";
@@ -252,7 +286,8 @@ test("quitting the app pauses the Browser; the agent is told to ask for the app"
 /** The Browser's state, as a page showing it gets it first. */
 function stateOf(): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
-    const req = http.get({ host: "127.0.0.1", port, path: `/browser/w/${key}/stream?native=1&page=e2e` }, (res) => {
+    const req = http.get({ host: "127.0.0.1", port, path: `/api/w/g/${key}/stream?native=1&page=e2e`,
+      headers: { host: `browser.localhost:${port}` } }, (res) => {
       let text = "";
       res.on("data", (c) => {
         text += c;
@@ -301,7 +336,7 @@ const click = (x: number, y: number): Electron.InputEvent[] => [
 test("over the page: the agent's cues, Pick and Area, the user's click told, Esc, a menu over the pane", async () => {
   const { app, page } = await launch();
   try {
-    expect((await ask(`/browser/w/${key}/nav`, { url: site })).done).toBe(site);
+    expect((await browserAsk("nav", { url: site })).done).toBe(site);
     const email = await refOnce('textbox "Email"');
     const shop = [{ js: "document.title === 'Shop'", why: "the shop" }];
 
@@ -312,7 +347,7 @@ test("over the page: the agent's cues, Pick and Area, the user's click told, Esc
     // Pick, in Chrome's inspector: a click on the page picks, not clicks
     const picks = () => stateOf().then((s) => (s.picks as { label: string }[]).map((p) => p.label));
     const before = (await picks()).length;
-    await page.getByRole("button", { name: /Pick an element/ }).click();
+    await panel(page).getByRole("button", { name: /Pick an element/ }).click();
     await until(async () => (await stateOf()).picking === "pick");
     const [px, py] = await middleOf(app, site, "#pay");
     await native(app, site, [{ type: "mouseMove", x: px, y: py } as Electron.MouseInputEvent, ...click(px, py)]);
@@ -322,7 +357,7 @@ test("over the page: the agent's cues, Pick and Area, the user's click told, Esc
     expect((await stateOf()).picking).toBe(null);
 
     // Area: a box dragged over the page
-    await page.getByRole("button", { name: /Pick an area/ }).click();
+    await panel(page).getByRole("button", { name: /Pick an area/ }).click();
     await until(async () => (await stateOf()).picking === "area");
     await new Promise((r) => setTimeout(r, 300));                    // (its catcher drawn in the page)
     await native(app, site, [
@@ -340,14 +375,23 @@ test("over the page: the agent's cues, Pick and Area, the user's click told, Esc
     await native(app, site, click(bx, by));
     await until(async () => (await pageText(app, site, "#out"))?.startsWith("paid") ?? false);
     await new Promise((r) => setTimeout(r, 1500));                   // (past the agent's own last action)
-    expect((await tool("click", { ref: pay, expect: shop })).text).toContain('Meanwhile, the user: clicked button "Pay"');
+    // told the agent: with its next action, or, if it came after a while, as the Browser's message in its channel
+    const result = (await tool("click", { ref: pay, expect: shop })).text;
+    if (!result.includes('Meanwhile, the user: clicked button "Pay"')) {
+      const told = (await ask(`/api/apps/events?app=browser&gatherer=g&instance=${key}&types=context_stream&channel=${agent}`)) as {
+        events: { payload: { stream: string; text: string } }[];
+      };
+      expect(told.events.map((e) => [e.payload.stream, e.payload.text.includes('the user: clicked button "Pay"')])).toContainEqual(
+        ["Browser", true],
+      );
+    }
 
     // a menu of the dashboard's over the pane: a still picture of the page in its place, the page back after
-    await page.locator(".bw-feed .line").first().click();
+    await panel(page).locator(".bw-feed .line").click();
     await until(async () => (await pagesOf(app)).every((p) => !p.visible));
-    expect(await page.locator(".bw-stage > img").first().getAttribute("src")).toMatch(/^data:image\/png/);
+    expect(await panel(page).locator(".bw-stage > img").getAttribute("src")).toMatch(/^data:image\/png/);
     await page.keyboard.press("Escape");
-    await page.locator(".bw-bar input").first().click();             // (anywhere outside it closes it too)
+    await panel(page).locator(".bw-bar input[aria-label=Address]").click();   // (anywhere outside it closes it too)
     await until(async () => (await pagesOf(app)).some((p) => p.url === site && p.visible));
   } finally {
     await app.close();
@@ -362,7 +406,7 @@ test("over the page: the agent's cues, Pick and Area, the user's click told, Esc
 test("a card over the pane: the page hidden only once its picture is drawn, shown before the picture goes", async () => {
   const { app, page } = await launch();
   try {
-    expect((await ask(`/browser/w/${key}/nav`, { url: site })).done).toBe(site);
+    expect((await browserAsk("nav", { url: site })).done).toBe(site);
     await refOnce('button "Pay"');
     await until(async () => (await pagesOf(app)).some((p) => p.url === site && p.visible));
 
@@ -377,7 +421,7 @@ test("a card over the pane: the page hidden only once its picture is drawn, show
         last = now;
       }, 1);
     }, site);
-    await page.evaluate(() => {
+    await panelFrame(page).evaluate(() => {
       const w = window as unknown as { agDrawn: [number, boolean][] };
       w.agDrawn = [];
       const frame = () => {
@@ -389,7 +433,7 @@ test("a card over the pane: the page hidden only once its picture is drawn, show
       requestAnimationFrame(frame);
     });
 
-    const stage = (await page.locator(".bw-stage").first().boundingBox())!;
+    const stage = (await panel(page).locator(".bw-stage").boundingBox())!;
     for (let round = 0; round < 3; round++) {
       await page.evaluate(([x, y]) => {
         const d = document.createElement("div");
@@ -415,7 +459,7 @@ test("a card over the pane: the page hidden only once its picture is drawn, show
       clearInterval(g.agPoll);
       return g.agShown;
     });
-    const drawn = await page.evaluate(() => (window as unknown as { agDrawn: [number, boolean][] }).agDrawn);
+    const drawn = await panelFrame(page).evaluate(() => (window as unknown as { agDrawn: [number, boolean][] }).agDrawn);
     const drawnAt = (t: number) => drawn.filter(([at]) => at <= t).at(-1)?.[1] ?? false;
     const gaps: string[] = [];
     for (let i = 0; i < shown.length; i++) {
@@ -439,7 +483,7 @@ test("a page's dialogs, find, downloads and permission asks", async () => {
   const { app, page } = await launch();
   try {
     const url = `${site}dialogs.html`;
-    expect((await ask(`/browser/w/${key}/nav`, { url })).done).toBe(url);
+    expect((await browserAsk("nav", { url })).done).toBe(url);
     const here = [{ js: "document.title === 'Dialogs'", why: "the dialogs page" }];
 
     // a confirm the agent's click opens, which it answers itself
@@ -450,7 +494,7 @@ test("a page's dialogs, find, downloads and permission asks", async () => {
 
     // a prompt the user answers, in the dashboard's dialog over the page's still picture
     void tool("click", { ref: await refOnce('button "Prompt"'), expect: here });
-    const card = page.locator(".bw-stage > .dialog").first();
+    const card = panel(page).locator(".bw-stage > .dialog:not(.chooser)");
     await expect(card).toBeVisible({ timeout: 15_000 });
     await until(async () => (await pagesOf(app)).every((p) => !p.visible));   // (the page under it, as a picture)
     await card.locator("input").fill("Grace");
@@ -463,7 +507,7 @@ test("a page's dialogs, find, downloads and permission asks", async () => {
       { type: "keyDown", keyCode: "F", modifiers: ["meta"] } as Electron.KeyboardInputEvent,
       { type: "keyUp", keyCode: "F", modifiers: ["meta"] } as Electron.KeyboardInputEvent,
     ]);
-    const bar = page.locator(".bw-find").first();
+    const bar = panel(page).locator(".bw-find");
     await expect(bar).toBeVisible();
     await bar.locator("input").fill("Dialogs");
     await expect(bar.locator(".n")).toHaveText("1 of 1");
@@ -518,10 +562,10 @@ const colorOf = (app: ElectronApplication, url: string, fx: number, fy: number) 
 test("a tab the agent opens while its pane shows something else: at the pane's size, drawn whole, pictured", async () => {
   const { app, page } = await launch();
   try {
-    expect((await ask(`/browser/w/${key}/nav`, { url: site })).done).toBe(site);
+    expect((await browserAsk("nav", { url: site })).done).toBe(site);
     await refOnce('button "Pay"');
-    const pane = (await page.locator(".bw-stage").first().boundingBox())!;
-    await page.getByRole("button", { name: "Chat", exact: true }).click();
+    const pane = (await panel(page).locator(".bw-stage").boundingBox())!;
+    await closePanel(page);
     await until(async () => (await pagesOf(app)).every((p) => !p.visible));
 
     const red = `${site}red.html`;
@@ -542,8 +586,8 @@ test("a tab the agent opens while its pane shows something else: at the pane's s
       Object.assign(d.style, { position: "fixed", left: "0", right: "0", bottom: "0", height: "40%", background: "#333", zIndex: "50" });
       document.body.append(d);
     });
-    await page.getByRole("button", { name: "Browser", exact: true }).click();
-    const still = page.locator(".bw-stage > img").first();
+    await openPanel(page);
+    const still = panel(page).locator(".bw-stage > img");
     await until(async () => ((await still.getAttribute("src")) || "").length > 1000);
     const pixel = await still.evaluate(async (img: HTMLImageElement) => {
       await img.decode();
@@ -573,7 +617,7 @@ test("a tab the agent opens while its pane shows something else: at the pane's s
 test("Esc on the page stops the agent", async () => {
   const { app } = await launch();
   try {
-    expect((await ask(`/browser/w/${key}/nav`, { url: site })).done).toBe(site);
+    expect((await browserAsk("nav", { url: site })).done).toBe(site);
     const pay = await refOnce('button "Pay"');
     const shop = [{ js: "document.title === 'Shop'", why: "the shop" }];
     // its steps, shown coming one by one, stop

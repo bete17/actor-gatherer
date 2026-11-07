@@ -270,6 +270,39 @@ class EventsTest(HostBase):
                          ["the user in Notes: pinned: buy milk"])
 
 
+class HeldWritesTest(HostBase):
+    """A gatherer with no database yet (a new one, before its first agent's first call): its writes held, in order,
+    and written once its database is there -- holding up neither a flush nor another gatherer's writes."""
+
+    def test_a_new_gatherer_s_writes_wait_for_its_database_and_hold_up_nothing(self):
+        written, made = [], set()
+
+        def write(gatherer, properties, events, types):
+            if gatherer not in made:
+                raise RuntimeError(f"{{\"error\": \"no database for gatherer '{gatherer}'\"}}")
+            written.append((gatherer, events[0]["payload"]["n"]))
+
+        made.add("old")
+        h = app_host.AppHost(0, write=write)
+        self.addCleanup(h.close)
+        ev = lambda n: [{"type": "x", "payload": {"n": n}}]   # noqa: E731
+        h._write("new", {}, ev(1), [])
+        h._write("new", {}, ev(2), [])
+        h._write("old", {}, ev(3), [])
+        begun = time.time()
+        h.flush()
+        self.assertLess(time.time() - begun, 1.0)              # not held up by the new gatherer's
+        self.assertEqual(written, [("old", 3)])
+        made.add("new")
+        db = app_host.home.db_path("new")
+        os.makedirs(os.path.dirname(db), exist_ok=True)
+        open(db, "w").close()                                  # its database, there now
+        end = time.time() + 10
+        while len(written) < 3 and time.time() < end:
+            time.sleep(0.05)
+        self.assertEqual(written, [("old", 3), ("new", 1), ("new", 2)])   # in order, once it is there
+
+
 class CallsTest(HostBase):
     def setUp(self):
         super().setUp()

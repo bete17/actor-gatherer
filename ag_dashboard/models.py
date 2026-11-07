@@ -8,9 +8,8 @@ field not named here is kept (`extra="allow"`): the models say what the page rea
 
 from typing import Any, Dict, List, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, create_model
+from pydantic import BaseModel, ConfigDict
 
-from . import apps
 
 Number = Union[int, float]
 
@@ -91,9 +90,7 @@ class _Home(Answer):
     branches: Optional[List[Any]] = None
 
 
-#: The home with each app's own fields (apps.py's `home_fields`: whether one can be made here, ...).
-Home = create_model("Home", __base__=_Home, __doc__=_Home.__doc__, __module__=__name__,
-                    **{k: (Optional[t], None) for k, t in apps.home_fields().items()})
+Home = _Home
 
 
 class Agent(Answer):

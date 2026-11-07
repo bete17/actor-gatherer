@@ -30,7 +30,7 @@ from typing import Optional
 
 import harness_kit
 
-from . import (actions, app_agents, app_host, apps, avatars, branches, coordination, data, editor, folders, home, live,
+from . import (actions, app_agents, app_host, avatars, branches, coordination, data, editor, folders, home, live,
                migrating, page_build, saved, sessions, tool_gateway)
 
 STATIC, INDEX = page_build.STATIC, page_build.INDEX   # frontend/'s build (vite.config.ts), built by page_build.py
@@ -47,7 +47,7 @@ KEEPALIVE = 15.0            # the most a stream stays silent
 COALESCE = 0.03             # after a wake, how long to wait for the rest of a burst (a call stores many events)
 SHARED_SECONDS = 2.0        # a home read for one stream given to another woken by the same change: at most this old
 MAX_BODY = 30_000_000       # the largest request body taken: a message, or an image pasted into one (an app's
-                            # page's writes: its own, apps.py's `max_body`)
+                            # panel's, on its own origin: api/apps.py's APP_MAX_BODY)
 MAX_ALSO = 8                # the most other actors one stream follows (the page shows at most 4 panes)
 THREADS = 1000              # the most requests and stream waits at once, each in a thread, as http.server's had one each
 STOP_SECONDS = 2.0          # how long a stop waits for requests still being answered (its streams end at once)
@@ -158,14 +158,12 @@ class Server:
         self.editors = editor.Editors()                                # the files open in the Editor panel
         self.listener = self.fallback = self.rest = self.address_file = None   # for server_close,
         self.app_host = None
-        self.apps = {}                                                                          # which a failed bind calls
         self.socket = self.app = self._uvicorn = self._done = self._failed = None
         self._lock = threading.Lock()
         self._shared, self._sharing = {"version": None, "at": 0.0, "value": None}, threading.Lock()
-        self.apps = {a.name: a.start(self.sessions) for a in apps.APPS}   # each app's running part, by its name
         self.branches = branches.Branches(self.editors, self.sessions, self.hub.ring)   # the actors' own branches
         self.crew = coordination.Coordination(self.sessions, self.hub.ring, watch=live_updates,   # actors' `ag actors`
-                                              branched=self.branches, apps=self.apps)
+                                              branched=self.branches)
         self.keeps_actions = False
         try:
             self.socket = _bind(address)
@@ -178,8 +176,6 @@ class Server:
         except BaseException:
             self.server_close()
             raise
-        for a in apps.APPS:                                            # where their actors reach it
-            a.served_at(f"http://127.0.0.1:{self.server_port}")
         tool_gateway.HOST, tool_gateway.ORIGIN = self.app_host, f"http://127.0.0.1:{self.server_port}"   # the apps'
                                                                        # tools, for every session it starts
         if live_updates:                                              # an app's actors from before it was an app,
@@ -220,8 +216,7 @@ class Server:
     def read_home(self) -> dict:
         """The home as the page gets it: with the sessions' state, and what a new session starts from -- the
         harnesses it can run on here (sessions.py's `available`); the shells open, and the user's home directory,
-        which the page shows their directories under as ~; what each app says of itself (apps.py's `home`: whether
-        one can be made here). A name held for a session's terminal is typed there once its turn is over
+        which the page shows their directories under as ~. A name held for a session's terminal is typed there once its turn is over
         (`rename_due`). Its agents as read before (data.py's `Kept`), where kept."""
         started = self.sessions
         got = data.home(started.list(), self.known)
@@ -231,8 +226,7 @@ class Server:
         return {**avatars.assign(got), "cwd": os.getcwd(), "permission_modes": list(sessions.PERMISSION_MODES),
                 "terminals": sessions.TERMINALS, "harnesses": sessions.available(), "shells": started.shells(),
                 "home_dir": os.path.expanduser("~"), "editor": editor.AVAILABLE,
-                "branches": self.branches.listed() if self.branches is not None else [],
-                **{k: v for a in apps.APPS for k, v in a.home(self.apps.get(a.name)).items()}}
+                "branches": self.branches.listed() if self.branches is not None else []}
 
     def dialog(self, sid: str) -> Optional[dict]:
         """What a session's terminal -- the dashboard's -- shows asking the user now, where a message typed into it
@@ -304,7 +298,7 @@ class Server:
         """Everything stopped: uvicorn (if it still serves), the parts, the socket, the sessions' agents and shells."""
         self._stop()
         for part in (self.listener, self.fallback, self.rest, self.editors, self.crew, self.branches,
-                     *self.apps.values(), self.app_host):
+                     self.app_host):
             if part is not None:
                 part.close()
         if self.keeps_actions:
