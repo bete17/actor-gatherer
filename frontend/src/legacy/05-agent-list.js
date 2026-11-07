@@ -109,7 +109,8 @@ async function setSaved(gname, a, save) {
 // in it moves up a level.
 const FOLDER_CHARS = 60;
 const byName = (x, y) => x.localeCompare(y, undefined, { sensitivity: "base" }) || (x < y ? -1 : x > y ? 1 : 0);
-const treeOf = (gname) => (state.home.folders || {})[gname] || { folders: [], filed: {} };
+// `gname` GF: the folders gatherers are kept in (05-gatherer-folders.js), their tree as a gatherer's, filed by gatherer
+const treeOf = (gname) => (gname === GF ? state.home.gatherer_folders : (state.home.folders || {})[gname]) || { folders: [], filed: {} };
 const folderById = (gname, id) => id === null || id === undefined ? null : treeOf(gname).folders.find((f) => f.id === id) || null;
 // the folder a folder is in: its id, or null for the gatherer's top (one gone: the top)
 const parentOf = (gname, f) => folderById(gname, f.parent) ? f.parent : null;
@@ -183,9 +184,10 @@ const foldersOpen = (() => {
   return new Set();
 })();
 const folderKey = (gname, id) => `${gname}\u0000${id}`;
-const isOpenFolder = (gname, id) => foldersOpen.has(folderKey(gname, id));
+const isOpenFolder = (gname, id) => gname === GF ? !gfFolded.has(id) : foldersOpen.has(folderKey(gname, id));
 function showFolder(gname, id, open) {
   if (id === null) return;
+  if (gname === GF) return gfShow(id, open);
   const k = folderKey(gname, id);
   if (open) foldersOpen.add(k); else foldersOpen.delete(k);
   try { localStorage.setItem(FOLDERS_OPEN_KEY, JSON.stringify([...foldersOpen])); } catch (e) { /* kept for this page only */ }
@@ -206,22 +208,25 @@ function freeName(gname, parent, base) {
 }
 // The page's own copy changed as the server will change it (`change(the gatherer's tree)`), so the list shows it at
 // once; the server's answer, or the next home, has the last word (whichever is newer: takeHome). -> the answer, or null.
+// The folders gatherers are kept in (GF): their own request, their own field of the home.
 async function folderPost(gname, body, change = null) {
-  const before = state.home.folders;
+  const gf = gname === GF, field = gf ? "gatherer_folders" : "folders", before = state.home[field];
   if (change) {
-    const all = structuredClone(state.home.folders || {});
-    change(all[gname] = all[gname] || { folders: [], filed: {} });
-    state.home.folders = all;
+    if (gf) { const tree = structuredClone(treeOf(GF)); change(tree); state.home.gatherer_folders = tree; } else {
+      const all = structuredClone(state.home.folders || {});
+      change(all[gname] = all[gname] || { folders: [], filed: {} });
+      state.home.folders = all;
+    }
   }
   renderAgents();
   if (SNAPSHOT) return null;                       // a snapshot has no server: this page only
   const asked = homesTaken;
   try {
-    const got = await post("/api/folders", { gatherer: gname, ...body });
-    if (!homeSince(asked)) state.home.folders = got.folders;
+    const got = await post(gf ? "/api/gatherer-folders" : "/api/folders", gf ? body : { gatherer: gname, ...body });
+    if (!homeSince(asked)) state.home[field] = got[field];
     return got;
   } catch (err) {
-    if (!homeSince(asked)) state.home.folders = before;
+    if (!homeSince(asked)) state.home[field] = before;
     setLive(`Not done: ${err.message}`);
     return null;
   } finally { redrawList(); }
@@ -406,42 +411,16 @@ function renderAgents() {
   nameMoving = true;                                 // taken out and put back: not a blur that names it
   document.getElementById("home").textContent = document.getElementById("home").title = state.home.home;
   const shown = state.home.gatherers.filter((g) => !isHidden(g)), hidden = state.home.gatherers.filter(isHidden);
-  aside.replaceChildren(el("div", { class: "aside-head" }, el("h2", { text: "Agents" }),
+  // its head: a gatherer or a folder of gatherers dropped on it, at the list's top (05-gatherer-folders.js)
+  aside.replaceChildren(dropOn(el("div", { class: "aside-head" }, el("h2", { text: "Agents" }),
     SNAPSHOT ? null : el("button", { type: "button", onclick: () => openForm(""), title: "Make a new gatherer" }, "+ New gatherer"),
-    el("span", { class: "list-btns" }, ...listButtons())));
+    SNAPSHOT ? null : el("button", { class: "gf-new", type: "button", title: "New folder, to keep gatherers in",
+      "aria-label": "New folder, to keep gatherers in", onclick: () => startFolderEdit(GF, null, null) }, strokeIcon(ICONS.folderNew, 15)),
+    el("span", { class: "list-btns" }, ...listButtons())), GFS, null, () => {}));
   if (state.adding && state.adding.gatherer === "") aside.append(gathererForm());
   if (!state.home.gatherers.length) aside.append(el("div", { class: "servers", text: "No gatherers in this home yet." }));
   else if (!shown.length) aside.append(el("div", { class: "servers", text: "Every gatherer is hidden." }));
-  for (const g of shown) {
-    const open = !collapsed.has(g.name);
-    const crew = g.agents.find(isCoordinator);
-    const box = el("div", { class: "gatherer" + (picks.g === g.name && picks.cs.size > 1 ? " picking" : "") },
-      dropOn(el("div", { class: "gatherer-row", "data-key": g.name },
-        el("button", { class: "name", type: "button", "aria-expanded": open ? "true" : "false", onclick: () => toggleGatherer(g.name),
-          title: g.policy ? `${g.name} · policy ${g.policy}` : g.name },
-          el("span", { class: "caret", text: "▶" }),
-          state.renaming && isAt([state.renaming.g, state.renaming.c], g.name, null) ? null
-            : el("span", { class: "gname", text: titleOf(g) })),
-        state.renaming && isAt([state.renaming.g, state.renaming.c], g.name, null) ? nameBox() : null,
-        SNAPSHOT ? null : crewButton(g),                 // its gatherer agent, just after its name
-        // how many of its actors wait on the user, how many stopped on an error, and how many run now; nothing while none does
-        // -- and over them while it is hovered (or in focus), in a folder's line's order: "+ actor", "+ ⋯", a new folder,
-        // rename, and hide (a folder's: delete)
-        el("span", { class: "fill", onclick: () => toggleGatherer(g.name) }, ...gathererCounts(g),
-          el("span", { class: "g-acts", onclick: (ev) => ev.stopPropagation() }, ...(SNAPSHOT ? [] : startButtons(g)),
-            SNAPSHOT ? null : el("button", { class: "act newfolder", type: "button", title: `New folder in ${titleOf(g)}`,
-              "aria-label": `New folder in ${titleOf(g)}`, onclick: () => startFolderEdit(g.name, null, null) }, strokeIcon(ICONS.folderNew, 14)),
-            SNAPSHOT ? null : el("button", { class: "act rename", type: "button", title: `Rename ${titleOf(g)}`, "aria-label": `Rename ${titleOf(g)}`,
-              onclick: () => retitle(g) }, strokeIcon("M10.6 2.6l2.8 2.8-7.9 7.9-3.4.6.6-3.4zM9.1 4.1l2.8 2.8", 14)),
-            el("button", { class: "act hide", type: "button", title: `Hide ${g.name}`, "aria-label": `Hide ${g.name}`, onclick: () => setHidden(g, true) },
-              hideIcon())))), g, null, () => { if (collapsed.has(g.name)) toggleGatherer(g.name); }));
-    if (state.adding && state.adding.gatherer === g.name) box.append(newForm());
-    if (g.error) box.append(el("div", { class: "servers", text: `Database unreadable: ${g.error}` }));
-    // open: what is in it -- its gatherer agent, then its box's rows -- set in under its row, as a folder's are (g-kids)
-    const kids = open ? [crew && !crewHidden.has(g.name) ? agentRow(g, crew, CREW_GROUP) : null, ...boxRows(g, null)].filter(Boolean) : [];
-    if (kids.length) box.append(el("div", { class: "g-kids" }, ...kids));
-    aside.append(box);
-  }
+  aside.append(...gfLevel(shown, null, gathererBox));   // its gatherers, in the folders the reader keeps them in, if any
   if (hidden.length) {
     const list = el("details", { class: "hidden-list", id: "hidden-gatherers" },
       el("summary", { text: `${hidden.length} hidden gatherer${hidden.length === 1 ? "" : "s"}` }));
@@ -466,6 +445,38 @@ function renderAgents() {
   const servers = state.home.hook_servers || [];     // in the dashboard's panel (the header's button)
   document.getElementById("servers").textContent = servers.length
     ? servers.map((s) => `:${s.port} → ${s.upstream}`).join("\n") : "None running.";
+}
+// A gatherer's box in the list: its row -- its name, its gatherer agent, its counts, its buttons over them on hover --
+// and, open, what is in it set in under it. Its row dragged (dragGatherer): put in a folder of gatherers.
+function gathererBox(g) {
+  const open = !collapsed.has(g.name);
+  const crew = g.agents.find(isCoordinator);
+  const box = el("div", { class: "gatherer" + (picks.g === g.name && picks.cs.size > 1 ? " picking" : "") },
+    dropOn(dragGatherer(el("div", { class: "gatherer-row", "data-key": g.name },
+      el("button", { class: "name", type: "button", "aria-expanded": open ? "true" : "false", onclick: () => toggleGatherer(g.name),
+        title: g.policy ? `${g.name} · policy ${g.policy}` : g.name },
+        el("span", { class: "caret", text: "▶" }),
+        state.renaming && isAt([state.renaming.g, state.renaming.c], g.name, null) ? null
+          : el("span", { class: "gname", text: titleOf(g) })),
+      state.renaming && isAt([state.renaming.g, state.renaming.c], g.name, null) ? nameBox() : null,
+      SNAPSHOT ? null : crewButton(g),                 // its gatherer agent, just after its name
+      // how many of its actors wait on the user, how many stopped on an error, and how many run now; nothing while none does
+      // -- and over them while it is hovered (or in focus), in a folder's line's order: "+ actor", "+ ⋯", a new folder,
+      // rename, and hide (a folder's: delete)
+      el("span", { class: "fill", onclick: () => toggleGatherer(g.name) }, ...gathererCounts(g),
+        el("span", { class: "g-acts", onclick: (ev) => ev.stopPropagation() }, ...(SNAPSHOT ? [] : startButtons(g)),
+          SNAPSHOT ? null : el("button", { class: "act newfolder", type: "button", title: `New folder in ${titleOf(g)}`,
+            "aria-label": `New folder in ${titleOf(g)}`, onclick: () => startFolderEdit(g.name, null, null) }, strokeIcon(ICONS.folderNew, 14)),
+          SNAPSHOT ? null : el("button", { class: "act rename", type: "button", title: `Rename ${titleOf(g)}`, "aria-label": `Rename ${titleOf(g)}`,
+            onclick: () => retitle(g) }, strokeIcon("M10.6 2.6l2.8 2.8-7.9 7.9-3.4.6.6-3.4zM9.1 4.1l2.8 2.8", 14)),
+          el("button", { class: "act hide", type: "button", title: `Hide ${g.name}`, "aria-label": `Hide ${g.name}`, onclick: () => setHidden(g, true) },
+            hideIcon())))), g), g, null, () => { if (collapsed.has(g.name)) toggleGatherer(g.name); }));
+  if (state.adding && state.adding.gatherer === g.name) box.append(newForm());
+  if (g.error) box.append(el("div", { class: "servers", text: `Database unreadable: ${g.error}` }));
+  // open: what is in it -- its gatherer agent, then its box's rows -- set in under its row, as a folder's are (g-kids)
+  const kids = open ? [crew && !crewHidden.has(g.name) ? agentRow(g, crew, CREW_GROUP) : null, ...boxRows(g, null)].filter(Boolean) : [];
+  if (kids.length) box.append(el("div", { class: "g-kids" }, ...kids));
+  return box;
 }
 // A user's message in a chat bubble: src/features/chat/Bubble.tsx (ag_dashboard/DESIGN.md, A5).
 // A message between the actors of a gatherer (coordination.py's `envelope`), typed into the receiver's terminal: its first
@@ -888,10 +899,10 @@ let listDrag = null;
 const DROP_OPEN_MS = 700, DRAG_LOST_MS = 3000;
 function startDrag(ev, g, what) {
   if (listDrag) endDrag();
-  listDrag = { g: g.name, cs: what.cs || null, folder: what.folder ?? null, later: false, force: false, revealed: false, seen: Date.now(), spring: null,
+  listDrag = { g: g.name, cs: what.cs || null, gs: what.gs || null, folder: what.folder ?? null, later: false, force: false, revealed: false, seen: Date.now(), spring: null,
     watch: setInterval(() => { if (listDrag && Date.now() - listDrag.seen > DRAG_LOST_MS) endDrag(); }, 500) };
   ev.dataTransfer.effectAllowed = "move";
-  ev.dataTransfer.setData("text/plain", what.cs ? what.cs.join(",") : `folder:${what.folder}`);
+  ev.dataTransfer.setData("text/plain", what.cs ? what.cs.join(",") : what.gs ? what.gs.join(",") : `folder:${what.folder}`);
   if (what.cs && what.cs.length > 1) {               // several: said on what is dragged
     const ghost = el("div", { class: "drag-ghost", text: `${what.cs.length} actors` });
     document.body.append(ghost);
@@ -906,7 +917,8 @@ function startDrag(ev, g, what) {
 // \u0000 one CSS.escape cannot write)
 function markDragged() {
   if (!listDrag) return;
-  const keys = listDrag.cs ? listDrag.cs.map((c) => `${listDrag.g}/${c}`) : [`${listDrag.g}/folder:${listDrag.folder}`];
+  const keys = listDrag.cs ? listDrag.cs.map((c) => `${listDrag.g}/${c}`) : listDrag.gs ? listDrag.gs   // a gatherer: its row's
+    : [`${listDrag.g}/folder:${listDrag.folder}`];
   for (const k of keys) for (const n of document.querySelectorAll(`#agents [data-key="${CSS.escape(k)}"]`)) n.classList.add("dragging");
   const cards = new Set(listDrag.cs ? listDrag.cs.map((c) => key(listDrag.g, c)) : []);
   for (const n of document.querySelectorAll("#rail .r-actor[data-card]")) if (cards.has(n.dataset.card)) n.classList.add("dragging");
@@ -936,7 +948,8 @@ function endDrag() {
 document.addEventListener("dragover", () => { if (listDrag) listDrag.seen = Date.now(); }, true);
 document.addEventListener("drop", () => { if (listDrag) setTimeout(endDrag, 0); }, true);   // anywhere: after the line's own
 // Whether what is dragged may go into folder `id` (null: the gatherer's top): of that gatherer; a folder, not into
-// itself nor one of its own, nor where it is; actors, one of them at least not there yet.
+// itself nor one of its own, nor where it is; actors, one of them at least not there yet. A gatherer (`gs`) only into a
+// folder of gatherers (`g` GFS), or the list's top: not where it is.
 function canDrop(g, id) {
   const d = listDrag;
   if (!d || d.g !== g.name) return false;
@@ -944,6 +957,7 @@ function canDrop(g, id) {
     const f = folderById(g.name, d.folder);
     return !!f && parentOf(g.name, f) !== id && !(id !== null && within(g.name, id, d.folder));
   }
+  if (d.gs) return d.gs.some((name) => gfOf(name) !== id);
   return d.cs.some((c) => { const a = g.agents.find((x) => x.channel === c); return !!a && folderOf(g.name, a) !== id; });
 }
 // `id`: the folder what is dropped on `n` goes into (null: the gatherer's top); `open`, what opens when one is held over it
@@ -973,6 +987,7 @@ function dropOn(n, g, id, open) {
     d.later = false;                                 // drawn by the move, next
     endDrag();
     if (d.folder !== null) { moveFolder(g.name, d.folder, id); return; }
+    if (d.gs) { fileGatherers(d.gs.filter((name) => gfOf(name) !== id), id); return; }
     const actors = d.cs.map((c) => now.agents.find((x) => x.channel === c)).filter((a) => a && folderOf(g.name, a) !== id);
     if (d.cs.length > 1) clearPicks(false);
     fileActors(g.name, actors, id);

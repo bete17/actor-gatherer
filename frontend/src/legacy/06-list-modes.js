@@ -268,25 +268,9 @@ function renderRail() {
   // -- every folder of the gatherer whose actors are dragged, to drop them in (railDragged)
   const view = (g) => ({ ...busy.get(g.name), only: !railShow.folders && !(listDrag && listDrag.g === g.name),
     saved: railShow.saved, closed: railShow.closed });
+  // drilled in: where it is; else every gatherer, in the folders the reader keeps them in, if any (05-gatherer-folders.js)
   if (here) list.append(railHere(here, view(here.g)));
-  for (const g of here ? [] : shown) {
-    const open = !collapsed.has(g.name), crew = g.agents.find(isCoordinator);
-    const sec = el("section", { class: "r-gatherer" + (open ? " open" : ""), "aria-label": titleOf(g) },
-      dropOn(el("button", { class: "r-gname", type: "button", "aria-expanded": open ? "true" : "false", "data-card": key(g.name, "gatherer:"),
-        ...(HOVERS.matches ? {} : { title: `${titleOf(g)}${titleOf(g) !== g.name ? ` (${g.name})` : ""}: ${open ? "fold it" : "show its actors"} · double-click: only it` }),
-        onclick: railNameClick(() => toggleGatherer(g.name), { g: g.name, f: null }) },
-        el("span", { class: "tx" }, el("span", { class: "caret", text: "▶" }),
-          el("span", { class: "nm", text: titleOf(g) }))), g, null, () => { if (collapsed.has(g.name)) toggleGatherer(g.name); }));
-    if (!open) {                                      // folded: its counts, and those of its actors open in the panes
-      const counts = gathererCounts(g);
-      if (counts.length) sec.append(el("div", { class: "r-counts" }, ...counts));
-      for (const a of g.agents) if (openActors().some((sel) => isAt(sel, g.name, a.channel))) sec.append(railActor(g, a));
-    } else {
-      // what is in it, in one box under its name (r-kids), set in: a tree, as the list's folders are, each folder's in its bracket
-      sec.append(el("div", { class: "r-kids" }, crew && !crewHidden.has(g.name) ? railActor(g, crew) : null, ...railBox(g, null, view(g))));
-    }
-    list.append(sec);
-  }
+  else list.append(...railGfLevel(shown, null, (g) => railGatherer(g, view(g))));
   if (!shown.length) list.append(el("div", { class: "r-none", text: state.home.gatherers.length ? "Every gatherer is hidden" : "No gatherers" }));
   // its buttons -- open the list, settings, full screen -- the header's, in one row over it (01-layout.css); then the
   // totals of what every actor does (railTotals), then the tree, drawn again; then its foot, as it was (RAIL_FOOT)
@@ -300,6 +284,26 @@ function renderRail() {
   railMoved = false;
   markDragged();                                     // drawn mid-drag: what is dragged, still shown as it
   if (hover.from === "rail") cardDraw();
+}
+// A gatherer in the rail: its name, a button folding it as the list does (a double-click: only it); folded, the counts
+// the list shows for it, and its actors open in a pane; open, what is in it, under its name. `view`: as railBox's.
+function railGatherer(g, view) {
+  const open = !collapsed.has(g.name), crew = g.agents.find(isCoordinator);
+  const sec = el("section", { class: "r-gatherer" + (open ? " open" : ""), "aria-label": titleOf(g) },
+    dropOn(el("button", { class: "r-gname", type: "button", "aria-expanded": open ? "true" : "false", "data-card": key(g.name, "gatherer:"),
+      ...(HOVERS.matches ? {} : { title: `${titleOf(g)}${titleOf(g) !== g.name ? ` (${g.name})` : ""}: ${open ? "fold it" : "show its actors"} · double-click: only it` }),
+      onclick: railNameClick(() => toggleGatherer(g.name), { g: g.name, f: null }) },
+      el("span", { class: "tx" }, el("span", { class: "caret", text: "▶" }),
+        el("span", { class: "nm", text: titleOf(g) }))), g, null, () => { if (collapsed.has(g.name)) toggleGatherer(g.name); }));
+  if (!open) {                                      // folded: its counts, and those of its actors open in the panes
+    const counts = gathererCounts(g);
+    if (counts.length) sec.append(el("div", { class: "r-counts" }, ...counts));
+    for (const a of g.agents) if (openActors().some((sel) => isAt(sel, g.name, a.channel))) sec.append(railActor(g, a));
+  } else {
+    // what is in it, in one box under its name (r-kids), set in: a tree, as the list's folders are, each folder's in its bracket
+    sec.append(el("div", { class: "r-kids" }, crew && !crewHidden.has(g.name) ? railActor(g, crew) : null, ...railBox(g, null, view)));
+  }
+  return sec;
 }
 // An actor dragged from the rail (dragRow, startDrag): the rail drawn again with every folder of its gatherer -- those
 // the foot's "folders" leaves out too, folded -- so it can be dropped in one (renderRail's view); as it was once the

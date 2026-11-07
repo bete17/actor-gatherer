@@ -264,6 +264,13 @@ header .brand .list-btns { display: none; margin-left: -6px; }
    folder's, the centre line kept */
 .rail .r-gatherer > :is(.r-kids, .r-actor, .r-fopen, .r-ffold, .r-fold, .r-none) { margin-left: 4px; margin-right: 4px; }
 .rail .r-fopen > .r-kids > :is(.r-fopen, .r-ffold) { margin-left: 3px; margin-right: 3px; }
+/* A FOLDER OF GATHERERS (05-gatherer-folders.js, r-gf): as a gatherer's folders are -- its name in a bracket, a little
+   bolder -- in the rail's gutter at its top, 4px in from both sides; the gatherers in it not set in further, so every
+   avatar stays on the centre line; a folder in it 3px in from both, as a folder in a folder */
+.rail .r-actors > .r-gf { width: calc(100% - 8px); margin-left: 4px; margin-right: 4px; }
+.rail .r-gf > .r-kids > :is(.r-gatherer, .r-none) { margin-left: 0; margin-right: 0; }
+.rail .r-gf > :is(.r-fname, .r-fhead) { font-weight: 600; }
+.rail .r-gf + .r-gatherer, .rail .r-gatherer + .r-gf { margin-top: 4px; }
 /* drilled in (railHere): Up and Root, then where it is -- the path to it small, its name -- and what is in it, not set in */
 .rail .r-nav { display: flex; gap: 2px; padding: 0 0 4px; }
 .rail .r-navb { flex: 1 1 0; min-width: 0; display: inline-flex; align-items: center; justify-content: center; gap: 2px; border: 0; background: var(--wash); color: var(--ink-2); font: inherit; font-size: 11px;

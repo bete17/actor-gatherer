@@ -87,7 +87,7 @@ from typing import Any, Dict, List, Optional
 
 from . import home as paths
 from . import seen as looked                    # `seen` names a file's stat here
-from . import answers, avatars, folders, hiding, live, saved, sessions, titles
+from . import answers, avatars, folders, gatherer_folders, hiding, live, saved, sessions, titles
 import harness_kit
 from harness_kit import USERS, Kind
 from harness_kit.base import output_of as _output  # noqa: F401 - a tool result's words, as files.py reads them
@@ -270,7 +270,7 @@ def home(started: Optional[List[dict]] = None, kept: Optional["Kept"] = None) ->
     gatherers.sort(key=lambda g: g.get("created") or 0, reverse=True)
     return {"home": paths.HOME, "now": now, "running_seconds": RUNNING_SECONDS, "gatherers": gatherers,
             "hook_servers": _hook_servers(), "hiding": hiding.stored(), "titles": titles.stored(), "saved": saved.stored(),
-            "folders": folders.stored(),
+            "folders": folders.stored(), "gatherer_folders": gatherer_folders.stored(),
             "seen": looked.stored(), "harness_info": harness_info(), "harness_default": harness_kit.DEFAULT}
 
 

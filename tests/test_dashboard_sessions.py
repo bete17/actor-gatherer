@@ -1608,6 +1608,31 @@ class EndpointTest(SessionsBase):
         self.assertEqual(ask({"gatherer": "", "do": "new", "name": "x"})[0], 400)
         self.assertEqual(self.post("/api/folders", {"gatherer": "g", "do": "new", "name": "y"}, {"Origin": "https://evil.example"})[0], 403)
 
+    def test_gatherers_are_kept_in_folders_of_their_own(self):
+        ask = lambda body: self.post("/api/gatherer-folders", body)    # noqa: E731
+        home = lambda: json.load(urllib.request.urlopen(self.url + "/api/home", timeout=10))   # noqa: E731
+        self.assertEqual(home()["gatherer_folders"], {"folders": [], "filed": {}})
+        code, got = ask({"do": "new", "name": " Work "})
+        work = got["made"]
+        self.assertEqual((code, got["gatherer_folders"]), (200, {"folders": [{"id": work, "parent": None, "name": "Work"}], "filed": {}}))
+        old = ask({"do": "new", "name": "Old", "parent": work})[1]["made"]
+        self.assertEqual(ask({"do": "new", "name": "work"}), (400, {"error": 'there is a folder "Work" there already'}))
+        code, got = ask({"do": "file", "gatherers": ["g", "h"], "folder": old})
+        self.assertEqual((code, got["gatherer_folders"]["filed"]), (200, {"g": old, "h": old}))
+        self.assertEqual(ask({"do": "file", "gatherers": ["h"]})[1]["gatherer_folders"]["filed"], {"g": old})   # at the top again
+        self.assertEqual(ask({"do": "rename", "id": old, "to": "Earlier"})[0], 200)
+        self.assertEqual(ask({"do": "move", "id": work, "parent": old}),
+                         (400, {"error": '"Work" can\'t go in itself, nor in a folder of its own'}))
+        ask({"do": "move", "id": old})                                             # at the top
+        code, got = ask({"do": "delete", "id": old})                               # its gatherer: at the top
+        self.assertEqual((code, got["gatherer_folders"]), (200, {"folders": [{"id": work, "parent": None, "name": "Work"}], "filed": {}}))
+        self.assertEqual(data.home([])["gatherer_folders"], got["gatherer_folders"])                # snapshots carry them too
+        self.assertEqual(home()["folders"], {})                                    # a gatherer's own folders: none made
+        self.assertEqual(ask({"do": "file", "gatherers": "g"})[0], 400)
+        self.assertEqual(ask({"do": "delete", "id": 9999})[0], 400)
+        self.assertEqual(ask({"do": "frob"})[0], 400)
+        self.assertEqual(self.post("/api/gatherer-folders", {"do": "new", "name": "y"}, {"Origin": "https://evil.example"})[0], 403)
+
     def test_a_shell_opened_in_a_folder_is_listed_in_it(self):
         fid = self.post("/api/folders", {"gatherer": "g", "do": "new", "name": "Ops"})[1]["made"]
         with unittest.mock.patch.dict(os.environ, {"SHELL": "/bin/sh", "HOME": self.tmp.name}):

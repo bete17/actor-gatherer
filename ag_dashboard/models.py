@@ -77,6 +77,7 @@ class _Home(Answer):
     titles: Optional[Dict[str, Any]] = None
     saved: Optional[Dict[str, Any]] = None
     folders: Optional[Dict[str, Any]] = None
+    gatherer_folders: Optional[Dict[str, Any]] = None
     seen: Optional[Dict[str, Any]] = None
     harness_info: Optional[Dict[str, Any]] = None
     harness_default: Optional[str] = None
