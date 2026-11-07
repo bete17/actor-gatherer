@@ -41,6 +41,8 @@ class HomeBase(unittest.TestCase):
         paths.AG_HOME = os.path.join(self.tmp.name, "ag")
         paths.TRACE_DIR = os.path.join(paths.AG_HOME, "gatherers")
         self.saved_home, dashboard_home.HOME = dashboard_home.HOME, paths.AG_HOME   # the dashboard reads the same home
+        self.hosts = []                                   # apps' hosts a test makes: closed in tearDown
+        self.stops = []                                   # what a test serves on the home: stopped in tearDown
         os.makedirs(os.path.join(paths.TRACE_DIR, "g"))
         with open(os.path.join(paths.TRACE_DIR, "g", "gatherer.toml"), "w") as fh:
             fh.write('policy = "proactive_context_manager"\n')
@@ -65,9 +67,33 @@ class HomeBase(unittest.TestCase):
         items.insert("g", PREAMBLE[0], channel_id="c2")
 
     def tearDown(self):
+        # Before the home goes: what writes in it stopped -- a dashboard the test serves, its apps' backends (an app
+        # in its own process among them), the hosts' writes of what they were handed. Stopped only in the cleanups,
+        # which run after tearDown, they would write in the home while it is being removed.
+        for stop in reversed(getattr(self, "stops", [])):
+            stop()
+        for h in getattr(self, "hosts", []):              # apps' hosts (app_host.py): written, and their backends
+            h.close()                                     # stopped (once: a server's close closes its own too)
         paths.TRACE_DIR, paths.AG_HOME = self.saved
         dashboard_home.HOME = self.saved_home
         self.tmp.cleanup()
+
+    def before_home_goes(self, fn) -> None:
+        """`fn` -- what stops something that writes in the test's home -- run before the home goes (tearDown), or, the
+        test failing before its tearDown (in setUp), in the cleanups. Once, whichever comes first."""
+        done = []
+
+        def once():
+            if not done:
+                done.append(True)
+                fn()
+        self.stops.append(once)
+        self.addCleanup(once)
+
+    def serving(self, httpd) -> None:
+        """A dashboard the test serves on its home (server.serve, its serve_forever started): shut down and closed
+        before the home goes."""
+        self.before_home_goes(lambda: (httpd.shutdown(), httpd.server_close()))
 
     def log_call(self, name, **record):
         os.makedirs(os.path.join(paths.AG_HOME, "logs", "llm"), exist_ok=True)

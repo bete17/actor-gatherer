@@ -2,6 +2,7 @@
 their instances and agents kept as ag events, what an app inserts and reads checked against its manifest, its events
 reaching an agent's context through ag's own policy unchanged, and each app's own origin."""
 import contextlib
+import gc
 import http.client
 import io
 import json
@@ -14,12 +15,14 @@ import threading
 import time
 import unittest
 import unittest.mock
+import warnings
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import ag.ag_harness.home.__main__ as home_module  # noqa: E402
 from ag.ag_harness.home.__main__ import main as home_main  # noqa: E402
 from ag.ag_harness.store import operations as store  # noqa: E402
+from ag.ag_harness.store import paths  # noqa: E402
 from ag.cli import apps as apps_cli  # noqa: E402
 from ag_dashboard import app_host, data, server, tool_gateway  # noqa: E402
 import app_kit  # noqa: E402
@@ -102,12 +105,22 @@ _INSERTING = threading.Lock()
 
 def insert_here(gatherer, properties, events, types):
     """What `ag home insert` does, run here: ag's own code, on the test's home -- what it prints kept from its module's
-    `print` alone (redirect_stdout would take every thread's output: a test's own, printed meanwhile)."""
+    `print` alone (redirect_stdout would take every thread's output: a test's own, printed meanwhile). Never outside a
+    temporary folder: a host's write landing after a test put the home back (its tearDown run, the write still queued)
+    would otherwise go to the real home -- dropped instead."""
+    home = os.path.realpath(paths.AG_HOME or "")
+    if not home.startswith(os.path.realpath(tempfile.gettempdir()) + os.sep):
+        return
     said = []
     with _INSERTING, unittest.mock.patch.object(home_module, "print", create=True,
                                                 new=lambda *a, **k: said.append(" ".join(map(str, a)))):
-        code = home_main(["insert", gatherer, "--properties", json.dumps(properties), "--types", json.dumps(types),
-                          "--events", json.dumps(events)])
+        try:
+            code = home_main(["insert", gatherer, "--properties", json.dumps(properties), "--types",
+                              json.dumps(types), "--events", json.dumps(events)])
+        finally:
+            with warnings.catch_warnings():               # the command's database, which it leaves to its process's
+                warnings.simplefilter("ignore", ResourceWarning)   # end: let go here, not in another test's middle
+                gc.collect()
     if code:
         raise RuntimeError("\n".join(said))
 
@@ -115,7 +128,6 @@ def insert_here(gatherer, properties, events, types):
 class HostBase(HomeBase):
     def setUp(self):
         super().setUp()
-        self.hosts = []
         self.apps_dir = os.path.join(self.tmp.name, "apps-src")
         write_app(self.apps_dir, "notes", NOTES)
         env = unittest.mock.patch.dict(os.environ, {app_host.PATH_ENV: self.apps_dir})
@@ -130,13 +142,8 @@ class HostBase(HomeBase):
     def new_host(self) -> "app_host.AppHost":
         h = app_host.AppHost(0, write=insert_here)
         self.addCleanup(h.close)
-        self.hosts.append(h)
+        self.hosts.append(h)                        # closed before the home goes (HomeBase's tearDown)
         return h
-
-    def tearDown(self):
-        for h in self.hosts:                        # what they were handed, written before the home goes
-            h.flush()
-        super().tearDown()
 
     def rows(self, sql, *args):
         conn = self.m._conn("g")
@@ -436,8 +443,7 @@ class GatewayServedTest(GatewayBase):
         rows = self.rows
         self.httpd.sessions.list = lambda: [dict(r) for r in rows]
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
-        self.addCleanup(self.httpd.server_close)
-        self.addCleanup(self.httpd.shutdown)
+        self.serving(self.httpd)                          # stopped before the home goes
         self.port = self.httpd.server_port
 
     def rpc(self, actor, method, params=None):
@@ -508,8 +514,7 @@ class ServedTest(HostBase):
         self.httpd.app_host._write_fn = insert_here
         self.hosts.append(self.httpd.app_host)
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
-        self.addCleanup(self.httpd.server_close)
-        self.addCleanup(self.httpd.shutdown)
+        self.serving(self.httpd)                          # stopped before the home goes
         self.port = self.httpd.server_port
 
     def ask(self, method, path, body=None, host=None, origin=None):
