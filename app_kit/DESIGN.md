@@ -279,7 +279,7 @@ for apps. An app's event types are ag `EventType`s with ag `Property`s (`Manifes
 | Background tasks list | Stays in the agent view: the tasks are the agent's | — |
 | Question and plan-approval card, errors | Stay: the harness asks, and the agent waits | — |
 | `/context`, Details, Messages, Transcript | Stay: views of the agent | — |
-| History's Summarize / Generate skill / memory / AGENTS.md, Save to..., Export | **Skills & memory** app; the skill watcher joins it later | History keeps its tree and selection. A selection raises `use-history` |
+| History's Summarize / Generate skill / memory / AGENTS.md, Save to..., Export | **Skills & memory** app; the skill watcher joins it later (deferred: stays in History for now, 2026-11-07) | History keeps its tree and selection. A selection raises `use-history` |
 | Editor (above the panes) | **Editor** app, one instance per folder | `open-file`; the pane head's button opens the agent's folder |
 | Preview (inside the Editor) | **Preview** app, one instance per checkout; `ag preview` becomes its tools | Opened beside the Editor, or by `open-file` on what it builds |
 | Browser pane view | **Browser** app, instances and attachments | `open-url`; the panel sits beside its agents' panes |
@@ -494,7 +494,8 @@ Each step is one PR and leaves the dashboard working. Steps 1–3 change nothing
      (`persist:browsers`), so its logins stay.
    - Clicking an app's actor that is already shown opens its app's panel again, if closed.
 9. **Skills & memory, and Sources.** History's actions move to Skills & memory. Sources becomes an app once it is
-   merged.
+   merged. Deferred for now (2026-11-07): History keeps its Summarize, Generate skill / memory / AGENTS.md, Save to
+   and Export as they are, until this step is taken up.
 10. **Apps from outside.** `ag apps install`, the permissions shown at install, and the store's manifest format.
 
 Steps 6–8 change what the user sees the most. Each gets its Playwright tests before it moves and keeps them after,
