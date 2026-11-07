@@ -22,9 +22,20 @@ alone (auto mode's "couldn't check this action", its Chrome block, some connecto
 Codex's approvals, of which nothing is recorded. Allow and Deny type keys worked out from that same screen, the cursor
 checked to be on No before Enter.
 
-- [ ] **Codex's approvals answered from Chat**, and seen in a terminal outside the dashboard: Codex 0.164 has a
-  `PermissionRequest` hook, but as a command only (no HTTP) and trusted first (`hooks.state` hashes in its config;
-  `--dangerously-bypass-hook-trust` would trust a repo's own hooks too, so not that).
+- [ ] **Codex's approvals answered from Chat**, and seen in a terminal outside the dashboard. Today Codex gets only
+  the read-only card, from the screen of a terminal the dashboard runs (`approval_shown`), and only where it asks at
+  all: manual mode. In auto mode (`--approve-for-me`) its reviewer decides. Nothing of an approval is in its rollout,
+  and ag sees no model call for one. The way in is Codex 0.164's own `PermissionRequest` hook (it also has
+  `PreToolUse`, `PostToolUse`, `Stop`, `Interrupt`), with two catches:
+  - it runs a command only (no HTTP type): a small `ag` command reading the hook's JSON on stdin and POSTing it to
+    the run's hook server (HOOK_PATH), the way Claude Code's HTTP hook does;
+  - a hook must be trusted before Codex runs it (`hooks.state.<key>.trusted_hash` in its config). ag would pre-trust
+    its own, inline with `-c`, as it pre-trusts the folder, once the hash is known (from Codex's source).
+    `--dangerously-bypass-hook-trust` would also trust a repo's own hooks, so not that.
+  With the hook in place, Allow and Deny would type the dialog's keys as for Claude Code ("y"; Esc for No). Its
+  app-server's approval requests are the other route, for a Codex run without a terminal.
+  Before building, check how omnigent does it: it answers Claude Code's questions and plan approvals through the
+  `PermissionRequest` hook's own decision rather than keys, and may do the same with Codex's hook.
 - [ ] **Antigravity's approvals**: in its default mode agy ran a delete and a write outside its folder unasked, so
   none was seen. Its steps have a WAITING status and it has a hooks.json with PreToolUse, if it does ask.
 - [ ] **A permission allowed in the terminal itself**, for a tool that then runs long: it shows as waiting until the
