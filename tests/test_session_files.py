@@ -274,6 +274,8 @@ class URLTest(unittest.TestCase):
                          "http://127.0.0.1:4113/h/g/l/1000/v1")
         self.assertEqual(base_url("http://127.0.0.1:4113", "g", "/v1", 1000, "/x/claude"),
                          f"http://127.0.0.1:4113/h/g{config_part('/x/claude')}/l/1000/v1")
+        self.assertEqual(base_url("http://127.0.0.1:4113", "g", "/v1", 1000, "/x/claude", "42"),   # its run: the hook
+                         f"http://127.0.0.1:4113/h/g/r/42{config_part('/x/claude')}/l/1000/v1")   # server's order
         self.assertEqual(claude_rules.record_dir("/x/claude"), "/x/claude")
         with unittest.mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": "/y/claude"}):
             self.assertEqual(claude_rules.record_dir(), "/y/claude")

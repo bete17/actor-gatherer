@@ -80,11 +80,11 @@ def upstream_of(settings: Dict[str, Any], env: Dict[str, str]):
 
 
 def base_url(server_url: str, gatherer: Optional[str], path: str, limit: Optional[int] = None,
-             config: Optional[str] = None) -> str:
-    """The hook server's URL for Claude Code: its gatherer, its config folder when one is set (where the hook finds its
-    record of each session), its limit."""
-    return (server_url + (f"/h/{gatherer}" if gatherer else "") + (config_part(config) if config else "")
-            + (f"/l/{limit}" if limit else "") + path)
+             config: Optional[str] = None, run: Optional[str] = None) -> str:
+    """The hook server's URL for Claude Code: its gatherer, its run (the process it runs in: ag execs it), its config
+    folder when one is set (where the hook finds its record of each session), its limit."""
+    return (server_url + (f"/h/{gatherer}" if gatherer else "") + (f"/r/{run}" if run else "")
+            + (config_part(config) if config else "") + (f"/l/{limit}" if limit else "") + path)
 
 
 def tokens(value: Any, thousands: bool = False) -> Optional[int]:
@@ -387,7 +387,9 @@ class ClaudeLauncher(Launcher):
                                    lambda: probe(command, args, run.env))
         config = run.env.get("CLAUDE_CONFIG_DIR") or os.environ.get("CLAUDE_CONFIG_DIR")
         folder = os.path.abspath(os.path.expanduser(config)) if config else None
-        url = base_url(server_url, run.gatherer, path, limit, folder)
+        # its run, this process, which Claude Code is once ag execs it: a call it drops is the hook's to tell an Esc
+        # from its process ending (its terminal closed), which keeps the message (the hook's `failed`)
+        url = base_url(server_url, run.gatherer, path, limit, folder, None if run.dry_run else str(os.getpid()))
         notes.append(f"ANTHROPIC_BASE_URL={url} -> {origin}{path}")
         if self.settings.get("permission_hook", True) not in (False, "off", "false", 0):
             hook = base_url(server_url, run.gatherer, HOOK_PATH, None, folder)

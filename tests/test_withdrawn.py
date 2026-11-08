@@ -9,6 +9,7 @@ import os
 import sqlite3
 import sys
 import tempfile
+import time
 import unittest
 import unittest.mock
 from types import SimpleNamespace
@@ -23,6 +24,7 @@ from ag.ag_interface import Event  # noqa: E402
 from ag.integrations.harnesses.claude.ag_orchestrator import context_manager as claude_ag  # noqa: E402
 from ag.integrations.harnesses.codex.ag_orchestrator.ag_clients import AgClients  # noqa: E402
 from ag.integrations.tools.ag_orchestrator.call_ag import HUNG_UP  # noqa: E402
+from ag.integrations.tools.ag_orchestrator.proxy_hook import process_ended  # noqa: E402
 
 
 class StoreTest(unittest.TestCase):
@@ -132,6 +134,40 @@ class HookTest(unittest.TestCase):
         self.assertEqual(order, ["withdrawn", "recorded"])
         self.assertEqual([(e["type"], e["payload"].get("withdrawn")) for e in recorded], [("call_failed", True)])
 
+    def test_a_hang_up_as_claude_code_ends_withdraws_nothing(self):
+        """Its terminal closed mid-call: Claude Code drops the call once its process is gone, and keeps the message in
+        its record -- a resumed session shows it and sends it with its next call. Nothing withdrawn, and the hang-up
+        says so; the next call carries the message once."""
+        first = [user(*REMINDERS, "Write a 900-word story."), NOTES]
+        _, req = self.call(first)
+        done = os.fork()
+        if done == 0:
+            os._exit(129)
+        os.waitpid(done, 0)                                                  # gone: as a closed terminal's process
+        req.run = str(done)
+        recorded = []
+        withdraw = unittest.mock.AsyncMock(return_value=True)
+
+        async def record(gatherer, channel, events):
+            recorded.extend(events)
+        with unittest.mock.patch.object(claude_ag, "report_withdrawn", withdraw), \
+                unittest.mock.patch.object(self.hook, "recorded", side_effect=record):
+            self.hang_up(req)
+        withdraw.assert_not_called()
+        self.assertEqual([(e["type"], e["payload"].get("withdrawn")) for e in recorded], [("call_failed", False)])
+        sent, _ = self.call(first + [user("go on")])                         # resumed: the message, then the next
+        self.assertEqual(sent.count("Write a 900-word story."), 1)
+        self.assertIn("go on", sent)
+
+    def test_a_hang_up_while_claude_code_runs_withdraws(self):
+        """Esc: Claude Code drops the call and goes on running -- its run names a process that runs."""
+        _, req = self.call([user(*REMINDERS, "Write a 900-word story.")])
+        req.run = str(os.getpid())
+        withdraw = unittest.mock.AsyncMock(return_value=True)
+        with unittest.mock.patch.object(claude_ag, "report_withdrawn", withdraw):
+            self.hang_up(req)
+        withdraw.assert_called_once()
+
     def test_a_later_message_taken_back_is_left_out(self):
         first = [user(*REMINDERS, "What is 2+2?"), NOTES, user("4")]
         first[-1]["role"] = "assistant"
@@ -164,6 +200,27 @@ class HookTest(unittest.TestCase):
                                      user("[Request interrupted by user]", "go on")])
         self.assertEqual(sent.count("What is 2+2?"), 1)
         self.assertIn("go on", sent)
+
+
+class EndedTest(unittest.TestCase):
+    """process_ended: whether a harness's process has ended -- the hook's tell of a terminal closed from an Esc."""
+
+    def test_a_process_running_exited_and_gone(self):
+        self.assertIs(process_ended(os.getpid()), False)              # this one runs
+        child = os.fork()
+        if child == 0:
+            os._exit(0)
+        try:
+            for _ in range(200):                                      # exited, not reaped: a zombie
+                if process_ended(child):
+                    break
+                time.sleep(0.01)
+            self.assertIs(process_ended(child), True)
+        finally:
+            os.waitpid(child, 0)
+        self.assertIs(process_ended(child), True)                     # reaped: gone
+        self.assertIsNone(process_ended("not a pid"))
+        self.assertIsNone(process_ended(0))
 
 
 if __name__ == "__main__":
