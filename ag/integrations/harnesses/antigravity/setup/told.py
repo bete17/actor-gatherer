@@ -18,7 +18,7 @@ reads them (ag_orchestrator/told.py, which has its own copy of `path`: the two s
 import os
 from typing import Optional
 
-from ag.ag_harness.store.processes import running
+from harness_kit.processes import running
 
 
 KINDS = ("txt", "cwd")                  # its instructions, its directory
