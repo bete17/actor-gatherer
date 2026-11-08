@@ -1,7 +1,7 @@
 {
   "name": "ag-dashboard-editor",
   "private": true,
-  "description": "The dashboard's Editor panel: CodeMirror 6 and Yjs, bundled into ag_dashboard/vendor/editor.js by build.mjs",
+  "description": "The Editor app's panel: CodeMirror 6 and Yjs, bundled into ag_apps/editor/panel/vendor/editor.js by build.mjs",
   "type": "module",
   "scripts": {
     "build": "node build.mjs"

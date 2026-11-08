@@ -1,6 +1,6 @@
 // Opening what the tree does not show. Go to file (⌘P, Ctrl+P): part of a file's name typed, the files under the folder
 // shown that have it, best first. And the system's own Open dialog (Finder's on macOS), which the dashboard opens on its
-// own machine (chooser.py), as a page's own file picker never says where a file is on disk: its name (`ed.choose`,
+// own machine (the app's chooser.py), as a page's own file picker never says where a file is on disk: its name (`ed.choose`,
 // "Finder"...) comes with each listing, null when there is none, or the page is on another machine.
 const ED_RECENT_FILES_KEY = "ag-editor-recent-files", ED_RECENT_FILES_N = 40;
 const ED_GO_SHOWN = 60;                  // the most files Go to file lists
@@ -240,14 +240,11 @@ function edGoPick(it) {
   if (it.native) edNative("file");
   else edOpen(it.path);
 }
-// ⌘P (Ctrl+P), the Editor open: Go to file -- from a pane's frame too, through this page. A terminal keeps its own Ctrl+P.
+// ⌘P (Ctrl+P) in the Editor: Go to file.
 document.addEventListener("keydown", (ev) => {
   if (ev.key !== "p" && ev.key !== "P") return;
   if (ev.shiftKey || ev.altKey || !(MAC ? ev.metaKey && !ev.ctrlKey : ev.ctrlKey && !ev.metaKey)) return;
-  if (SNAPSHOT || !edShown()) return;
-  if (!MAC && ev.target && ev.target.closest && ev.target.closest(".xterm")) return;
   ev.preventDefault();
   ev.stopPropagation();
-  if (PANE) { const p = window.parent.agEditorPanel; if (p && p.goto) p.goto(); }
-  else edGoto();
+  edGoto();
 }, true);

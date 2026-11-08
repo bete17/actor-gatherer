@@ -1,7 +1,6 @@
-"""`ag preview`: the preview of a git project -- the command the Preview app runs in the project (the dashboard
-Editor's Execute button asks it to), and what it shows (a file the command writes, the page of a server it starts, or
-its output) -- asked of the Preview app (ag_apps/preview/) through the dashboard's tool gateway, as `ag apps call
-preview_<op>` asks it.
+"""`ag preview`: the preview of a git project -- the command the Editor app runs in the project (its Execute button),
+and what it shows beside the file (a file the command writes, the page of a server it starts, or its output) -- asked of
+the Editor app (ag_apps/editor/) through the dashboard's tool gateway, as `ag apps call editor_preview_<op>` asks it.
 
     ag preview [show]                       the preview of the repository of this directory (or --repo D)
     ag preview set <command> [--show S]     set it: <command> run through the shell in the project's checkout (- reads
@@ -69,7 +68,7 @@ def main(argv: List[str]) -> int:
             args["wait"] = max(0.0, opts.wait)
             if opts.file:
                 args["file"] = os.path.abspath(os.path.expanduser(opts.file))
-        result = actors.ask(url, "agent/call", {"actor": me, "tool": f"preview_{op}", "args": args}, api="apps")
+        result = actors.ask(url, "agent/call", {"actor": me, "tool": f"editor_preview_{op}", "args": args}, api="apps")
         said = "".join(c.get("text", "") for c in result.get("content") or [])
         if result.get("isError"):
             raise actors.ActorsError(said or "the Preview refused it")

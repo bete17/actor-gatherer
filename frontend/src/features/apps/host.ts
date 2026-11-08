@@ -9,6 +9,7 @@ import { stream, type Stream } from "../../core/api/stream";
 import "./apps.css";
 import { desktop, nativePanes, nativeSoon, type NativePlace } from "./native";
 
+type Capability = "message_agents" | "transcript" | "edit_guard" | "native_view" | "docs" | "actors";
 export interface AppInfo {
   name: string;
   label: string;
@@ -17,7 +18,7 @@ export interface AppInfo {
   instances: string;
   offer?: string;
   agent?: { start: boolean; name: string };
-  capabilities?: { message_agents?: boolean; transcript?: boolean; edit_guard?: boolean; native_view?: boolean };
+  capabilities?: Partial<Record<Capability, boolean>>;
   tools?: { name: string; handled_by: string }[];
   handles: { intent: string; types: string[] }[];
   failed?: string | null;
@@ -55,6 +56,15 @@ export interface PaneHooks {
   interrupt: (gatherer: string, channel: string) => Promise<unknown>;
   /** The message box of an actor's pane focused, if one shows it (its keys taken back from a native page first). */
   focusAgent: (gatherer: string, channel: string) => void;
+  /** The actors as the list shows them (an app asking `actors`): by gatherer, each one's name, avatar, folder and
+   * status; and the dashboard's own folder and the home folder. */
+  actors?: () => Actors;
+}
+/** What a panel asking `actors` is told of them (the SDK's ag.actors). */
+export interface Actors {
+  gatherers: { name: string; agents: Record<string, unknown>[] }[];
+  home_dir: string;
+  cwd: string;
 }
 /** What a panel is told of an attached agent (the SDK's agents.state). */
 export interface AgentState {
@@ -144,16 +154,14 @@ export const start = (app: string, gatherer: string, cwd: string, harness: strin
     harness,
   });
 
-/** The app that takes an intent of `kind` (for open-file: a file of that media type), the first found. */
+/** The app that takes an intent of `kind` (for open-file: a file of that media type): one that names the type first,
+ * else one that takes any -- the first found of each. */
 export function handler(kind: string, mediaType?: string): AppInfo | undefined {
-  return listed.apps.find((a) =>
-    a.handles.some(
-      (h) =>
-        h.intent === kind &&
-        (!h.types.length ||
-          (mediaType !== undefined &&
-            h.types.some((t) => t === mediaType || (t.endsWith("/*") && mediaType.startsWith(t.slice(0, -1)))))),
-    ),
+  const names = (t: string) =>
+    mediaType !== undefined && (t === mediaType || (t.endsWith("/*") && mediaType.startsWith(t.slice(0, -1))));
+  return (
+    listed.apps.find((a) => a.handles.some((h) => h.intent === kind && h.types.some(names))) ||
+    listed.apps.find((a) => a.handles.some((h) => h.intent === kind && !h.types.length))
   );
 }
 
@@ -242,6 +250,16 @@ export class AppPane {
   /** What the old page asks of a pane (07-panes.js's `call`): the theme, which it tells every pane of. */
   call(what: string): void {
     if (what === "theme") requestAnimationFrame(() => this.push("theme", { value: theme() }));
+  }
+  private lastActors = "";
+  /** The page's actors changed: told to a panel that asks for them, if what it is told changed. */
+  actorsChanged(): void {
+    if (!this.app.capabilities?.actors || !this.hooks.actors) return;
+    const now = this.hooks.actors();
+    const sig = JSON.stringify(now);
+    if (sig === this.lastActors) return;
+    this.lastActors = sig;
+    this.push("actors", { value: now });
   }
   selection(sel: Selection | null): void {
     this.push("selection", { value: sel });
@@ -354,12 +372,13 @@ export class AppPane {
         this.ready = true;
         this.openBase();
         return {
-          info: { ...w, label: this.app.label, title: this.instance.title },
+          info: { ...w, label: this.app.label, title: this.instance.title, folder: this.instance.folder },
           attached: this.attached,
           native: !!desktop() && !!this.app.capabilities?.native_view,
           states: this.states(),
           selection: this.hooks.selection(),
           theme: theme(),
+          actors: this.app.capabilities?.actors && this.hooks.actors ? this.hooks.actors() : null,
         };
       }
       case "events.read": {

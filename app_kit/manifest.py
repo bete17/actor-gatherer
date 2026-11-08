@@ -77,6 +77,10 @@ CAPABILITIES = {
     "reads": "these event types of the gatherer besides its own: its agents' (tool_call, tool_output, ...)",
     "files": "reading files in its agents' folders",
     "commands": "running commands",
+    "docs": "the host's files shared live as they are edited (every page, and the file on disk, one more editor of "
+            "each), the actors' branches merged into them, and an actor's changes to a file (app_kit.docs)",
+    "actors": "seeing the gatherer's actors as its list shows them: their names, avatars, folders and what they are "
+              "doing",
 }
 
 
@@ -154,6 +158,8 @@ class Capabilities:
     message_agents: bool = False
     transcript: bool = False
     edit_guard: bool = False
+    docs: bool = False
+    actors: bool = False
 
     def asked(self) -> List[str]:
         """What it asks for, as the user is shown it before granting it."""
@@ -164,7 +170,7 @@ class Capabilities:
             said.append(f"reading these events of the gatherer: {', '.join(self.reads)}")
         if self.files:
             said.append(CAPABILITIES["files"])
-        for k in ("commands", "message_agents", "transcript", "edit_guard"):
+        for k in ("commands", "message_agents", "transcript", "edit_guard", "docs", "actors"):
             if getattr(self, k):
                 said.append(CAPABILITIES[k])
         return said
@@ -257,7 +263,8 @@ class Manifest:
                              "files": self.capabilities.files, "commands": self.capabilities.commands,
                              "message_agents": self.capabilities.message_agents,
                              "transcript": self.capabilities.transcript,
-                             "edit_guard": self.capabilities.edit_guard},
+                             "edit_guard": self.capabilities.edit_guard,
+                             "docs": self.capabilities.docs, "actors": self.capabilities.actors},
         }
 
 
@@ -552,4 +559,5 @@ def _capabilities(r: _Reader, d: Any) -> Capabilities:
                         files=r.flag(d, "files", "capabilities."), commands=r.flag(d, "commands", "capabilities."),
                         message_agents=r.flag(d, "message_agents", "capabilities."),
                         transcript=r.flag(d, "transcript", "capabilities."),
-                        edit_guard=r.flag(d, "edit_guard", "capabilities."))
+                        edit_guard=r.flag(d, "edit_guard", "capabilities."),
+                        docs=r.flag(d, "docs", "capabilities."), actors=r.flag(d, "actors", "capabilities."))

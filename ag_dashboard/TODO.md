@@ -346,7 +346,7 @@ Not covered yet:
 
 ## The Editor panel
 
-The Editor (editor.py, the page's "the Editor") opens from a pane's header above the panes: the actors' views are
+The Editor (since 2026-11-08 an app, ag_apps/editor/, over the dashboard's livedocs.py) opens from a pane's header above the panes: the actors' views are
 below it, shorter while it is open, and Cmd/Ctrl+click in the list opens more of them side by side. On its left, a
 folder's tree, any folder: the one above, one typed, or an actor's working directory. A file opens as a shared document
 (Yjs, kept by pycrdt on the dashboard's side): every page with the file open sees the others' edits and cursors as they

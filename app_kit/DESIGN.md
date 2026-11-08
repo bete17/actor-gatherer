@@ -1,6 +1,6 @@
 # Apps beside agents: plan
 
-Status: being built, from 2026-11-06. Steps 1 (`app_kit/`), 2 (the host), 3 (the tool gateway), 4 (app panels), 5 (Preview) and 8's DocWriter are built. This file is the package's design, as
+Status: being built, from 2026-11-06. Steps 1 (`app_kit/`), 2 (the host), 3 (the tool gateway), 4 (app panels), 5 (Preview), 8 (DocWriter, the Browser) and 7's first part (the Editor as an app, the Preview taken into it) are built. This file is the package's design, as
 `harness_kit/DESIGN.md` is that package's.
 
 ## Goal
@@ -421,8 +421,78 @@ Each step is one PR and leaves the dashboard working. Steps 1–3 change nothing
    of looking at the agent's history, not an app the user works with. The Editor's changes panel keeps using Chat's
    code until the Editor's step.
 7. **The Editor.** Its tree, live editing, conflicts and viewers become the Editor app; it takes `open-file`. Its
-   panel replaces the area above the panes. The whole Editor is to be an app, not only its preview (2026-11-07);
-   deferred for now: it stays in the page until this step is taken up.
+   panel replaces the area above the panes. The whole Editor is to be an app, not only its preview (2026-11-07).
+   Taken up 2026-11-08, as asked: it looks as it did; the Preview is part of it, not an app of its own; and agents
+   work with it as they do with DocWriter, through tools of its own, an edit landing as one of several modes the user
+   picks. Two PRs:
+
+   **(a) The Editor as an app: built** (2026-11-08). Set up and used as the Browser and DocWriter are (the user,
+   2026-11-08: "the editor should be setup and used exactly like a browser, docwriter"): started from a gatherer's
+   "+ ⋯" menu on a folder, with an actor of its own attached (`[agent] start`, "Editor · {folder}", its `mark` on the
+   actor's avatar); one per Editor started (`instances = "many"`); its tools and instructions its attached actors'
+   (`offer = "attached"`); its panel in the top row under the head the dashboard draws over every app's. No button
+   of its own on an actor's pane. It still takes `open-file` (an app naming the file's type first): an Editor open in
+   the top row is told, rather than another opened.
+   `ag_apps/editor/`: `app.toml`, `backend.py` (its panel's routes, the Preview's tools and runs: `runs.py`, moved
+   from `ag_apps/preview/`, which is gone), `chooser.py` (the system's Open dialog, moved from the dashboard), `panel/`
+   (the dashboard's `legacy/18-editor*.js` and their CSS, moved as they were, beside `page.js`: the page's helpers they
+   used, small, and the SDK in place of the page's state; `preview.js`: the Preview app's panel as a column beside the
+   file; `vendor/editor.js`: CodeMirror, Yjs and now the dashboard's highlighter, built by `assets/src/editor`). Each
+   project's preview kept by its repository and shared by the gatherer's Editors (`editor.preview_set`, `_allowed`,
+   `_cleared`, `_ran`, each with its `key`); its tools `editor_preview_show`, `_set`, `_run`, `_stop`, `_clear` --
+   `ag preview` a client of them, for an actor attached to an Editor.
+   - **The files it edits stay the host's** (found while building it): `editor.py`'s live documents -- the merge,
+     the conflict zone, saving, who changed which file -- are what the actors' branches merge into (`branches.py`
+     raises its conflicts and marks in them) and what `ag actors who` reads (`coordination.py`). Moved into the app,
+     branches would be cut off from the files open. So they stay in the dashboard, as `livedocs.py` (renamed; no
+     app's name in it), and an app reaches them through the contract: capability `docs` and `Host.docs()`
+     (`app_kit/docs.py`, the dashboard's `app_docs.py`), for an app run in the host's process. Another app with files
+     to edit live (DocWriter, a PowerPoint app) can use the same documents, and the same concurrency control.
+   - **What else the contract gained**, each general: capability `actors` (the SDK's `ag.actors`: the actors as the
+     list shows them, their names, avatars, hues, folders, status -- the Editor's marks and tree); `ag.folder` (the
+     instance's folder, to its panel); `Response.file_at` (a file served in ranges: a video, a PDF); `_here` in a
+     request's query (a dialog the app opens shows on the host's machine); an intent's handler, one naming the file's
+     type first.
+   - **The page**: its Editor is gone (`18-editor*.js`, `#ed-top`), with the actor's Editor button and what only it
+     used (`/api/files/place`, `files.lately_changed`); `18-top.js` keeps what is the page's -- the top row's grip, the
+     chat minimized under the row -- for any panel there.
+   - Checked: the Python suite and the browser tests (`e2e/editor.spec.ts`, in place of `preview.spec.ts`: an Editor
+     started from the menu; a file opened by `open-file`, typed into and saved; Execute and the preview beside it; a
+     LaTeX build and SyncTeX both ways); live on a scratch dashboard beside `main`'s.
+   - Not carried over: the Editor's shown-or-not (`ag-dashboard-editor`); opening it at an actor's folder from the
+     actor's pane (the user had it removed); ⌘P from outside the Editor (the page's) -- inside it, as before;
+     `ag preview` from an actor not attached to an Editor.
+
+   **(b) Agents work with it, DocWriter's way: built** (2026-11-08). Its agents change files with its tools, and the
+   user picks how their changes land.
+   - **Tools** (`editor_read`, `editor_edit`, `editor_write`, `editor_open`): `editor_edit` is Claude Code's Edit
+     (old_string, unique unless replace_all), `editor_read` numbers its lines as Read does. A file no Editor has open
+     is read and written on disk, whatever the mode; one open is changed through the host's live document.
+   - **Modes**, one per Editor, picked in its head ("Agents: Live / Review / Hands off"), kept as `editor.mode`
+     events; a file open in two Editors takes the strictest. Live: the change lands at once, in the agent's hue
+     (the document's `marks`), and is written to the file -- its lines only, what the user typed and did not save
+     left unsaved; one to the conflict zone's lines is held in a box. Review: each change a proposal in place
+     (Accept / Reject / Keep both / Edit, and Accept all / Reject all in the head), the file on disk unchanged until
+     accepted; the agent reads the file with its own proposals in, its next change building on them (one proposal per
+     place). It never waits on one (the user, 2026-11-08: "propose and move on"): its tool answers at once, it is told
+     to carry on with its task, and what the user chose reaches it whenever they choose. Hands off: refused, "ask the
+     user first".
+   - **Writes around the tools** (a shell command, Codex's or Antigravity's own edits, an agent not attached): in Live
+     merged as before; in Review and Hands off asked about (`Conflict.asked`), Reject putting the user's lines back on
+     the file.
+   - **The guard**: Claude Code's own Edit and Write on a file open in an Editor refused (the existing `edit_guard`
+     capability), pointing at `editor_edit` -- for an agent attached to an Editor, which has its tools.
+   - **Told**: the agent whose change was held, what the user chose (a `context_stream` message in its channel);
+     agents that used the tools, when the mode changes (one that never started would otherwise be listed as having a
+     conversation).
+   - **The contract** (`app_kit.docs`), each general: `open(..., hold)` and `hold(...)` ("merge" or "ask": how a page
+     takes the file's changes on disk); `state`; `view(path, root, channel)` (the text with an actor's proposals in);
+     `put(path, root, seen, wanted, by, how)` (an actor's change, "live" or "propose", merged onto what changed since it
+     read). A conflict's `agent` now also marks a change put in (`put`, `why`: "approve" or "zone"). A branch's held
+     changes are unchanged; settling routes to the branches only for those (`branch`).
+   - Not done: telling the actor below the Editor which file is open and what is selected when the user messages it
+     (decision 4); Codex and Antigravity can't be stopped from editing open files (no edit hook) -- their writes are
+     merged or asked about as above.
 8. **The Browser and DocWriter.** What they do for the user and the agent today is kept (2026-11-07): only where
    their panel sits and how they plug in change. DocWriter first, then the Browser, each its own PR.
    - Each becomes instances (the instance id is its key today, so its profile, logins and saved tabs stay where they
@@ -513,7 +583,8 @@ Settled on 2026-11-06:
    from the dashboard; our apps test the same contract an outside one uses. The cost: the SDK forwards keys, theme,
    focus and drag and drop across the frame, and each open panel costs about a page.
 2. **Which tools an agent is given: every app turned on for the gatherer, at launch.** Kept so once Preview, an app
-   that comes with ag, put its tools in every session (2026-11-07): a gatherer turns apps off with `apps = []`. Works for Claude Code and Codex
+   that comes with ag, put its tools in every session (2026-11-07) -- the Editor's now (2026-11-08): a gatherer turns
+   apps off with `apps = []`. Works for Claude Code and Codex
    alike; costs context for each app's tools, so a gatherer's apps should be few. The others, kept for later:
    - only the apps it's attached to, with the list sent again when that changes. Claude Code refreshes on MCP's
      `tools/list_changed` (checked in its 2.1.319 binary); Codex knows the message, but whether it refreshes

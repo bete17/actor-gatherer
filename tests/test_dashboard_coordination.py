@@ -20,7 +20,7 @@ import harness_kit  # noqa: E402
 import page_source  # noqa: E402
 from harness_kit.base import Box  # noqa: E402
 from ag.cli import actors as cli  # noqa: E402
-from ag_dashboard import branches, coordination, data, editor, files, folders, saved, server, sessions  # noqa: E402
+from ag_dashboard import branches, coordination, data, files, folders, livedocs, saved, server, sessions  # noqa: E402
 from test_dashboard_sessions import FAKE_AG, SessionsBase  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -371,14 +371,14 @@ class CoordinationTest(CoordinationBase):
         self.assertEqual((got["asked"], got["said"], got["changed"]), ("write the docs", "The docs are written.", ["/w/README.md"]))
 
 
-@unittest.skipIf(not editor.AVAILABLE, "pycrdt is not installed")      # the Editor, which branches merge into
+@unittest.skipIf(not livedocs.AVAILABLE, "pycrdt is not installed")      # the Editor, which branches merge into
 class BranchTest(CoordinationBase):
     """`ag actors new --branch`: a new actor on a branch of its own, as the page's branch button starts one."""
 
     def setUp(self):
         super().setUp()
         self.repo = make_repo(os.path.join(self.tmp.name, "repo"))
-        self.editors = editor.Editors(poll=3600)
+        self.editors = livedocs.LiveDocs(poll=3600)
         self.addCleanup(self.editors.close)
         self.branched = branches.Branches(self.editors, self.s, poll=3600)     # looked at by hand: not here
         self.addCleanup(self.branched.close)
@@ -547,7 +547,7 @@ class CommandTest(CoordinationBase):
         code, out, _ = self.run_cli()
         self.assertIn(f"{new} (a Browser) -- idle, claude, in", out)
 
-    @unittest.skipIf(not editor.AVAILABLE, "pycrdt is not installed")
+    @unittest.skipIf(not livedocs.AVAILABLE, "pycrdt is not installed")
     def test_the_gatherer_agent_starts_an_actor_on_a_branch_from_its_shell(self):
         repo = make_repo(os.path.join(self.tmp.name, "repo"))
         code, out, err = self.run_cli("new", "--branch", "--approve", "--cwd", repo, "Try", "another", "layout.")

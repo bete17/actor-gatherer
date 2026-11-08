@@ -1,5 +1,5 @@
-/* An app's panel (host.ts) in the row above the panes, beside the Editor (07-panes.js): its head, as tall as the page's
-   top row (--top-h), then its frame; a bar before it, dragged to share the row's width with the panel before it. */
+/* An app's panel (host.ts) in the row above the panes (07-panes.js): its head, as tall as the page's top row (--top-h),
+   then its frame; a bar before it, dragged to share the row's width with the panel before it. */
 .top-row > .app-pane {
   flex: 1 1 0;
   min-width: 0;
@@ -27,8 +27,8 @@
   inset: 0 1px;
   background: var(--axis);
 }
-/* none before the first panel shown: the Editor's hidden, the first app's */
-.top-row > #ed-top[hidden] ~ .top-gutter:not(.top-gutter ~ .top-gutter) {
+/* none before the first panel shown */
+.top-row > .top-gutter:not(section:not([hidden]) ~ .top-gutter) {
   display: none;
 }
 .top-row.resizing {

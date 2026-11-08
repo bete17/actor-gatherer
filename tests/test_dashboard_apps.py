@@ -1,5 +1,5 @@
 """The dashboard names no app (app_kit/DESIGN.md; ag_dashboard/DESIGN.md, rule 3): no module of its server says the
-name of an app that comes with ag (ag_apps/: DocWriter, the Browser, the Preview) -- it reaches each only through the
+name of an app that comes with ag (ag_apps/: DocWriter, the Browser, the Editor) -- it reaches each only through the
 app host and app_kit's contract, as it would one written by anyone else -- and mcp.py's tools/list record."""
 import io
 import json
@@ -30,12 +30,6 @@ ALLOWED = {
     ("__main__.py", "webbrowser"): "Python's module that opens the page in the user's web browser",
     ("__main__.py", "the browser"): "the user's web browser, which `ag dashboard` opens the page in",
     ("__main__.py", "open a browser"): "the same",
-    ("history.py", "PREVIEW = 300"): "how much of an event's words an outline shows: a preview, not the Preview",
-    ("history.py", "[:PREVIEW]"): "the same",
-    ("history.py", "{PREVIEW * 2}"): "the same",
-    ("history.py", "def _preview("): "an event's words, shortened for its outline",
-    ("history.py", "or _preview("): "the same",
-    ("history.py", "since the preview (a file changed)"): "what a history export would write, shown first",
 }
 
 

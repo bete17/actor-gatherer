@@ -1,7 +1,9 @@
 // ------------------------------------------------------------------ the Editor
-// Above the panes, the actors' views below it (each shorter while it is open; Cmd/Ctrl+click in the list opens more of
-// them side by side): a folder's tree, any folder -- an actor's, or one typed, or the one above -- and its files to
-// edit (editor.py): each file shared live by every page that has it open -- their edits and cursors shown as they
+// The Editor app's panel (ag_apps/editor/), above the actors' panes in the dashboard's top row, moved from the
+// dashboard's own page (frontend/src/legacy/18-editor.js) as it was: what changed is how it reaches the rest -- its
+// backend's routes on the app's own origin (the dashboard's routes before), the actors through the SDK (page.js),
+// and the project's preview beside the file its own (preview.js), not another app's. A folder's tree, any folder -- an actor's, or one typed, or the one above -- and its files to
+// edit (the host's, app_kit.docs): each file shared live by every page that has it open -- their edits and cursors shown as they
 // type -- and the file on disk one more of its editors, so what an actor writes to it lands in the editor as it is
 // written, around what was typed and not saved, marked in that actor's hue until the next change on disk -- but for
 // the conflict zone: the lines edited here since the file was opened, tinted, which an actor's change is asked about
@@ -25,6 +27,7 @@ const ed = { root: "", home: "", lists: new Map(), open: new Set(), file: null, 
   branches: [], brSig: "", brs: null, brOpen: null,
   nav: null, fold: null, cursor: null, revealing: null, newItem: null, pick: null, menu: null, find: null,   // 18-editor-tree.js's
   choose: null, choosing: null, go: null,                                                                     // 18-editor-open.js's
+  mode: "live",                                                                     // how an agent's change lands (edModePick)
   auto: (() => { try { return localStorage.getItem(ED_AUTO_KEY) !== "0"; } catch (e) { return true; } })(),   // on unless turned off
   wrap: (() => { try { return localStorage.getItem(ED_WRAP_KEY) !== "0"; } catch (e) { return true; } })() };  // long lines wrapped: likewise
 const edB64 = (u8) => { let t = ""; for (let i = 0; i < u8.length; i += 0x8000) t += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(t); };
@@ -38,7 +41,7 @@ const edRel = (p) => ed.root && ed.root !== "/" && p.startsWith(ed.root + "/") ?
 function edLib() {
   return ed.lib ||= new Promise((ok, no) => {
     const tag = document.createElement("script");
-    tag.src = "/vendor/editor.js";
+    tag.src = "vendor/editor.js";
     tag.onload = () => window.agEditor ? ok(window.agEditor) : no(new Error("The editor did not load."));
     tag.onerror = () => { ed.lib = null; tag.remove(); no(new Error("The editor did not load: is the dashboard still running?")); };
     document.head.append(tag);
@@ -97,7 +100,7 @@ const edWriters = (entry) => {
 };
 const edWriterName = (w) => w.actor ? edWhoName(w.actor) : w.channel.slice(0, 8);
 const edAvatar = (w) => w.actor && w.actor.avatar
-  ? el("img", { src: `/avatars/${w.actor.avatar}.svg`, alt: "", draggable: "false" })
+  ? el("img", { src: avatarSrc(w.actor.avatar), alt: "", draggable: "false" })
   : el("span", { class: "ed-noav", style: `--who: ${edWhoColor(w.actor) || "var(--axis)"}` });
 // An actor's changes to the file open, in the last ED_CHANGES_S, beside it (ed.side): opened by its avatar in the
 // header, closed by it again or the panel's ×, or another file opened. Each change as the Chat view shows a file's
@@ -162,12 +165,11 @@ function edSelectText(text) {
   v.dispatch({ selection: { anchor: i, head: i + text.length }, effects: s.A.EditorView.scrollIntoView(i, { y: "center" }) });
   v.focus();
 }
-// The project's preview is an app's (ag_apps/preview; app_kit/DESIGN.md): the Editor asks for it by intents, which the page
-// gives the app that takes them, its pane opened beside (07-panes.js's appIntent) -- `run` (Execute, ⌘↵: the file open,
-// else the folder shown) and `locate` (→ PDF, a double-click in a TeX source: that place in what it built). What the app
-// sends back -- a place in a PDF's source, as `open-file` -- the Editor opens (edShowFile).
+// The project's preview is the Editor's own (preview.js), beside the file: Execute (⌘↵) runs it for the file open, else
+// the folder shown (pvRun); → PDF, or a double-click in a TeX source, shows that place in what it built (pvLocate). A
+// place in a PDF's source it sends back the Editor opens (edShowFile).
 const pvPath = () => ed.file || ed.root;
-const edRuns = () => !!(window.agNext && window.agNext.apps.handler("run"));
+const edRuns = () => true;
 // ⌘↵ (Ctrl+Enter elsewhere) anywhere in the Editor -- the file, its tree, its header, a PDF's viewer: Execute. Taken
 // before CodeMirror's own (a blank line below); a text box keeps its own Enter.
 function edExecKey(ev) {
@@ -177,13 +179,13 @@ function edExecKey(ev) {
   ev.preventDefault(); ev.stopPropagation();
   if (!ev.repeat) edExecute();                       // held down: once
 }
-// Execute: the file saved first (as it is here), then its project's preview run, by the app that takes `run`.
+// Execute: the file saved first (as it is here), then its project's preview run, beside it.
 async function edExecute() {
   const path = pvPath();
   if (!path || !edRuns()) return;
   const s = ed.s;
   if (s && s.state && s.state.dirty && !s.state.missing && !edDiskConflicts(s).length) await edSave(s);
-  try { await appIntent("run", { path, ...(ed.file ? { file: ed.file } : {}) }); }
+  try { await pvRun({ path, ...(ed.file ? { file: ed.file } : {}) }); }
   catch (e) { paneNote(e.message); }
 }
 // A line of the file open in the Editor (once it is: just opened, its document comes a moment later), selected and shown.
@@ -195,20 +197,21 @@ async function edGoLine(path, line) {
   s.view.dispatch({ selection: { anchor: l.from, head: l.to }, effects: s.A.EditorView.scrollIntoView(l.from, { y: "center" }) });
   s.view.focus();
 }
-// A file opened in the Editor, at a line: what an `open-file` no app takes comes to (a place in a PDF's source).
+// A file opened in the Editor, at a line: an `open-file` the page asks of it, or a place in a PDF's source. A file
+// outside the folder shown: its folder shown.
 async function edShowFile(path, line) {
-  if (!state.editor) setEditor(true, ed.root && edUnder(path, ed.root) ? ed.root : edDir(path));
+  if (!ed.root || !edUnder(path, ed.root)) edGo(edDir(path));
   if (!ed.s || ed.s.path !== path) edOpen(path);
   if (line) edGoLine(path, line);
 }
-// Whether the file open is a TeX source, an app here showing places in what it built: "→ PDF" offered.
-const edTexToPdf = () => !!(ed.file && /\.(tex|ltx)$/i.test(ed.file) && window.agNext && window.agNext.apps.handler("locate"));
+// Whether the file open is a TeX source, its places in what it built shown: "→ PDF" offered.
+const edTexToPdf = () => !!(ed.file && /\.(tex|ltx)$/i.test(ed.file));
 // `at`: the place in the file (a double-click's); else the cursor's.
 async function edToPdf(at = null) {
   const s = ed.s;
   if (!edTexToPdf() || !s || !s.view) return;
   const head = at ?? s.view.state.selection.main.head, l = s.view.state.doc.lineAt(head);
-  try { await appIntent("locate", { path: ed.file, line: l.number, column: head - l.from }); }
+  try { await pvLocate({ path: ed.file, line: l.number, column: head - l.from }); }
   catch (e) { paneNote(e.message); }
 }
 // A double-click in a TeX source's text: that place in the PDF too -- the word under it selected by CodeMirror, as
@@ -220,10 +223,10 @@ function edToPdfClick(ev) {
   const at = s.view.posAtCoords({ x: ev.clientX, y: ev.clientY });
   if (at != null) edToPdf(at);
 }
-// A PDF the Editor shows (18-editor-view.js), in pdf.js's viewer (/vendor/pdfjs: libs.py's copy), in the dashboard's
-// colours, with no scripts of the PDF's and its sidebar closed when it opens.
+// A PDF the Editor shows (editor-view.js), in pdf.js's viewer (/_ag/lib/pdfjs: the dashboard's copy, libs.py), in the
+// dashboard's colours, with no scripts of the PDF's and its sidebar closed when it opens.
 const PV_NO_SIDEBAR = 0;                             // pdf.js's SidebarView.NONE
-const pvViewer = (url) => `/vendor/pdfjs/web/viewer.html?file=${encodeURIComponent(url)}`;
+const pvViewer = (url) => `/_ag/lib/pdfjs/web/viewer.html?file=${encodeURIComponent(url)}`;
 // A PDF opened again in its viewer (it changed on disk): where the reader was -- its page, zoom and place -- its sidebar
 // as it was.
 async function pvPdfOpen(f, url) {
@@ -322,7 +325,7 @@ function edBranches() {
       "aria-pressed": on ? "true" : "false", "aria-label": `${name}${waiting ? `, ${plural(waiting, "change")} waiting` : ""}`,
       title: `${name}\n${branchRoute(b)}\n${waiting ? `${plural(waiting, "change")} waiting for you. ` : ""}${on ? "Click to put away" : "Click to see what it merges"}`,
       onclick: () => edBrToggle(b) },
-      a && a.avatar ? el("img", { src: `/avatars/${a.avatar}.svg`, alt: "", draggable: "false" }) : el("span", { class: "ed-noav" }),
+      a && a.avatar ? el("img", { src: avatarSrc(a.avatar), alt: "", draggable: "false" }) : el("span", { class: "ed-noav" }),
       waiting ? el("span", { class: "n", text: String(waiting) }) : null);
   });
   ed.brs.replaceChildren(...[el("div", { class: "ed-br-avs", role: "group", "aria-label": "Actors merging in" }, ...avs),
@@ -368,7 +371,7 @@ function edGo(dir) {
   ed.root = dir;
   ed.lists = new Map([...ed.lists].filter(([d]) => ed.file && d === edDir(ed.file)));
   ed.open.clear(); ed.treeSig = ""; ed.barSig = "";
-  try { localStorage.setItem(ED_ROOT_KEY, dir); } catch (e) { /* this page only */ }
+  try { localStorage.setItem(edRootKey(), dir); } catch (e) { /* this page only */ }
   edRemember(dir);
   ed.branches = []; edBranches();
   edBar(); edTree(); edList(dir); edFetchBranches();
@@ -376,7 +379,6 @@ function edGo(dir) {
 function edTick() {
   if (ed.timer) return;
   ed.timer = setInterval(() => {
-    if (!state.editor) { clearInterval(ed.timer); ed.timer = null; return; }
     if (document.hidden || !ed.root) return;
     const dirs = new Set([ed.root, ...ed.open, ...(ed.file ? [edDir(ed.file)] : [])]);
     Promise.all([...dirs].map((d) => edList(d, false))).then(() => { edTree(); edHead(); if (ed.s) edConflicts(ed.s); if (ed.v) edViewCheck(ed.v); });
@@ -413,7 +415,7 @@ async function edOpen(path, how = null) {
   awareness.on("update", (_, origin) => { if (origin === "local") edAware(s); });
   awareness.on("change", () => { if (ed.s === s) edHead(); });
   ytext.observe((ev, tr) => { if (tr.origin === "disk") edDiskMarks(s, ev.delta); });
-  const es = s.es = window.agNext.stream(`/api/edit/stream?${new URLSearchParams({ path, root: s.root, conn, client: doc.clientID })}`);
+  const es = s.es = new EventSource(forEditor(`/api/edit/stream?${new URLSearchParams({ path, root: s.root, conn, client: doc.clientID })}`));
   const on = (name, f) => es.addEventListener(name, (e) => {
     if (ed.s !== s) return;
     try { f(JSON.parse(e.data)); } catch (err) { console.error(err); }
@@ -615,7 +617,22 @@ function edConflictWidget(A) {
       const mine = c.to > c.from, kind = !c.theirs ? "deleted" : mine ? "rewrote" : "added";
       let what, picks;
       const branch = c.agent, who = branch ? edActor(branch.gatherer, branch.channel) : null;
-      if (branch && !c.zone) {                       // an actor's branch's change: taken in, or left out, as the reader says
+      const put = branch && branch.put;              // an actor's change through its tools (editor_edit), not its branch's
+      if (put && branch.why === "approve") {         // Review: its proposal, accepted or rejected
+        const nm = who ? edWhoName(who) : "An actor";
+        what = { rewrote: `${nm} proposes to change these lines`, deleted: `${nm} proposes to delete these lines`, added: `${nm} proposes to add lines here` }[kind];
+        picks = [
+          pick("theirs", "Accept", c.theirs ? "Put its lines in the file, in place of these (written to the file on disk)" : "Delete these lines, as it proposes"),
+          pick("mine", "Reject", "Leave its change out: the file keeps these lines, and the actor is told"),
+          kind === "rewrote" ? pick("both", "Keep both", "Keep these lines, and its after them") : null];
+      } else if (c.asked) {                          // Review or Hands off: the file changed on disk, around the tools
+        const nm = name || "Something";
+        what = { rewrote: `${nm} changed these lines on disk`, deleted: `${nm} deleted these lines on disk`, added: `${nm} added lines here on disk` }[kind];
+        picks = [
+          pick("theirs", "Accept", c.theirs ? "Take the file's lines in place of these" : "Delete these lines, as the file did"),
+          pick("mine", "Reject", mine ? "Put these lines back on the file on disk, in place of its change" : "Take the lines it added out of the file on disk"),
+          kind === "rewrote" ? pick("both", "Keep both", "Keep these lines, and the file's after them") : null];
+      } else if (branch && !c.zone) {                // an actor's branch's change: taken in, or left out, as the reader says
         const nm = who ? edWhoName(who) : branch.branch;
         what = branch.why === "approve"
           ? { rewrote: `${nm} changed these lines on its branch`, deleted: `${nm} deleted these lines on its branch`, added: `${nm} added lines here on its branch` }[kind]
@@ -647,12 +664,13 @@ function edConflictWidget(A) {
         onclick: (ev) => { ev.preventDefault(); edBoxOpen(s, c); } }, "Edit"));
       const color = branch ? edWhoColor(who) : null;
       return el("div", { class: "ed-cf" + (branch ? " from-branch" : ""), style: color ? `--who: ${color}` : null },
-        el("div", { class: "ed-cf-head" }, branch && who && who.avatar ? el("span", { class: "ed-avs" }, el("img", { src: `/avatars/${who.avatar}.svg`, alt: "", draggable: "false" })) : null,
-          el("span", { class: "what", title: branch ? `Its branch: ${branch.branch}` : many ? `Their changes, one after the other:\n${this.by.names.join("\n")}` : null,
+        el("div", { class: "ed-cf-head" }, branch && who && who.avatar ? el("span", { class: "ed-avs" }, el("img", { src: avatarSrc(who.avatar), alt: "", draggable: "false" })) : null,
+          el("span", { class: "what", title: put ? null : branch ? `Its branch: ${branch.branch}` : many ? `Their changes, one after the other:\n${this.by.names.join("\n")}` : null,
           text: `${what}, ${ago(c.at)}.` }), el("span", { class: "grow" }), ...picks),
         // its lines -- with the words changed, both those it takes out of the lines above (red) and those it puts in
         // (green), in place, where they are told (edWordDiff)
-        c.theirs ? el("div", { class: "ed-cf-label" }, branch ? (this.parts ? "Its change to the lines above: " : mine ? "On its branch, in place of the lines above:" : "On its branch:")
+        c.theirs ? el("div", { class: "ed-cf-label" }, put ? (this.parts ? "Its change to the lines above: " : mine ? "Its lines, in place of those above:" : "Its lines:")
+          : branch ? (this.parts ? "Its change to the lines above: " : mine ? "On its branch, in place of the lines above:" : "On its branch:")
           : this.parts ? "The change on disk to the lines above: " : mine ? "On disk now, in place of the lines above:" : "On disk now:",
           ...(this.parts ? [el("span", { class: "ed-del", text: "taken out" }), ", ", el("span", { class: "ed-add", text: "put in" })] : [])) : null,
         c.theirs ? el("pre", { class: "ed-cf-theirs" }, ...(this.parts
@@ -674,8 +692,8 @@ function edConflictWidget(A) {
 // of the panel's ticks.
 // Who made a conflict: every actor whose change landed from the first of its lines' changes (`since`) to its last.
 function edConflictBy(s, c) {
-  if (c.agent) {                                     // an actor's branch's: that actor
-    const a = edActor(c.agent.gatherer, c.agent.channel), name = a ? edWhoName(a) : c.agent.branch;
+  if (c.agent) {                                     // an actor's branch's, or one put in by its tools: that actor
+    const a = edActor(c.agent.gatherer, c.agent.channel), name = a ? edWhoName(a) : c.agent.branch || "An actor";
     return { label: name, names: [name] };
   }
   const ws = edWriters(edEntry(s.path)).filter((w) => w.at >= (c.since ?? c.at) - ED_CREDIT[0] && w.at <= c.at + ED_CREDIT[1]).reverse();
@@ -726,6 +744,35 @@ async function edSettle(s, conflict, take) {
   try { s.state = await post("/api/edit/settle", { path: s.path, root: s.root, conflict, take }); s.err = ""; }
   catch (e) { s.err = e.message; }
   if (ed.s === s) { edConflicts(s); edHead(); }
+}
+// Every change proposed in the file accepted, or rejected (edit/settle_all): one that cannot be -- its lines changed
+// since -- said, the rest still settled.
+async function edSettleAll(s, take) {
+  try { s.state = await post("/api/edit/settle_all", { path: s.path, root: s.root, take }); s.err = s.state.error || ""; }
+  catch (e) { s.err = e.message; }
+  if (ed.s === s) { edConflicts(s); edHead(); }
+}
+// How an agent's change to a file open here lands, for the whole Editor (its backend's MODES): Live, at once (lines
+// you are editing asked about); Review, each change a proposal to accept or reject; Hands off, refused -- and in both of
+// those, a write around the Editor's tools (a shell command's) asked about too. Its agents are told when it changes.
+const ED_MODES = [
+  ["live", "Live", "Agents' changes land as they come, in their colour, and are written to the file. Only a change to lines you are editing is asked about."],
+  ["review", "Review", "Each change an agent makes is a proposal here, to accept or reject; the file on disk changes only when you accept. A write that does not come through the Editor (a shell command's) is asked about too."],
+  ["handsoff", "Hands off", "Agents may not change the files you have open here: they are told to ask you first. A write that does not come through the Editor is asked about."]];
+function edModePick() {
+  const now = ED_MODES.find((m) => m[0] === ed.mode) || ED_MODES[0];
+  return el("label", { class: "ed-mode-pick", title: `How the agents' changes land in the files open here:\n${ED_MODES.map((m) => `${m[1]}: ${m[2]}`).join("\n")}` },
+    el("span", { class: "lbl", text: "Agents:" }),
+    el("select", { "aria-label": "How the agents' changes land", onchange: (ev) => edSetMode(ev.target.value) },
+      ...ED_MODES.map(([v, label]) => el("option", { value: v, selected: v === now[0] ? "" : null }, label))));
+}
+async function edSetMode(mode) {
+  const was = ed.mode;
+  ed.mode = mode;
+  edHead();
+  try { ed.mode = (await post("/api/mode", { mode })).mode; ed.err = ""; }
+  catch (e) { ed.mode = was; ed.err = e.message; }
+  edHead();
 }
 
 // ------------------------------------------------------------------ a conflict's lines, edited in its box
@@ -899,7 +946,7 @@ function edBoxOpen(s, c) {
   const nm = branch ? (who ? edWhoName(who) : branch.branch) : edConflictBy(s, c).label;
   const btn = (label, title, f, cls) => el("button", { type: "button", class: cls || null, title, onclick: (ev) => { ev.preventDefault(); f(); } }, label);
   box.dom = el("div", { class: "ed-cf editing" + (branch ? " from-branch" : ""), style: color ? `--who: ${color}` : null },
-    el("div", { class: "ed-cf-head" }, branch && who && who.avatar ? el("span", { class: "ed-avs" }, el("img", { src: `/avatars/${who.avatar}.svg`, alt: "", draggable: "false" })) : null,
+    el("div", { class: "ed-cf-head" }, branch && who && who.avatar ? el("span", { class: "ed-avs" }, el("img", { src: avatarSrc(who.avatar), alt: "", draggable: "false" })) : null,
       el("span", { class: "what", text: `Editing ${nm ? `${nm}'s` : "the file's"} lines${branch ? ", from its branch" : ""}: what you leave here goes in place of your lines above` }),
       el("span", { class: "grow" }),
       btn("Accept edit", branch ? "Put these lines in the file, in place of yours above; the actor is told what you changed of its" : "Put these lines in the file, in place of yours above",
@@ -1140,15 +1187,19 @@ function edHead() {
   if (ed.v && ed.v.path === ed.file) return edViewHead(ed.v);
   if (!ed.file) {
     ed.head.replaceChildren(el("span", { class: "ed-hint", text: "Pick a file to open it. Text opens to edit: everyone with it open sees the others' edits as they type, and what an actor writes to it shows here as it lands. Images, PDFs, sound and video open to look at." }),
-      el("span", { class: "grow", style: "flex: 1" }), ...[edExecBtn(), edCloseBtn()].filter(Boolean));
+      el("span", { class: "grow", style: "flex: 1" }), edModePick(), edExecBtn());
     return;
   }
   const st = s && s.state;
-  const nc = edDiskConflicts(s).length, na = ((st && st.conflicts) || []).length - nc, nb = s ? s.boxes.size : 0;
+  const all = (st && st.conflicts) || [], proposed = all.filter((c) => c.agent && c.agent.put && c.agent.why === "approve");
+  const nc = edDiskConflicts(s).length, np = proposed.length, na = all.length - nc - np, nb = s ? s.boxes.size : 0;
+  const nasked = all.filter((c) => c.asked).length;
   const [cls, said] = ed.err || (s && s.err) ? ["bad", ed.err || s.err]
     : nb ? ["warn", `Editing ${nb > 1 ? `${nb} changes` : "a change"} in ${nb > 1 ? "their boxes" : "its box"}: Accept edit or Cancel there`]
+    : nasked && nasked === nc ? ["warn", `${plural(nasked, "change")} on disk to review`]
     : nc ? ["bad", `${plural(nc, "conflict")} with the file on disk`]
-    : na ? ["warn", `${plural(na, "change")} from a branch to approve`]
+    : np ? ["warn", `${plural(np, "change")} to review`]
+    : na ? ["warn", `${plural(na, "change")} held for you`]
     : !s || !s.epoch ? ["", "Opening…"]
     : s.es.readyState !== 1 ? ["warn", "Reconnecting…"]
     : st && st.missing ? ["bad", "Deleted on disk: Save writes it again"]
@@ -1180,9 +1231,12 @@ function edHead() {
   const by = edByChip(writers);
   ed.head.replaceChildren(...[
     el("span", { class: "ed-path", title: ed.file, text: edRel(ed.file) }),
-    (nc || na) && !(ed.err || (s && s.err)) ? el("button", { type: "button", class: `ed-status ${cls}`, role: "status",
-      title: nc ? "Show the first: keep yours, take the file's, or both" : "Show the first: accept it, or reject it",
+    (nc || na || np) && !(ed.err || (s && s.err)) ? el("button", { type: "button", class: `ed-status ${cls}`, role: "status",
+      title: nc && nasked !== nc ? "Show the first: keep yours, take the file's, or both" : "Show the first: accept it, or reject it",
       onclick: () => edToConflict(s) }, said) : el("span", { class: `ed-status ${cls}`, role: "status", text: said }),
+    np > 1 && !nb ? el("span", { class: "ed-all" },
+      el("button", { type: "button", title: "Accept every change proposed here: each written to the file on disk, and its actor told", onclick: () => edSettleAll(s, "theirs") }, "Accept all"),
+      el("button", { type: "button", title: "Reject every change proposed here: the file keeps its lines, and the actors are told", onclick: () => edSettleAll(s, "mine") }, "Reject all")) : null,
     zoned, by, changed,
     s && s.note ? el("span", { class: "ed-status bad", text: s.note }) : null,
     el("span", { class: "ed-people" },
@@ -1195,6 +1249,7 @@ function edHead() {
       "aria-label": "Wrap long lines", onclick: () => edSetWrap(!ed.wrap) }, strokeIcon(ICONS.wrap, 15)),
     el("label", { class: "ed-auto", title: "Save the file a moment after each edit to it, yours or another's: the actors read it as it is typed. Not while a conflict with the file waits." },
       el("input", { type: "checkbox", checked: ed.auto ? "" : null, onchange: (ev) => edSetAuto(ev.target.checked) }), "Auto-save"),
+    edModePick(),
     s && s.info && s.info.kind !== "text" ? el("button", { type: "button", class: "ed-mode", title: `Show ${edBase(s.path)} as ${ED_VIEW_SAID[s.info.kind] === "image" ? "an image" : `a ${ED_VIEW_SAID[s.info.kind]}`}`,
       onclick: () => edOpen(s.path, "view") }, strokeIcon(ICONS.page, 13), "View") : null,
     edTexToPdf() ? el("button", { type: "button", class: "ed-topdf", onclick: () => edToPdf(),
@@ -1202,7 +1257,7 @@ function edHead() {
     edExecBtn(),
     el("button", { type: "button", class: "primary", title: nc ? "Write it to the file on disk, your lines kept where they conflict (⌘S / Ctrl+S)" : "Write it to the file on disk (⌘S / Ctrl+S)",
       disabled: s && st && (st.dirty || st.missing) ? null : "", onclick: () => s && edSave(s) }, "Save"),
-    edCloseBtn()].filter(Boolean));
+    ].filter(Boolean));
 }
 
 // The actors changing the file open: their avatars -- each pressed, its changes to it in the last minutes (edChanges) --
@@ -1219,156 +1274,21 @@ function edByChip(writers) {
     many ? el("span", { class: "lbl", text: `${writers.length} actors changing it` }) : null);
 }
 
-// The panel: above the panes, opened from a pane's header (setEditor; from a pane's frame, through this page:
-// agEditorPanel). Its height is the reader's, by the edge between it and the panes (kept in this browser). Closed,
-// its file is closed too -- the others no longer see this page in it -- and opened again with it.
-state.editor = !PANE && !SNAPSHOT && (() => { try { return localStorage.getItem(ED_SHOWN_KEY) === "1"; } catch (e) { return false; } })();
-const edShown = () => PANE ? !!(window.parent.agEditorPanel && window.parent.agEditorPanel.shown()) : !!state.editor;
-// `dir`: the folder to show in it, opened -- a pane's actor's working directory, by its button.
-function setEditor(open, dir = null) {
-  if (PANE) { if (window.parent.agEditorPanel) window.parent.agEditorPanel.set(open, dir); return; }
-  const wasMin = chatMin();
-  state.editor = open;
-  if (!open) { edClose(); keepMin(false); edGoClose(); edPickClose(); edMenuClose(); }   // the chat minimized only under it: closed, shown again
-  try { localStorage.setItem(ED_SHOWN_KEY, open ? "1" : ""); } catch (e) { /* this page only */ }
-  for (const p of panes.others) p.call("editor", open);
-  edMount();
-  if (open && dir) edGo(dir);
-  if (wasMin && !open) return minRedraw();          // its view's feed loaded again (minimized, the files')
-  keepingPlace(renderMain);                          // its button in the header: pressed, or not
-  drawn.main = mainSignature();
-}
-// The selected actor's working directory (this page's: a pane's, in its frame).
-const edActorDir = () => { const info = selectedInfo(); return (info && (info.cwd || (info.session && info.session.cwd))) || null; };
-// The Editor opened by a pane's button, at the actor's work: the folder holding the files it changed lately -- in its
-// latest turn that changed any, and the last few minutes; not by git, nor its scratch files (editor.place) -- else its
-// working directory.
-async function edAtActor() {
-  const cwd = edActorDir();
-  let dir = null;
-  if (state.selected && !isShell(state.selected[1])) {
-    const [gatherer, channel] = state.selected;
-    try { dir = (await get(`/api/edit/place?${new URLSearchParams({ gatherer, channel, cwd: cwd || "" })}`)).dir; }
-    catch (e) { /* its working directory */ }
-    const b = branchOf(gatherer, { channel });
-    if (b) {                                         // on a branch of its own: the project, where its changes are merged
-      const at = [b.worktree, cwd].find((w) => w && dir && edUnder(dir, w.replace(/\/+$/, "")));
-      return setEditor(true, b.project + (at ? dir.slice(at.replace(/\/+$/, "").length) : ""));
-    }
-  }
-  setEditor(true, dir || cwd);
-}
-if (!PANE && !SNAPSHOT) window.agEditorPanel = { shown: () => !!state.editor, set: setEditor, goto: () => edGoto(), min: () => !!state.chatMin, setMin: setChatMin };
-// The chat minimized under the Editor: each pane only its message box, the actor's status at its right -- its avatar, moving
-// while it works, done with a check, a mark while it waits on the reader or stopped on an error -- and under it the latest
-// turn's commands and the lines its changes added and removed; the Editor the rest of the column. One choice for every
-// pane (they share the row under the Editor), kept in this browser while the Editor is open; closed, the chat comes back.
-const MIN_KEY = "ag-dashboard-chat-min";
-const MIN_TIP = "Minimize the chat: only its message box and the actor's status, under the Editor";
-state.chatMin = !PANE && !SNAPSHOT && !!state.editor && (() => { try { return localStorage.getItem(MIN_KEY) === "1"; } catch (e) { return false; } })();
-const chatMin = () => !SNAPSHOT && edShown()
-  && (PANE ? !!(window.parent.agEditorPanel && window.parent.agEditorPanel.min()) : !!state.chatMin);
-function keepMin(on) {
-  state.chatMin = on;
-  try { localStorage.setItem(MIN_KEY, on ? "1" : ""); } catch (e) { /* this page only */ }
-}
-function setChatMin(on) {
-  if (PANE) { if (window.parent.agEditorPanel) window.parent.agEditorPanel.setMin(on); return; }
-  keepMin(on);
-  for (const p of panes.others) p.call("minimized", on);
-  minRedraw();
-}
-// This page's pane minimized or shown again: its counts are the latest turn's, from the files' feed (chatFeed) -- then, shown
-// again, its view's own feed.
-async function minRedraw() {
-  if (chatMin() && state.files && state.files.turn !== null) { state.files.turn = null; state.files.sel = null; }
-  edMount();
-  await loadChat();
-  keepingPlace(renderMain);
-  drawn.main = mainSignature();
-  if (!chatMin()) chatToEnd();
-}
-// The view a minimized pane draws in place of its own (chatCard): no history, the message box, and miniFoot.
-const MINI_VIEW = { id: "mini", name: "Chat", feed: "files", mini: true, background: false, queued: false, greets: true,
-  render: () => [], footer: (ctx) => miniFoot(ctx) };
-const miniBack = () => el("button", { type: "button", class: "mini-back", title: "Show the chat again", "aria-label": "Show the chat again",
-  onclick: () => setChatMin(false) }, strokeIcon(ICONS.restore, 14));
-const miniFoot = (ctx) => [miniBack(), actorStatus(ctx, () => setChatMin(false))];
-// The actor's status, small, at the right of a message box with no conversation over it -- a minimized pane's (miniFoot), a
-// Browser's: its avatar moving while it works, or while a message sent from here waits to open its turn, ✓ when the turn is
-// done, ?/! when it asks or failed; under it the latest turn's commands and lines changed (from the files' feed). Pressed:
-// `show`, the chat.
-function actorStatus({ info, running }, show) {
-  const d = state.files && state.selected && state.files.key === key(...state.selected) ? state.files.data : null;
-  const [st0, word0] = statusOf(info);
-  // working: its turn, or a message sent from here that has yet to open one -- for a while: not seen for long, its terminal
-  // may be asking something first (pendingTalk), and the status says so
-  const v = chatViewOf(info), mine = mySends(), unseen = !running && !!(v && v.opening && v.opening.unseen);
-  if (v && v.opening && !mine.length) mine.push(v.opening);   // a message on its way to open the next turn
-  // the latest turn, as loaded -- none while a message sent from here waits to open the next: its numbers are not that one's
-  const t = d && d.turns.length && d.turn === d.turns.length - 1 && !(mine.length && !running) ? d.turns[d.turn] : null;
-  const live = running || (mine.length > 0 && !unseen);
-  const [st, word] = unseen ? ["asking", "Pending · not seen by the session yet; its terminal may be asking something first"] : [st0, word0];
-  const cmds = t ? d.commands : [], failed = cmds.filter((c) => c.error).length;
-  const lines = t ? addChanged(d.files.filter((f) => (showTmp || !f.temporary) && (showGit || !gitOnly(f))).map((f) => f.changed)) : null;
-  const src = bareAvatar(info);
-  const mark = { asking: ["ask", "?"], error: ["err", "!"], failed: ["err", "!"], background: ["bg", ""] }[st];
-  const pic = live ? (src ? buddy(info, !!info.failing) : el("span", { class: "spin", "aria-hidden": "true" }))
-    : t && ["idle", "finished", "closed"].includes(st) ? atRest(info, t.row_id)
-    : src ? el("span", { class: "still", "data-sig": signature([src, st]) }, el("img", { src, alt: "", draggable: "false" }),
-      mark ? el("span", { class: "mk " + mark[0], text: mark[1] }) : null)
-    : null;
-  const said = [live ? (info.failing ? "Retrying" : "Working") : word,
-    t ? plural(cmds.length, "command") + (failed ? `, ${full(failed)} failed` : "") : null,
-    lines ? `${plural(lines[0], "line")} added, ${full(lines[1])} removed` : null].filter(Boolean).join(" · ");
-  return el("button", { type: "button", class: "mini-st" + (live ? " live" : ""), "data-morph": "",
-    title: `${said}. Show the chat`, "aria-label": `${said}. Show the chat`, onclick: show },
-    el("span", { class: "pic", "data-morph": "" }, pic),
-    el("span", { class: "n" }, t ? el("span", { class: "c" + (failed ? " err" : "") }, strokeIcon(ICONS.terminal, 11), full(cmds.length)) : null,
-      lines && lines[0] ? el("span", { class: "chg-a", text: `+${full(lines[0])}` }) : null,
-      lines && lines[1] ? el("span", { class: "chg-r", text: `−${full(lines[1])}` }) : null));
-}
-// A shell's pane, minimized: what it is, and the way back.
-function shellMini(id) {
-  const sh = shellOf(id);
-  return el("section", { class: "chat mini shell", "aria-label": "Terminal", "data-for": signature([id, "mini"]) }, miniBack(),
-    el("span", { class: "mini-sh" }, strokeIcon(ICONS.terminal, 13), el("span", { text: sh ? `Terminal · ${shellPath(sh)}` : "Terminal" })));
-}
-// In a frame: as tall as its minimized pane -- the row under the Editor as tall as its tallest -- else as its pane is laid out.
-let miniFit = null;
-function fitMini() {
-  const f = PANE && window.frameElement;
-  if (!f) return;
-  const card = document.querySelector("#main > .chat.mini");
-  if (miniFit && miniFit.card === card) return;
-  if (miniFit) miniFit.obs.disconnect();
-  miniFit = null;
-  if (!card) { f.style.height = ""; return; }
-  const obs = new ResizeObserver(() => { f.style.height = `${Math.ceil(card.getBoundingClientRect().height)}px`; });
-  obs.observe(card);
-  miniFit = { card, obs };
-}
-const edCloseBtn = () => el("button", { type: "button", class: "ed-close", title: "Close the editor", "aria-label": "Close the editor",
-  onclick: () => setEditor(false) }, "×");
-// Execute: the project's preview run, by the app that takes `run`, its pane beside (edExecute); none here, no button.
+// The panel: in the dashboard's top row, above the actors' panes, as the Browser's and DocWriter's are -- closed by the
+// head the dashboard draws over it. Its folder is the one it was started on (its instance's), until the reader shows
+// another (kept in this browser, for this Editor).
+const edShown = () => true;
+const edRootKey = () => `${ED_ROOT_KEY}:${(agApp && agApp.instance) || ""}`;
+// Execute: the project's preview run, beside the file (edExecute).
 function edExecBtn() {
   if (!edRuns()) return null;
   return el("button", { type: "button", class: "ed-exec",
     title: "Run this project's preview, and show what it makes beside: the first time, set what it runs (⌘↵ / Ctrl+Enter)",
     onclick: edExecute, "aria-keyshortcuts": MAC ? "Meta+Enter" : "Control+Enter" }, strokeIcon(ICONS.play, 13), "Execute");
 }
-// Shown or hidden as `state.editor` says, drawn the first time it is shown: called by each draw of the main view.
+// Drawn the first time, and its folder shown: the one last shown in this Editor, else the one it was started on.
 function edMount() {
-  if (PANE || SNAPSHOT) return;
-  document.querySelector(".work").classList.toggle("chat-min", chatMin());
   const top = document.getElementById("ed-top");
-  if (!state.editor) { top.hidden = true; return; }
-  if (state.home && state.home.editor === false) {
-    top.hidden = false;
-    if (!top.firstChild) top.append(el("div", { class: "ed-head" }, el("span", { class: "ed-hint",
-      text: "The editor needs pycrdt where the dashboard runs: pip install pycrdt, then restart the dashboard." }), edCloseBtn()));
-    return;
-  }
   if (!ed.host) {
     ed.bar = el("div", { class: "ed-bar" });
     ed.tree = el("div", { class: "ed-rows", role: "tree", "aria-label": "The folder's files" });
@@ -1382,50 +1302,25 @@ function edMount() {
       "aria-controls": "ed-files", "aria-expanded": "false", onclick: () => edFoldTree(false) });
     const colGrip = () => el("div", { class: "ed-col-grip", role: "separator", "aria-orientation": "vertical",
       title: "Drag to resize · double-click: the width it had first" });
-    const treeGrip = colGrip(), sideGrip = colGrip();
+    const treeGrip = colGrip(), sideGrip = colGrip(), pvGrip = colGrip();
+    ed.pv = el("section", { class: "ed-pv", hidden: "", "aria-label": "The project's preview" });
     ed.host = el("div", { class: "ed" }, ed.fold, nav, treeGrip,
-      el("div", { class: "ed-main" }, ed.head, el("div", { class: "ed-work" }, ed.body, sideGrip, ed.side)));
+      el("div", { class: "ed-main" }, ed.head, el("div", { class: "ed-work" }, ed.body, sideGrip, ed.side, pvGrip, ed.pv)));
     ed.host.addEventListener("keydown", edExecKey, true);          // ⌘↵: Execute
     widthGrip(treeGrip, "ag-dashboard-editor-tree-width", nav, "width", 120, (x) => x - nav.getBoundingClientRect().left);
     widthGrip(sideGrip, "ag-dashboard-editor-changes-width", ed.side, "width", 200, (x) => ed.side.getBoundingClientRect().right - x);
+    widthGrip(pvGrip, "ag-editor-preview-width", ed.pv, "width", 220, (x) => ed.pv.getBoundingClientRect().right - x);
     top.replaceChildren(ed.host);
     edTreeWire(nav);
+    pvMount(ed.pv);
     let folded = false;
     try { folded = localStorage.getItem(ED_TREE_FOLDED_KEY) === "1"; } catch (e) { /* this page only */ }
     edFoldTree(folded, false);
   }
-  const opening = top.hidden;
-  top.hidden = false;
-  if (!ed.root) {                                    // the folder last shown, else the actor's, else the dashboard's
+  if (!ed.root) {
     let dir = "";
-    try { dir = localStorage.getItem(ED_ROOT_KEY) || ""; } catch (e) { /* this page only */ }
-    edGo(dir || edActorDir() || (state.home && state.home.cwd) || "/");
-  }
-  if (opening) {                                     // shown again: drawn, and its file opened again
-    ed.barSig = ""; edBar(); edTree(); edHead();
-    if (ed.file && !ed.s) edOpen(ed.file);
+    try { dir = localStorage.getItem(edRootKey()) || ""; } catch (e) { /* this page only */ }
+    edGo(dir || (agApp && agApp.folder) || state.home.cwd || "/");
   }
   edTick();
 }
-// The edge under the panel above the panes (the Editor's, DocWriter's), dragged to resize it: its height kept in this
-// browser, the same for both.
-function topGrip(top) {
-  const grip = el("div", { class: "ed-grip", title: "Drag to resize", "aria-hidden": "true" });
-  try { const h = Number(localStorage.getItem(ED_HEIGHT_KEY)); if (h > 0) top.style.setProperty("--ed-h", `${h}px`); } catch (e) { /* this page only */ }
-  grip.addEventListener("pointerdown", (ev) => {
-    ev.preventDefault();
-    grip.setPointerCapture(ev.pointerId);
-    grip.classList.add("on");
-    const at = top.getBoundingClientRect().top, room = top.parentElement.getBoundingClientRect().height;
-    let h = null;                                  // the panes below keep room for a view and its message box
-    const move = (e) => { h = Math.round(Math.max(140, Math.min(e.clientY - at, room - 220))); top.style.setProperty("--ed-h", `${h}px`); };
-    const up = () => {
-      grip.classList.remove("on");
-      grip.removeEventListener("pointermove", move); grip.removeEventListener("pointerup", up); grip.removeEventListener("pointercancel", up);
-      if (h !== null) try { localStorage.setItem(ED_HEIGHT_KEY, String(h)); } catch (e) { /* this page only */ }
-    };
-    grip.addEventListener("pointermove", move); grip.addEventListener("pointerup", up); grip.addEventListener("pointercancel", up);
-  });
-  return grip;
-}
-

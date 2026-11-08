@@ -86,7 +86,6 @@ class _Home(Answer):
     harnesses: Optional[List[Any]] = None
     shells: Optional[List[Any]] = None
     home_dir: Optional[str] = None
-    editor: Optional[bool] = None
     branches: Optional[List[Any]] = None
 
 

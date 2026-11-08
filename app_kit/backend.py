@@ -18,9 +18,12 @@ import base64
 import json
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from .manifest import Manifest
+
+if TYPE_CHECKING:
+    from .docs import Docs  # noqa: F401
 
 
 class AppError(Exception):
@@ -107,11 +110,14 @@ class ToolResult:
 @dataclass
 class Response:
     """The backend's answer to a request its panel made (`App.request`): a body; or, `events`, server-sent events
-    (`Response.stream`) -- an app run inside the dashboard only (an app in its own process answers with a body)."""
+    (`Response.stream`); or, `file`, a file on disk served as it is, in the ranges asked for (`Response.file`: a video
+    the page seeks in, a large PDF) -- those two an app run inside the dashboard only (an app in its own process answers
+    with a body)."""
     status: int = 200
     body: bytes = b""
     headers: Dict[str, str] = field(default_factory=dict)
     events: Optional[Tuple[Callable[[float], Optional[List[Tuple[str, Any]]]], Optional[Callable[[], None]]]] = None
+    file: Optional[Dict[str, Any]] = None
 
     @classmethod
     def json(cls, value: Any, status: int = 200) -> "Response":
@@ -125,6 +131,14 @@ class Response:
         (name, JSON value) -- [] none yet (a keepalive goes), None the end. `close()` is called once, when it is over,
         however (the panel gone, the end, the server stopping): what the stream held let go."""
         return cls(200, b"", {"Content-Type": "text/event-stream"}, (take, close))
+
+    @classmethod
+    def file_at(cls, path: str, media_type: str, filename: str = "", download: bool = False,
+                headers: Optional[Dict[str, str]] = None) -> "Response":
+        """The file at `path` (absolute), as `media_type`, inline -- or, `download`, to be saved as `filename` -- its
+        ranges served as they are asked for."""
+        return cls(200, b"", dict(headers or {}), None, {"path": path, "media_type": media_type,
+                                                        "filename": filename, "download": download})
 
 
 class Host(ABC):
@@ -166,6 +180,11 @@ class Host(ABC):
         """How many panels of the instance are open now (a server it runs, left with none, may be stopped)."""
         return 0
 
+    def docs(self) -> "Docs":
+        """The host's files shared live (app_kit.docs), for an app whose manifest asks `docs`, run in the host's
+        process; AppError otherwise."""
+        raise AppError("the host's shared files are not given to this app", 403)
+
 
 class App:
     """An app's backend. The host sets `manifest` and calls `start` once, before anything else; then, from any thread,
@@ -196,7 +215,8 @@ class App:
     def request(self, instance: Optional[Instance], method: str, path: str, query: Dict[str, str],
                 body: bytes) -> Response:
         """A request the panel made of the backend: `path` is what follows /apps/<name>/api/. Its data that are not
-        events (a file's contents, a picture)."""
+        events (a file's contents, a picture). `query` holds the host's own `_here`: "1" when the page asking is on the
+        host's machine (a system dialog the app opens shows on that machine's screen), else "0"."""
         return Response(404, b"not found")
 
     def attached(self, instance: Instance, channel: str) -> None:

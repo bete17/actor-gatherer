@@ -1,0 +1,56 @@
+/* The Editor's panel, its page: the dashboard's colours (frontend/src/legacy/css/00-base.css's), the theme the dashboard
+   shows as the SDK tells it (its colours set on :root, data-ag-theme), and the page's own elements as the dashboard's
+   page draws them. */
+:root {
+  color-scheme: light;
+  --page: #f6f6f4; --surface: #fcfcfb; --side: #f4f4f2; --side-rule: var(--ring); --ink: #1d1d1b; --ink-2: #55544f; --muted: #898781;
+  --grid: #e4e3dc; --axis: #c3c2b7; --ring: rgba(20,20,18,0.09); --wash: rgba(20,20,18,0.04);
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --s5: #e87ba4; --s6: #008300; --s7: #6250d6; --s8: #e34948;
+  --t-call: #1f8a3b; --t-output: #74c487; --t-gatherer: #e8b600;
+  --good: #0ca30c; --warning: #fab219; --critical: #d03b3b; --selected: rgba(42,120,214,0.10);
+  --pick: var(--s7);                 /* actors selected to move together: violet, not the blue of the one shown */
+  /* the Transcript view's terminal: the page's own surface, so the history is part of the page in either theme */
+  --term-bg: var(--surface); --term-ink: #2b2a27; --term-dim: #6f6c65; --term-faint: #a09d95; --term-user: #efeee9; --term-ok: #2f9a4c;
+  --term-err: #cf3a50; --term-run: #c08a00; --term-accent: #c4643f; --term-code: #f2f1ed; --term-rule: #e2e0d9; --term-bash: #c7307a;
+  --term-add: rgba(47,154,76,.12); --term-del: rgba(207,58,80,.10); --term-add-ink: #1b6b34; --term-del-ink: #a5293d; --term-link: #2468c8;
+  /* the Files view's markdown, coloured as the NumPy docs (the PyData theme) colour it: links, inline code */
+  --md-link: #0a7d91; --md-code: #912583;
+  /* code, coloured (the highlighter's hl-* classes, a command's output's a-* colours) */
+  --hl-com: #6e6c66; --hl-kw: #7a35b0; --hl-str: #1d7a3a; --hl-num: #a3570a; --hl-fn: #1f5fb4; --hl-prop: #0a7489; --hl-meta: #8a6200;
+  --hl-bg: color-mix(in srgb, var(--ink) 4%, var(--surface));
+  --scroll: rgba(0,0,0,.16);
+}
+:root[data-ag-theme="dark"] {
+  color-scheme: dark;
+  --page: #111110; --surface: #1f1f1d; --side: #121211; --side-rule: rgba(255,255,255,0.14); --ink: #ecebe7; --ink-2: #c3c2b7; --muted: #898781;
+  --grid: #2c2c2a; --axis: #383835; --ring: rgba(255,255,255,0.10); --wash: rgba(255,255,255,0.05);
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767; --selected: rgba(57,135,229,0.16);
+  --t-call: #2ea043; --t-output: #8fd19e; --t-gatherer: #f2cc3a;
+  --term-bg: var(--surface); --term-ink: #e8e6e0; --term-dim: #8f8c84; --term-faint: #66635d; --term-user: #262522; --term-ok: #4eba65;
+  --term-err: #ff6b80; --term-run: #e8b600; --term-accent: #d97757; --term-code: #222220; --term-rule: #2e2d2a; --term-bash: #fd5db1;
+  --term-add: rgba(78,186,101,.16); --term-del: rgba(255,107,128,.16); --term-add-ink: #b6e8c0; --term-del-ink: #ffc2cb; --term-link: #7cb7ff;
+  --md-link: #3fb1c5; --md-code: #f3c7ee;
+  --hl-com: #9a978f; --hl-kw: #c7a2ff; --hl-str: #8fd19e; --hl-num: #f0a868; --hl-fn: #82b8ff; --hl-prop: #62c6d6; --hl-meta: #e3bd5f;
+  --hl-bg: color-mix(in srgb, var(--ink) 4%, var(--surface));
+  --scroll: rgba(255,255,255,.16);
+  --buddy-edge: rgba(255,255,255,.28); --buddy-edge2: transparent;
+}
+/* what the dashboard's own stylesheets give every element there, and its file kinds' colours (12-editor-tree.css's) */
+* { box-sizing: border-box; scrollbar-width: thin; scrollbar-color: var(--scroll) transparent; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--page); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  display: flex; flex-direction: column; overflow: hidden; }
+button { font: inherit; font-size: 12px; color: var(--ink); background: var(--surface); border: 1px solid var(--ring); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+button:hover { background: var(--wash); }
+button.primary { background: var(--s1); border-color: var(--s1); color: #fff; }
+button.primary:hover { filter: brightness(1.06); background: var(--s1); }
+button:disabled { opacity: .5; cursor: default; }
+input, select, textarea { font: inherit; color: var(--ink); }
+.ed-top { flex: 1 1 auto; height: 100%; }
+/* a note over the panel a moment (paneNote): why nothing happened */
+.pane-note { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 10; max-width: calc(100% - 32px);
+  background: var(--surface); border: 1px solid var(--ring); border-radius: 8px; padding: 6px 12px; font-size: 12px; color: var(--ink-2);
+  box-shadow: 0 4px 16px rgba(0,0,0,.12); }
+/* a column's edge dragged: the frames in it (a PDF's viewer, a page previewed) let the pointer by */
+body.resizing { cursor: col-resize; user-select: none; }
+body.resizing iframe { pointer-events: none; }

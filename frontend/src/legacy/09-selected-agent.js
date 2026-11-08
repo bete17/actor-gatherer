@@ -1,10 +1,10 @@
 // ------------------------------------------------------------------ the selected agent
 // The main view is the actor's conversation (chatCard): all of it, with the message box under it where
 // the actor can be messaged here. What ag saw and did for it -- the Actor and Gatherer views -- is the
-// details panel (detailsPanel), opened from the page's header, at the chat's right. The Editor is above the
-// panes, its own (edMount).
+// details panel (detailsPanel), opened from the page's header, at the chat's right. The apps' panels are above the
+// panes, in the top row (18-top.js's topMount: the chat minimized under it, or not).
 function renderMain() {
-  edMount();
+  topMount();
   const main = document.getElementById("main");
   if (!state.selected) {
     document.getElementById("controls").replaceChildren();
@@ -87,7 +87,7 @@ document.addEventListener("keydown", (ev) => {
     if (state.selected && !isShell(state.selected[1]) && interrupt(selectedInfo())) ev.preventDefault();
     return;
   }
-  if ((n && n.closest && n.closest("input, textarea, select, [contenteditable], .xterm, #ed-top"))
+  if ((n && n.closest && n.closest("input, textarea, select, [contenteditable], .xterm, .top-row"))
     || document.querySelector("[role=menu]:not([hidden]), [role=dialog]:not([hidden]), dialog[open]")
     || !document.getElementById("about").hidden || window.agNext.settings.fileOpen()) return;
   if (!PANE && panes.focus !== panes.here ? panes.focus.call("escape") : escapeShown()) ev.preventDefault();

@@ -42,9 +42,9 @@ def until(test, seconds=3.0) -> bool:
 class Stream:
     """A stream opened by hand: its first lines read, then closed as a page that goes closes it."""
 
-    def __init__(self, port, path):
+    def __init__(self, port, path, host="127.0.0.1"):
         self.sock = socket.create_connection(("127.0.0.1", port), timeout=10)
-        self.sock.sendall(f"GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n".encode())
+        self.sock.sendall(f"GET {path} HTTP/1.1\r\nHost: {host}\r\n\r\n".encode())
         self.fp = self.sock.makefile("rb")
         self.head = []
         while (line := self.fp.readline().decode().rstrip("\r\n")):
@@ -75,9 +75,10 @@ class RoutesTest(unittest.TestCase):
         for methods, path, doc in listed:
             self.assertTrue(doc, f"{methods} {path} has no docstring")
         paths = {p for _, p, _ in listed}
-        for path in ("/api/home", "/api/stream", "/api/terminal", "/api/edit/stream", "/api/apps/stream",
+        for path in ("/api/home", "/api/stream", "/api/terminal", "/api/apps/stream",
                      "/api/desktop", "/api/apps/start", "/api/send", "/api/actors/{op:path}"):
             self.assertIn(path, paths)
+        self.assertFalse([p for p in paths if p.startswith("/api/edit/")])   # the Editor app's, on its own origin
 
     def test_the_command_lists_them(self):
         from ag_dashboard.__main__ import main
@@ -106,8 +107,8 @@ class StreamsTest(HomeBase):
         self.port = self.httpd.server_port
         self.work = tempfile.mkdtemp(dir=self.tmp.name)
 
-    def open(self, path):
-        s = Stream(self.port, path)
+    def open(self, path, host="127.0.0.1"):
+        s = Stream(self.port, path, host)
         self.addCleanup(s.close)
         self.assertIn(" 200 ", s.head[0])
         return s
@@ -140,20 +141,21 @@ class StreamsTest(HomeBase):
         path = os.path.join(self.work, "a.txt")
         with open(path, "w") as fh:
             fh.write("hello\n")
-        s = self.open(f"/api/edit/stream?path={path}&root={self.work}&conn=c1&client=7")
+        s = self.open(f"/api/edit/stream?path={path}&root={self.work}&conn=c1&client=7",   # the Editor app's
+                      host=f"editor.localhost:{self.port}")
         self.assertEqual(s.event(), "init")
-        room = next(iter(self.httpd.editors.rooms.values()))
+        room = next(iter(self.httpd.docs.rooms.values()))
         self.assertEqual(list(room.conns), ["c1"])
         s.close()
         self.assertTrue(until(lambda: not room.conns, 2))
-        self.assertTrue(until(lambda: not waiting("_taken", "api/common.py"), 2))
+        self.assertTrue(until(lambda: not waiting("take", "ag_dashboard/app_docs.py"), 2))
 
     def app_stream(self) -> str:
-        """The stream of an app's panel: the Preview's (an app that comes with ag), of this test's folder."""
+        """The stream of an app's panel: the Editor's (an app that comes with ag)."""
         h = self.httpd.app_host
         h._write_fn = insert_here
         self.hosts.append(h)
-        return f"/api/apps/stream?app=preview&gatherer=g&instance={h.open('preview', 'g', self.work).id}"
+        return f"/api/apps/stream?app=editor&gatherer=g&instance={h.open('editor', 'g', self.work).id}"
 
     def test_an_app_s_stream_lets_go_of_its_subscription_once_its_page_goes(self):
         s = self.open(self.app_stream())

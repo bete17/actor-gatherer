@@ -1,4 +1,4 @@
-// The Editor's files, left of the file, as an editor's explorer shows them. At the top (edBar): the folder shown --
+// The Editor's files, left of the file, as an editor's explorer shows them (moved from the dashboard's page as it was). At the top (edBar): the folder shown --
 // clicked, another picked (edPicker) -- and buttons for a new file or folder, the folders read again, every folder
 // closed, and the files folded away into a thin bar (edFoldTree). Under it the tree (edTree): each folder's entries,
 // folders first, with a twistie, an icon of its kind, guides down the levels and what actors and pages do to each;
@@ -395,9 +395,9 @@ function edTree() {
         continue;
       }
       const fresh = got.now - e.mtime < 60 && !writers.some((w) => got.now - w.at < 60), on = p === ed.file;
-      sig.push(p, fresh, e.editors, e.dirty, e.conflicts, e.pending, writers.map((w) => w.channel));
+      sig.push(p, fresh, e.pages, e.dirty, e.conflicts, e.pending, writers.map((w) => w.channel));
       rows.push(el("button", { ...at, class: "ed-row" + dim + (on ? " on" : ""), "aria-selected": on ? "true" : "false",
-        title: [edTilde(p), fresh ? `Changed ${ago(e.mtime)}` : "", e.editors ? `Open in ${plural(e.editors, "editor")}` : "",
+        title: [edTilde(p), fresh ? `Changed ${ago(e.mtime)}` : "", e.pages ? `Open in ${plural(e.pages, "editor")}` : "",
           e.dirty ? "Unsaved changes" : ""].filter(Boolean).join("\n"), onclick: () => edOpen(p) },
         el("span", { class: "tw" }), edFileIcon(e.name), el("span", { class: "n", text: e.name }),
         edAvatars(writers, "it"),
@@ -405,7 +405,7 @@ function edTree() {
         e.conflicts ? el("span", { class: "mk cf", title: `${plural(e.conflicts, "conflict")} with the file on disk`, text: "!" }) : null,
         edWaiting(e.pending, "to it"),
         e.dirty && !e.conflicts ? el("span", { class: "mk dirty", title: "Unsaved changes" }) : null,
-        e.editors ? el("span", { class: "mk eds", title: `Open in ${plural(e.editors, "editor")}`, text: String(e.editors) }) : null));
+        e.pages ? el("span", { class: "mk eds", title: `Open in ${plural(e.pages, "editor")}`, text: String(e.pages) }) : null));
     }
     if (got.more) rows.push(el("div", { class: "ed-note", style: lvl(depth), role: "none", text: "More not listed" }));
   };

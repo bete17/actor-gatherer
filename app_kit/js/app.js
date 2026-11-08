@@ -3,7 +3,7 @@
 The panel is a page on the app's own origin (http://<name>.localhost:<port>), in an iframe of the dashboard's page.
 It loads this file from its own origin, `<script src="/_ag/app.js"></script>`, and calls
 
-    const ag = await AgApp.connect();            // {app, label, gatherer, instance, title}: the instance it shows
+    const ag = await AgApp.connect();            // {app, label, gatherer, instance, title, folder}: the instance it shows
 
 Everything goes through the page around it, by postMessage, which checks it against the app's manifest:
 
@@ -25,6 +25,9 @@ Everything goes through the page around it, by postMessage, which checks it agai
                                                          (capability transcript)
     ag.intents.open(kind, data) / on(kind, cb)           ask for something (open-file, open-url, ...) / be asked
     ag.selection.current / on(cb)                        the agent in focus in the page: {gatherer, channel}
+    ag.actors.current / on(cb)                           the actors as the dashboard lists them (capability actors):
+                                                         {gatherers: [{name, agents: [{channel, name, avatar,
+                                                         avatar_hue, cwd, status: [kind, said], ...}]}], home_dir, cwd}
     ag.theme.current / on(cb)                            {mode: "light"|"dark", vars}: the vars also set on :root
     ag.agents.focus(ch)                                  the message box of an attached agent's pane, focused (say after
                                                          the user pointed at something in the panel: they type next)
@@ -47,9 +50,9 @@ Esc, and keys with Ctrl or ⌘ the panel leaves unhandled, go on to the page, as
   let seq = 0;
   const waiting = new Map();
   const listeners = { event: new Map(), message: [], attached: [], selection: [], theme: [], intent: new Map(),
-                      states: [] };
+                      states: [], actors: [] };
   const handlers = new Map();
-  let info = null, attached = [], selection = null, theme = null, states = {}, nativeOn = false;
+  let info = null, attached = [], selection = null, theme = null, states = {}, nativeOn = false, actors = null;
 
   function send(op, body) {
     return new Promise((resolve, reject) => {
@@ -102,6 +105,7 @@ Esc, and keys with Ctrl or ⌘ the panel leaves unhandled, go on to the page, as
     else if (m.push === "selection") { selection = m.value; for (const cb of listeners.selection) cb(selection); }
     else if (m.push === "theme") applyTheme(m.value);
     else if (m.push === "states") { states = m.value || {}; for (const cb of listeners.states) cb(states); }
+    else if (m.push === "actors") { actors = m.value || null; for (const cb of listeners.actors) cb(actors); }
     else if (m.push === "still") drawStill(m.value || {});
     else if (m.push === "intent") { for (const cb of listeners.intent.get(m.kind) || []) cb(m.data); }
   });
@@ -166,6 +170,7 @@ Esc, and keys with Ctrl or ⌘ the panel leaves unhandled, go on to the page, as
     get gatherer() { return info && info.gatherer; },
     get instance() { return info && info.instance; },
     get title() { return info && info.title; },
+    get folder() { return info && info.folder; },
     events: {
       read: (q) => send("events.read", { query: q || {} }),
       subscribe(types, onRow, opts) {
@@ -205,6 +210,7 @@ Esc, and keys with Ctrl or ⌘ the panel leaves unhandled, go on to the page, as
       on(kind, cb) { if (!listeners.intent.has(kind)) listeners.intent.set(kind, []); listeners.intent.get(kind).push(cb); },
     },
     selection: { get current() { return selection; }, on(cb) { listeners.selection.push(cb); } },
+    actors: { get current() { return actors; }, on(cb) { listeners.actors.push(cb); } },
     theme: { get current() { return theme; }, on(cb) { listeners.theme.push(cb); } },
     onMessage(cb) { listeners.message.push(cb); },
     api(path, init) {
@@ -225,6 +231,7 @@ Esc, and keys with Ctrl or ⌘ the panel leaves unhandled, go on to the page, as
       states = got.states || {};
       nativeOn = !!got.native;
       selection = got.selection || null;
+      actors = got.actors || null;
       if (got.theme) applyTheme(got.theme);
       return ag;
     },
