@@ -20,7 +20,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from typing import Dict, List, Optional, Sequence
 
-from ag.ag_harness.store.processes import running
+from harness_kit.processes import running
 from ag.cli.launch import REPO
 
 
