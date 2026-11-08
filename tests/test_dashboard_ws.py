@@ -127,11 +127,11 @@ class StreamsOverOneSocketTest(HomeBase):
         names = {s.next()[1], s.next()[1]}
         self.assertEqual(names, {"home", "agent"})
         self.assertTrue(until(lambda: len(self.httpd.hub.watches) == 1))
-        h = self.httpd.app_host                             # an app's panel's stream: the Preview's (one ag comes with)
+        h = self.httpd.app_host                             # an app's panel's stream: the Editor's (one ag comes with)
         h._write_fn = insert_here
         self.hosts.append(h)
-        i = h.open("preview", "g", self.work)
-        s.say({"open": "2", "url": f"/api/apps/stream?app=preview&gatherer=g&instance={i.id}"})
+        i = h.open("editor", "g", self.work)
+        s.say({"open": "2", "url": f"/api/apps/stream?app=editor&gatherer=g&instance={i.id}"})
         self.assertIsNotNone(s.until("2", "!open"))
         self.assertTrue(until(lambda: h.subs))
         s.say({"close": "1"})                               # the one let go: the other still open
@@ -148,19 +148,19 @@ class StreamsOverOneSocketTest(HomeBase):
     def test_the_socket_going_lets_go_of_every_stream_on_it(self):
         code, sh = self.post("/api/shells", {"gatherer": "g", "cwd": self.work})
         self.assertEqual(code, 200, sh)
-        path = os.path.join(self.work, "a.txt")
-        with open(path, "w") as fh:
-            fh.write("hello\n")
         s = self.page()
         s.say({"open": "1", "url": "/api/stream?gatherer=g&channel=c1"})
         s.say({"open": "2", "url": f"/api/terminal?session_id={sh['id']}"})
-        s.say({"open": "3", "url": f"/api/edit/stream?path={path}&root={self.work}&conn=c1&client=7"})
-        self.assertTrue(s.until_all(("2", "out"), ("3", "init")))       # either first: the editor's may come before
-        room = next(iter(self.httpd.editors.rooms.values()))
-        self.assertEqual(list(room.conns), ["c1"])
+        h = self.httpd.app_host                             # an app's panel's stream: the Editor's
+        h._write_fn = insert_here
+        self.hosts.append(h)
+        i = h.open("editor", "g", self.work)
+        s.say({"open": "3", "url": f"/api/apps/stream?app=editor&gatherer=g&instance={i.id}"})
+        self.assertTrue(s.until_all(("2", "out"), ("3", "!open")))      # either first
+        self.assertTrue(until(lambda: h.subs))
         s.close()
         self.assertTrue(until(lambda: not self.httpd.hub.watches, 3))
-        self.assertTrue(until(lambda: not room.conns, 3))
+        self.assertTrue(until(lambda: not h.subs, 3))
         self.assertTrue(until(lambda: not waiting("output", "ag_dashboard/sessions.py"), 3))
 
     def test_a_stream_that_ends_says_so(self):

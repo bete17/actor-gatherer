@@ -1,16 +1,36 @@
-// The Preview's panel (app.toml): a project's preview -- its state, its form, the question about an agent's command,
-// and the result or the output of its latest run -- ported from the dashboard Editor's preview side. Everything goes
-// through app_kit's SDK (/_ag/app.js): the backend's tools for what changes (set, run, stop), its own routes for what
-// is read (about, files/, synctex), its messages for each run as it goes, and intents with the rest of the page:
-// `run` (the Editor's Execute) and `locate` (its "-> PDF") come in; `open-file` (a place in the PDF's source) goes out.
-(async () => {
-  "use strict";
-  const ag = await AgApp.connect();
-  window.preview = ag;                                  // the browser tests drive it as the page would
+// The project's preview, beside the Editor's file (ed.pv): its state, its form, the question about an agent's command,
+// and the result or the output of its latest run -- the Preview app's panel before the Editor took it in, as it was.
+// Its backend's tools for what changes (preview_set, _run, _stop), its own routes for what is read (preview/about,
+// preview/files/, preview/synctex), its messages for each run as it goes; the Editor runs it (pvRun: Execute, ⌘↵) and
+// asks for a source's place in the PDF (pvLocate: "→ PDF"), and opens what it sends back (a place in the PDF's source:
+// edShowFile). Hidden until it is first run, or opened by its button; its × hides it again.
+let pvApi = null;
+function pvShow(on) {
+  if (!ed.pv) return;
+  ed.pv.hidden = !on;
+  try { localStorage.setItem("ag-editor-preview-shown", on ? "1" : ""); } catch (e) { /* this page only */ }
+  if (on && pvApi) pvApi.shown();                    // what it is, for the file open (or the folder shown), once
+}
+async function pvRun(d) { pvShow(true); if (pvApi) await pvApi.run(d); }
+async function pvLocate(d) { pvShow(true); if (pvApi) await pvApi.locate(d); }
+function pvMount(box) {
+  box.replaceChildren(el("div", { id: "pv", class: "pv" },
+    el("div", { class: "pv-edge", "aria-hidden": "true" }),
+    el("div", { class: "pv-top" }, el("div", { class: "pv-h" }), el("div", { class: "pv-cmd", hidden: "" })),
+    el("div", { class: "pv-body" },
+      el("div", { class: "pv-card", hidden: "" }), el("div", { class: "pv-result" }),
+      el("pre", { class: "pv-out", tabindex: "0", "aria-label": "Its output", hidden: "" }),
+      el("button", { type: "button", class: "pv-busy", hidden: "",
+        title: "It is being run again: the last one made stays here until the run ends. Click to see its output" }))));
+  pvApi = pvMake(agApp, box.firstChild);
+  let shown = false;
+  try { shown = localStorage.getItem("ag-editor-preview-shown") === "1"; } catch (e) { /* this page only */ }
+  if (shown) queueMicrotask(() => pvShow(true));     // (once the Editor has its folder: edMount)
+}
+function pvMake(ag, root) {
   const OUT_MAX = 300000;                               // the most characters of a run's output kept here
   const ANSI = /\x1b(?:\[[0-?]*[ -\/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[@-Z\\-_])/g;
   const NO_SIDEBAR = 0;                                 // pdf.js's SidebarView.NONE
-  const root = document.getElementById("pv");
   const dom = { head: root.querySelector(".pv-h"), cmd: root.querySelector(".pv-cmd"), card: root.querySelector(".pv-card"),
     result: root.querySelector(".pv-result"), output: root.querySelector(".pv-out"), busy: root.querySelector(".pv-busy") };
   const pv = { path: null, file: null, about: null, run: null, out: "", picked: null, form: null, err: "", busy: false,
@@ -34,9 +54,9 @@
   const clean = (t) => t.replace(ANSI, "").replace(/\r\n/g, "\n").split("\n")
     .map((l) => l.includes("\r") ? l.split("\r").filter(Boolean).pop() || "" : l).join("\n");
   const json = (r) => { const t = (r.content || []).map((c) => c.text || "").join(""); if (r.isError) throw new Error(t); return JSON.parse(t); };
-  const call = async (tool, args) => json(await ag.tools.call(tool, args));
+  const call = async (tool, args) => json(await ag.tools.call(`preview_${tool}`, args));
   async function api(path, init) {
-    const r = await ag.api(path, init);
+    const r = await ag.api(`preview/${path}`, init);
     const got = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(got.error || `${r.status}`);
     return got;
@@ -71,29 +91,24 @@
       else return;
       if (pv.out.length > OUT_MAX) pv.out = "…" + pv.out.slice(-OUT_MAX);
       out();
-    } else if ("preview" in m) {
-      if (pv.about) pv.about.preview = m.preview;
+    } else if ("preview" in m && m.preview) {
+      if (!pv.about || m.preview.key !== pv.about.key) return;          // another project's
+      pv.about.preview = m.preview.row;
       draw();
     }
   });
 
-  // ---- what the page asks: run it (the Editor's Execute), and show a source's place in the PDF
-  ag.intents.on("run", async (d) => {
+  // ---- what the Editor asks: run it (Execute), and show a source's place in the PDF ("→ PDF")
+  async function runFor(d) {
     if (d && d.path) { pv.path = d.path; pv.file = d.file || d.path; }
     await load();
     execute();
-  });
-  ag.intents.on("locate", async (d) => {
+  }
+  async function locate(d) {
     if (!d || !d.path) return;
-    if (!pv.about) await load();
+    if (!pv.about || pv.path !== d.path) { pv.path = d.path; pv.file = d.path; await load(); }
     toPdf(d.path, Number(d.line) || 1, Number(d.column) || 0);
-  });
-  document.addEventListener("keydown", (ev) => {                        // ⌘↵ / Ctrl+Enter here: run it, as in the Editor
-    if (ev.key !== "Enter" || !(ev.metaKey || ev.ctrlKey) || ev.shiftKey || ev.altKey) return;
-    if (ev.target && ev.target.closest && ev.target.closest("input, textarea, select")) return;
-    ev.preventDefault();
-    if (!ev.repeat) execute();
-  });
+  }
   function execute() {
     if (!pv.about || pv.busy) return;
     const p = pv.about.preview;
@@ -144,7 +159,7 @@
     if (!s) return null;
     if (s.url) return s.url;
     const q = new URLSearchParams({ gatherer: ag.gatherer, instance: ag.instance, v: String(s.mtime || 0) });
-    const url = s.path && s.exists && a ? `/api/files/${a.token}/${s.rel.split("/").map(encodeURIComponent).join("/")}?${q}` : null;
+    const url = s.path && s.exists && a ? `/api/preview/files/${a.token}/${s.rel.split("/").map(encodeURIComponent).join("/")}?${q}` : null;
     if (r.state === "running" && pv.held !== null && !(pv.held && pv.held.rel !== s.rel)) return pv.held && pv.held.url;
     pv.held = url ? { rel: s.rel, url } : (r.state === "running" ? false : null);
     return url;
@@ -189,6 +204,8 @@
       live ? btn("Stop", r.server ? "Stop its server" : "Stop its run", stopIt)
         : p && !p.needs_ok && !pv.form ? btn(r ? "Re-run" : "Run", `Run it again: ${p.command || "(nothing to run)"}`, () => runIt(), { disabled: pv.busy }) : null,
       p && !pv.form ? btn("Edit", "Change the command, or what it shows", edit) : null,
+      el("button", { type: "button", class: "pv-x", title: "Hide the preview: Execute (⌘↵) shows it again", "aria-label": "Hide the preview",
+        onclick: () => pvShow(false) }, "×"),
     ].filter(Boolean));
     dom.cmd.hidden = !p || !!pv.form;
     if (p && !pv.form) dom.cmd.replaceChildren(...[
@@ -340,8 +357,8 @@
     if (!box || box.agSync) return;
     box.agSync = true;
     box.addEventListener("dblclick", (ev) => fromPdf(f, ev));
-    box.ownerDocument.addEventListener("keydown", (ev) => {                  // ⌘↵ in the viewer: run it
-      if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey) && !ev.repeat) { ev.preventDefault(); execute(); }
+    box.ownerDocument.addEventListener("keydown", (ev) => {                  // ⌘↵ in the viewer: Execute, as in the file
+      if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey) && !ev.repeat) { ev.preventDefault(); edExecute(); }
     }, true);
   }
   document.addEventListener("webviewerloaded", (ev) => {      // the viewer, before it starts: no scripts of the PDF's
@@ -354,7 +371,7 @@
     } catch (e) { /* an older viewer */ }
   });
 
-  // ---- SyncTeX: a double-click in the PDF opens its source at that line (the page's Editor, by `open-file`); `locate`
+  // ---- SyncTeX: a double-click in the PDF opens its source at that line, in the Editor (edShowFile); `locate`
   // (the Editor's "→ PDF") shows a source's line in the PDF, marked a moment.
   async function sync(askFor) {
     const s = pv.run && pv.run.shows;
@@ -382,7 +399,7 @@
     const r = view.div.getBoundingClientRect(), [px, py] = view.viewport.convertToPdfPoint(ev.clientX - r.left, ev.clientY - r.top);
     const page = view.pdfPage.view;
     const got = await sync({ page: n, x: px - page[0], y: page[3] - py });
-    if (got) ag.intents.open("open-file", { path: `${pv.about.checkout}/${got.file}`, line: got.line }).catch((e) => { pv.err = e.message; draw(); });
+    if (got) edShowFile(`${pv.about.checkout}/${got.file}`, got.line);
   }
   async function toPdf(file, line, column) {
     const s = pv.run && pv.run.shows;
@@ -413,6 +430,5 @@
     });
   }
 
-  await load();
-  document.body.dataset.ready = "1";
-})();
+  return { run: runFor, locate, shown: () => { if (!pv.about) { pv.path = pvPath() || null; pv.file = ed.file; load(); } } };
+}

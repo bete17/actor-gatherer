@@ -51,7 +51,6 @@ HELD_SECONDS = 30          # a message held until its turn ended: stored this cl
 LINE_CHARS = 400           # the most of one line's text sent
 COMMAND_OUTPUT = 4000      # the most of a command's output sent
 CONTEXT = 2                # the lines known around a change shown with it
-LATELY = 600.0             # seconds: a session's changes this recent count as where it works now, besides its latest turn's
 GIT_WINDOW = 600.0         # seconds: how long ag's watcher keeps a change it saw (file_touches/watch.py's KEEP_SECONDS) --
                            # a call of another session's stored this close to one running git may have been found to
                            # make git's changes
@@ -1131,53 +1130,6 @@ def changes(gatherer: str, channel: str, path: str, since: float, cwd: str = "")
             out += [dict(src, turn=t["n"], asked=t["text"]) for src in f["sources"]
                     if CHANGED_KINDS & set(src["kinds"]) and (src.get("at") or 0) >= since]
     return {"path": path, "changes": out, "home": got.get("home")}
-
-def lately_changed(gatherer: str, channel: str, cwd: str = "", within: float = LATELY) -> List[str]:
-    """The files the session changed lately -- in its latest turn that changed any, and in the last `within` seconds --
-    as ag's hook found its calls did (`file_touched`: created, modified or deleted), the first changed first. Not
-    counted: what a file changed while a command ran but no call names (`named` false: a pull's files, another
-    session's writes meanwhile); what a git command changed (a checkout of a file, a pull: `runs_git`), but for the
-    files the command writes itself (`> log`); nor, unless under the session's directory `cwd`, what is in a temporary
-    folder, ag's home or a harness's own (HARNESS_FOLDERS) -- none of it the session's work."""
-    conn = data._connect(gatherer)
-    if conn is None:
-        return []
-    try:
-        evs = list(_events(conn, channel))
-        held = data.meanwhile(conn, channel)
-        kind = conn.execute("SELECT event_type_id FROM event_types WHERE name = 'file_touched'").fetchone()
-        touches = conn.execute(f"SELECT row_id, inserted_at, payload_json FROM events WHERE event_type_id = ? "
-                               f"AND ifnull({data.CHANNEL}, '') = ? ORDER BY row_id", (kind[0], channel)).fetchall() if kind else []
-    finally:
-        conn.close()
-    both = lambda p: {os.path.normpath(p), os.path.realpath(p)}   # noqa: E731 - /tmp is /private/tmp, on macOS
-    git: Dict[str, set] = {}                         # a call that ran git: the files it names itself
-    for _, _, _, parts, _ in evs:
-        for p in parts:
-            if p["kind"] != "call":
-                continue
-            ran = [p] + list(p.get("calls") or [])         # a script's calls, each
-            if any(runs_git(_command(q)[0]) for q in ran):
-                git[p["id"]] = {q for c in ran for w in says_writes(c, cwd) for q in both(w)}
-    mine = both(cwd) if cwd else set()
-    kept = []                                        # (row_id, at, path)
-    for row_id, inserted_at, raw in touches:
-        t = data._json(raw) or {}
-        path = t.get("path")
-        if t.get("how") not in ("created", "modified", "deleted") or not isinstance(path, str) or not os.path.isabs(path) \
-                or t.get("named") == 0:                     # 0 or false: not named; None: not known
-            continue
-        path = os.path.normpath(path)
-        if t.get("call") in git and not both(path) & git[t["call"]]:
-            continue
-        if _under(path, mine) or not (temporary(path) or ags(path) or _under(path, HARNESS_FOLDERS)):
-            kept.append((row_id, data._seconds(inserted_at), path))
-    if not kept:
-        return []
-    begun = max((s[1] for s in _turn_starts(evs, held)[0] if s[1] < kept[-1][0]), default=0)   # the latest change's turn
-    since = time.time() - within
-    return list(dict.fromkeys(p for row_id, at, p in kept if row_id > begun or (at or 0) >= since))
-
 
 def image(gatherer: str, row_id: int, call_id: str) -> Optional[tuple]:
     """The image a call's result holds, as stored in event `row_id`: (media type, bytes), or None.

@@ -16,7 +16,7 @@ from sse_starlette import EventSourceResponse
 from starlette.exceptions import HTTPException
 from starlette.responses import Response
 
-from .. import editor, server, sessions
+from .. import livedocs, server, sessions
 
 LOCAL = ("127.0.0.1", "localhost", "::1")      # the names of this host a page on it is reached by
 REFUSED = "only the dashboard's own page may do that"
@@ -101,7 +101,7 @@ Decimal = Annotated[float, BeforeValidator(_decimal)]       # digits, with one p
 
 
 def _read_error(exc: Exception) -> Response:
-    if isinstance(exc, editor.EditorError):
+    if isinstance(exc, livedocs.DocError):
         return failure(400, str(exc))
     return failure(500, f"{type(exc).__name__}: {exc}")
 
@@ -151,7 +151,7 @@ def _taken(q: "queue.Queue", wait: float):
 
 async def _queued(q: "queue.Queue"):
     while True:
-        item = await blocking(_taken, q, editor.GONE_CHECK)
+        item = await blocking(_taken, q, livedocs.GONE_CHECK)
         if item is _EMPTY:
             yield KEEPALIVE_EVENT
         elif item is None:

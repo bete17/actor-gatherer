@@ -127,7 +127,7 @@ function edViewHead(v) {
     info.text && info.kind !== "text" ? el("button", { type: "button", class: "ed-mode", title: `Edit ${info.name}'s text, live with everyone who has it open`,
       onclick: () => edOpen(v.path, "edit") }, strokeIcon(ICONS.code, 13), "Edit") : null,
     edDownload(v), edRevealBtn(v),
-    edExecBtn(), edCloseBtn()].filter(Boolean));
+    edExecBtn()].filter(Boolean));
 }
 // Its listing looked at again (edTick): changed on disk, shown again -- deleted, said.
 async function edViewCheck(v) {

@@ -30,14 +30,6 @@ def assets(name: str) -> Response:
                 cache="public, max-age=31536000, immutable")
 
 
-@router.get("/vendor/editor.js")
-def editor_bundle() -> Response:
-    """The Editor panel's editor (CodeMirror and Yjs, assets/src/editor), loaded the first time the page shows the
-    view."""
-    with open(server.EDITOR, "rb") as fh:
-        return send(200, fh.read(), "text/javascript; charset=utf-8")
-
-
 @router.get("/vendor/pdfjs/{rel:path}")
 def pdfjs(rel: str) -> Response:
     """pdf.js and its viewer, which the Editor shows a PDF in (libs.py: the copy apps' panels load too)."""

@@ -12,7 +12,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from ag_dashboard import branches, editor, home as dashboard_home, sessions  # noqa: E402
+from ag_dashboard import branches, home as dashboard_home, livedocs, sessions  # noqa: E402
 
 try:
     from pycrdt import Doc, Text
@@ -119,7 +119,7 @@ class BranchesTest(unittest.TestCase):
         git(self.project, "remote", "add", "origin", "git@github.com:someone/proj.git")
         self.started = sessions.Sessions()
         self.addCleanup(self.started.close)
-        self.editors = editor.Editors(poll=3600)     # looked at by hand here
+        self.editors = livedocs.LiveDocs(poll=3600)     # looked at by hand here
         self.addCleanup(self.editors.close)
         self.branches = branches.Branches(self.editors, self.started, poll=3600)
         self.addCleanup(self.branches.close)
@@ -303,7 +303,7 @@ class BranchesTest(unittest.TestCase):
         self.assertEqual(self.told(), [])
         self.editors.settle(room.path, self.project, second["id"], "mine")        # Reject
         [(channel, said)] = self.told()
-        self.assertEqual((channel, said["stream"], said["author"]), (s["session_id"], "the Editor", "the gatherer"))
+        self.assertEqual((channel, said["stream"], said["author"]), (s["session_id"], "your branch's merge", "the gatherer"))
         self.assertTrue(said["text"].startswith(f"The user rejected your change to notes.py: the project ({self.project}) "
                                                 "keeps its own lines there. Your branch still has your version"))
         self.assertIn("Yours:\n```\nx = f() + 1\n```\n\nThe project's:\n```\nx = f()\n```", said["text"])
@@ -343,7 +343,7 @@ class BranchesTest(unittest.TestCase):
         self.put(wt, "notes.py", "def f():\n    return 3\n\nx = f()\n")    # changed again on its branch
         self.branches.look(everything=True)
         [c] = room.state()["conflicts"]
-        with self.assertRaisesRegex(editor.EditorError, "its lines changed again"):
+        with self.assertRaisesRegex(livedocs.DocError, "its lines changed again"):
             self.editors.settle(room.path, self.project, c["id"], "edited", "    return 2\n", theirs="    return 2\n")
         self.editors.settle(room.path, self.project, c["id"], "edited", "    return 3\n", theirs="    return 3\n")
         self.assertEqual((self.told(), room.state()["conflicts"]), ([], []))

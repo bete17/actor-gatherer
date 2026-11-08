@@ -37,13 +37,13 @@ from urllib.parse import parse_qsl, unquote
 import anyio
 from fastapi import APIRouter, Depends, Request, WebSocket, WebSocketDisconnect
 from starlette.datastructures import Headers
-from starlette.responses import Response
+from starlette.responses import FileResponse, Response
 
 import app_kit
 import harness_kit
 from app_kit import AppError, Caller, remote
 
-from .. import app_agents, app_host, desktop, editor, libs, mcp, task_links, tasks, tool_gateway
+from .. import app_agents, app_host, desktop, libs, livedocs, mcp, task_links, tasks, tool_gateway
 from .common import (KEEPALIVE_EVENT, Body, Errors, Events, Parts, answer, blocking, event, failure, local_only, named_here, not_found,
                      queue_events)
 
@@ -57,6 +57,7 @@ DESKTOP_FIRST_WAIT = 10.0                        # seconds the desktop app's tok
 APP_MAX_BODY = 40_000_000                        # the largest request body an app's panel sends its backend (a file
                                                  # given a page, as base64 in JSON: the Browser takes up to 22 MB)
 IN_PATH = re.compile(r"^w/([^/]+)/([0-9a-f]{16})(?:/(.*))?$")
+LOOPBACK = frozenset({"127.0.0.1", "::1", "localhost"})   # a page on the host's own machine (App.request's `_here`)
 SDK = os.path.join(os.path.dirname(os.path.abspath(app_kit.__file__)), "js", "app.js")
 
 
@@ -414,6 +415,8 @@ class Origins:
             except _TooLarge:
                 return await send_plain(413, b"too large a request", scope, receive, send)
             query = dict(parse_qsl((scope.get("query_string") or b"").decode("latin-1")))
+            client = scope.get("client") or ("", 0)
+            query["_here"] = "1" if client[0] in LOOPBACK else "0"     # the host's own: never the page's (App.request)
             rest = path[len("/api/"):]
             at = IN_PATH.match(rest)              # /api/w/<gatherer>/<instance>/...: what a URL with no query names
             if at:
@@ -427,6 +430,11 @@ class Origins:
                 return await _failed(exc)(scope, receive, send)
             if r.events is not None:                     # server-sent events (Response.stream), as they come
                 return await _streamed(*r.events)(scope, receive, send)
+            if r.file is not None:                       # a file on disk, its ranges as asked (Response.file_at)
+                f = r.file
+                return await FileResponse(f["path"], media_type=f["media_type"], filename=f.get("filename") or None,
+                                          content_disposition_type="attachment" if f.get("download") else "inline",
+                                          headers=_with_framed(r.headers, srv))(scope, receive, send)
             return await Response(r.body, r.status, headers=_with_framed(r.headers, srv))(scope, receive, send)
         if method != "GET":
             return await send_plain(405, b"its panel's files are read only", scope, receive, send)
@@ -465,7 +473,7 @@ def _streamed(take, close) -> Events:
     """An app's server-sent events (app_kit's Response.stream): `take` asked in a thread till it says the end."""
     async def events():
         while True:
-            got = await blocking(take, editor.GONE_CHECK)
+            got = await blocking(take, livedocs.GONE_CHECK)
             if got is None:
                 return
             if not got:

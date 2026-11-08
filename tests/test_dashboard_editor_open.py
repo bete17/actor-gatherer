@@ -1,5 +1,6 @@
-"""The Editor's ways to open what the tree does not show: the system's Open dialog (chooser.py), opened by the dashboard on
-its own machine, and Go to file's list of a folder's files (editor.file_list) -- git's in a git project, else a walk."""
+"""The Editor's ways to open what the tree does not show: the system's Open dialog (the Editor app's chooser.py), opened
+by the dashboard on its own machine, and Go to file's list of a folder's files (livedocs.file_list) -- git's in a git
+project, else a walk."""
 
 import json
 import os
@@ -17,7 +18,8 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from ag_dashboard import chooser, editor  # noqa: E402
+from ag_apps.editor import chooser  # noqa: E402
+from ag_dashboard import livedocs  # noqa: E402
 
 
 def done(stdout="", returncode=0, stderr=""):
@@ -121,26 +123,26 @@ class FileListTest(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root = os.path.join(os.path.realpath(self.tmp.name), "proj")
         for path in ("a.py", "src/b.py", "src/deep/c.py", "node_modules/pkg/index.js", ".git_not/x.txt",
-                     "build/out.txt", "src/d.py.9" + editor.TEMP):
+                     "build/out.txt", "src/d.py.9" + livedocs.TEMP):
             os.makedirs(os.path.dirname(os.path.join(self.root, path)), exist_ok=True)
             with open(os.path.join(self.root, path), "w") as fh:
                 fh.write("x")
 
     def test_a_walk_the_nearest_first(self):
-        got = editor.file_list(self.root, self.root)
+        got = livedocs.file_list(self.root, self.root)
         self.assertFalse(got["git"] or got["more"])
         self.assertEqual(got["files"], ["a.py", ".git_not/x.txt", "build/out.txt", "src/b.py", "src/deep/c.py"])
-        self.assertEqual(editor.file_list(os.path.join(self.root, "src"), self.root)["files"], ["b.py", "deep/c.py"])
+        self.assertEqual(livedocs.file_list(os.path.join(self.root, "src"), self.root)["files"], ["b.py", "deep/c.py"])
 
     def test_a_walk_stops_at_its_most(self):
-        with mock.patch.object(editor, "FILES_MAX", 2):
-            got = editor.file_list(self.root, self.root)
+        with mock.patch.object(livedocs, "FILES_MAX", 2):
+            got = livedocs.file_list(self.root, self.root)
         self.assertEqual(len(got["files"]), 2)
         self.assertTrue(got["more"])
 
     def test_a_link_to_a_folder_is_not_followed(self):
         os.symlink(self.root, os.path.join(self.root, "src", "loop"))
-        self.assertNotIn("src/loop/a.py", editor.file_list(self.root, self.root)["files"])
+        self.assertNotIn("src/loop/a.py", livedocs.file_list(self.root, self.root)["files"])
 
     @unittest.skipIf(shutil.which("git") is None, "git is not installed")
     def test_in_a_git_project_git_s_list(self):
@@ -150,21 +152,22 @@ class FileListTest(unittest.TestCase):
             fh.write("build/\n")
         git("add", "a.py", "src/b.py")
         os.remove(os.path.join(self.root, "src", "b.py"))              # deleted since it was added: not listed
-        got = editor.file_list(self.root, self.root)
+        got = livedocs.file_list(self.root, self.root)
         self.assertTrue(got["git"])
         # tracked, and new ones git does not ignore; not build/ (ignored) nor node_modules (left out of listings)
         self.assertEqual(got["files"], [".gitignore", "a.py", ".git_not/x.txt", "src/deep/c.py"])
-        self.assertEqual(editor.file_list(os.path.join(self.root, "src"), self.root)["files"], ["deep/c.py"])
+        self.assertEqual(livedocs.file_list(os.path.join(self.root, "src"), self.root)["files"], ["deep/c.py"])
 
     def test_what_it_refuses(self):
-        with self.assertRaisesRegex(editor.EditorError, "not a directory"):
-            editor.file_list(os.path.join(self.root, "a.py"), self.root)
-        with self.assertRaisesRegex(editor.EditorError, "not under"):
-            editor.file_list("/etc", self.root)
+        with self.assertRaisesRegex(livedocs.DocError, "not a directory"):
+            livedocs.file_list(os.path.join(self.root, "a.py"), self.root)
+        with self.assertRaisesRegex(livedocs.DocError, "not under"):
+            livedocs.file_list("/etc", self.root)
 
 
 class RoutesTest(unittest.TestCase):
-    """The page's side, through the dashboard's server: the listing says which dialog there is, the dialog answers."""
+    """The panel's side, through the dashboard's server -- the Editor app's routes, on its own origin: the listing says
+    which dialog there is, the dialog answers. `self.ch`: the chooser the host's Editor runs (its own import of it)."""
 
     def setUp(self):
         from ag_dashboard import home as dashboard_home, server
@@ -181,41 +184,46 @@ class RoutesTest(unittest.TestCase):
         self.addCleanup(self.httpd.server_close)
         self.addCleanup(self.httpd.shutdown)
         self.url = f"http://127.0.0.1:{self.httpd.server_port}"
+        self.app = f"editor.localhost:{self.httpd.server_port}"
+        self.httpd.app_host.backend("editor")
+        self.ch = sys.modules["_ag_app_editor.chooser"]
 
     def get(self, path, **q):
-        return json.load(urllib.request.urlopen(f"{self.url}{path}?{urllib.parse.urlencode(q)}", timeout=10))
+        req = urllib.request.Request(f"{self.url}{path}?{urllib.parse.urlencode(q)}", headers={"Host": self.app})
+        return json.load(urllib.request.urlopen(req, timeout=10))
 
     def post(self, path, body):
-        req = urllib.request.Request(self.url + path, data=json.dumps(body).encode(), headers={"Content-Type": "application/json"})
+        req = urllib.request.Request(self.url + path, data=json.dumps(body).encode(), headers={
+            "Content-Type": "application/json", "Host": self.app, "Origin": f"http://{self.app}"})
         return json.load(urllib.request.urlopen(req, timeout=10))
 
     def test_the_listing_names_the_dialog(self):
-        with mock.patch.object(chooser, "name", return_value="Finder"):
+        with mock.patch.object(self.ch, "name", return_value="Finder"):
             self.assertEqual(self.get("/api/edit/list", dir=self.root, root=self.root)["choose"], "Finder")
-        with mock.patch.object(chooser, "name", return_value=None):
+        with mock.patch.object(self.ch, "name", return_value=None):
             self.assertIsNone(self.get("/api/edit/list", dir=self.root, root=self.root)["choose"])
-        with mock.patch.object(chooser, "name", return_value="Finder"):    # a folder not listed: said with its error too
+        with mock.patch.object(self.ch, "name", return_value="Finder"):    # a folder not listed: said with its error too
             with self.assertRaises(urllib.error.HTTPError) as no:
                 self.get("/api/edit/list", dir=os.path.join(self.root, "src", "a.py"), root=self.root)
         self.assertEqual(no.exception.code, 400)
         self.assertEqual(json.load(no.exception), {"error": f"{os.path.join(self.root, 'src', 'a.py')} is not a directory", "choose": "Finder"})
 
     def test_the_dialog_s_answer(self):
-        with mock.patch.object(chooser, "choose", return_value="/picked/plan.md") as ch:
+        with mock.patch.object(self.ch, "choose", return_value="/picked/plan.md") as ch:
             self.assertEqual(self.post("/api/edit/choose", {"what": "file", "start": self.root}), {"path": "/picked/plan.md"})
         ch.assert_called_once_with("file", self.root)
-        with mock.patch.object(chooser, "choose", return_value=None):
+        with mock.patch.object(self.ch, "choose", return_value=None):
             self.assertEqual(self.post("/api/edit/choose", {"what": "folder", "start": self.root}), {"path": None})
-        for raised, code in [(chooser.Busy("A dialog is open already"), 409), (chooser.ChooseError("no file dialog"), 400)]:
-            with mock.patch.object(chooser, "choose", side_effect=raised):
+        for raised, code in [(self.ch.Busy("A dialog is open already"), 409), (self.ch.ChooseError("no file dialog"), 400)]:
+            with mock.patch.object(self.ch, "choose", side_effect=raised):
                 with self.assertRaises(urllib.error.HTTPError) as no:
                     self.post("/api/edit/choose", {"what": "file", "start": self.root})
                 self.assertEqual(no.exception.code, code)
 
     def test_a_page_elsewhere_gets_no_dialog(self):
-        from ag_dashboard.api import editor as routes
-        with mock.patch.object(routes, "LOOPBACK", frozenset()), mock.patch.object(chooser, "name", return_value="Finder"), \
-                mock.patch.object(chooser, "choose") as ch:
+        from ag_dashboard.api import apps as routes
+        with mock.patch.object(routes, "LOOPBACK", frozenset()), mock.patch.object(self.ch, "name", return_value="Finder"), \
+                mock.patch.object(self.ch, "choose") as ch:
             self.assertIsNone(self.get("/api/edit/list", dir=self.root, root=self.root)["choose"])
             with self.assertRaises(urllib.error.HTTPError) as no:
                 self.post("/api/edit/choose", {"what": "file", "start": self.root})

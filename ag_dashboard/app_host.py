@@ -98,6 +98,7 @@ class AppHost:
         self.subs: List[_Sub] = []
         self.asked: Dict[str, dict] = {}                       # a call its panel answers, by its id: {done, result}
         self.page_wait, self.tool_wait = PAGE_WAIT, TOOL_WAIT
+        self.docs: Optional[app_kit.Docs] = None              # the dashboard's shared files (app_docs.py), once set
         self.lock = threading.RLock()
         self._write_fn = write or _ag_insert
         self._writes: "queue.Queue" = queue.Queue()
@@ -707,6 +708,14 @@ class Bound(app_kit.Host):
 
     def panels(self, instance):
         return self._host.panels_of(self._own(instance))
+
+    def docs(self):
+        m = self._host.hosted(self._name).manifest
+        if not m.capabilities.docs:
+            raise AppError(f"{self._name} does not ask for the host's shared files (capabilities.docs)", 403)
+        if self._host.docs is None:
+            raise AppError("this host has no shared files", 404)
+        return self._host.docs
 
     def instance_of(self, d: dict) -> Instance:
         """The instance an app in its own process names (remote.py's `host_ops`): one of its own, as the host has it."""

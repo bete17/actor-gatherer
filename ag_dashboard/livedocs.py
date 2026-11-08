@@ -5,7 +5,7 @@ control merges: the lines only the file changed take its change, and the lines i
 the pages edited since the file was opened -- or that the pages changed too, differently, are a conflict: the pages'
 kept, the file's shown beside them, for a page to take or not.
 
-    a page opens a file        `Editors.join`: the file's document (made from the file the first time it is
+    a page opens a file        `LiveDocs.join`: the file's document (made from the file the first time it is
                                opened), every other page's cursor, and then -- through its stream (`Conn.queue`) --
                                the others' edits and cursors, and the disk's changes, as they come
     a page edits               `Room.edit`: its update applied here, and sent on to the other pages; what it changed,
@@ -26,6 +26,16 @@ kept, the file's shown beside them, for a page to take or not.
                                is settled as the pages' lines. Saved, the zone's lines are still its: a change on disk
                                to them -- an actor rewriting what was typed, a script's write from the file before the
                                save -- is a conflict (`Conflict.zone`), the pages say which
+    a page asks first          `Room.hold`: a page holding the file "ask" -- every change on disk asked about, not merged
+                               in (`Conflict.asked`: the document keeps its lines; the file's beside them, taken or
+                               put back -- Reject writes the document's lines over the file's)
+    an actor changes it        `Room.put`: the whole text as the actor wants it (from what it read: `view`) -- "live",
+    through an app             its changes in the document at once, marked in its hue (`marks`), and written to the
+                               file (its lines only: what the pages typed and did not save stays unsaved); those to
+                               the conflict zone's lines held for the pages (a `Conflict` with `agent`, why "zone").
+                               Or "propose": none of it in, each change held for the pages to accept or reject (why
+                               "approve": its proposals) -- the actor reading the text with its own proposals in
+                               (`view`), its next change building on them; accepted, written to the file
 
 A file whose document has changes no one saved stays open after its last page goes (a page opened again finds
 them); one with none is closed LINGER seconds after. Only a regular file of UTF-8 text, at most MAX_BYTES, opens,
@@ -51,7 +61,7 @@ from datetime import datetime, timezone
 from collections import deque
 from typing import Dict, List, Optional, Tuple
 
-from . import data, files
+from . import data
 
 try:
     from pycrdt import Doc, Text
@@ -73,11 +83,13 @@ SKIPPED = frozenset({".git", "node_modules", "__pycache__", ".venv", "venv", ".m
 FILES_MAX = 20000           # the most files Go to file is given of one folder
 FILES_S = 2.0               # seconds a folder's walk for them may take
 TAKES = ("mine", "theirs", "both", "edited")   # how a conflict is settled (Room.settle)
+HOLDS = ("merge", "ask")    # how a page takes the file's changes on disk (Room.hold): merged in, or each asked about
+PUTS = ("live", "propose")  # how an actor's change is put in (Room.put): at once, or held for the pages to accept
 TEMP = ".ag-edit"           # what a file being saved is written as first, beside it: not listed
 ROOT = "text"               # the document's one shared type: the file's text
 
 
-class EditorError(ValueError):
+class DocError(ValueError):
     """What the page is told: why a file cannot be listed, opened or saved."""
 
 
@@ -96,10 +108,10 @@ def _signature(st: os.stat_result) -> tuple:
 def resolve(path: str, root: str) -> str:
     """`path`, with its links followed, if it is under `root` (likewise): what the page may list, open or save."""
     if not path or not root or not os.path.isabs(path) or not os.path.isabs(root):
-        raise EditorError("an absolute path and the directory it is under, please")
+        raise DocError("an absolute path and the directory it is under, please")
     real, top = os.path.realpath(path), os.path.realpath(root)
     if os.path.commonpath([real, top]) != top:
-        raise EditorError(f"{path} is not under {root}")
+        raise DocError(f"{path} is not under {root}")
     return real
 
 
@@ -107,13 +119,13 @@ def create(path: str, root: str, folder: bool = False) -> dict:
     """A new file, empty -- or a folder -- at `path` under `root`, the folders above it made too (the Editor's New file,
     New folder; a name such as "src/a.py" makes `src` as well): refused where anything is already."""
     if not path or not root or not os.path.isabs(path) or not os.path.isabs(root):
-        raise EditorError("an absolute path and the directory it is under, please")
+        raise DocError("an absolute path and the directory it is under, please")
     name = os.path.basename(path.rstrip("/"))
     if not name or name in (".", "..") or "\0" in path:
-        raise EditorError("a name, please")
+        raise DocError("a name, please")
     real = resolve(path.rstrip("/"), root)
     if os.path.lexists(real):
-        raise EditorError(f"{name} is there already")
+        raise DocError(f"{name} is there already")
     try:
         os.makedirs(os.path.dirname(real), exist_ok=True)
         if folder:
@@ -122,11 +134,11 @@ def create(path: str, root: str, folder: bool = False) -> dict:
             with open(real, "x", encoding="utf-8"):
                 pass
     except FileExistsError:                         # made meanwhile, or a file where a folder above it would go
-        raise EditorError(f"{name} is there already, or a file is where a folder above it would be") from None
+        raise DocError(f"{name} is there already, or a file is where a folder above it would be") from None
     except NotADirectoryError:
-        raise EditorError(f"a file is where a folder above {name} would be") from None
+        raise DocError(f"a file is where a folder above {name} would be") from None
     except PermissionError:
-        raise EditorError(f"{os.path.dirname(real)} may not be written") from None
+        raise DocError(f"{os.path.dirname(real)} may not be written") from None
     return {"path": real, "dir": folder}
 
 
@@ -137,7 +149,7 @@ def file_list(directory: str, root: str) -> dict:
     `more`, there were more."""
     real = resolve(directory, root)
     if not os.path.isdir(real):
-        raise EditorError(f"{directory} is not a directory")
+        raise DocError(f"{directory} is not a directory")
     got = _git_files(real)
     if got is not None:
         got = [f for f in got if not f.endswith(TEMP) and not any(part in SKIPPED for part in f.split("/"))]
@@ -187,24 +199,24 @@ def read(path: str) -> Tuple[str, tuple]:
     try:
         before = os.stat(path)
     except FileNotFoundError:
-        raise EditorError(f"{path} does not exist") from None
+        raise DocError(f"{path} does not exist") from None
     if not stat.S_ISREG(before.st_mode):
-        raise EditorError(f"{path} is not a file")
+        raise DocError(f"{path} is not a file")
     if before.st_size > MAX_BYTES:
-        raise EditorError(f"{path} is too large to edit here ({before.st_size:,} bytes; at most {MAX_BYTES:,})")
+        raise DocError(f"{path} is too large to edit here ({before.st_size:,} bytes; at most {MAX_BYTES:,})")
     with open(path, "rb") as fh:
         raw = fh.read(MAX_BYTES + 1)
     after = os.stat(path)
     if _signature(before) != _signature(after):
         raise _Changing()
     if len(raw) > MAX_BYTES:
-        raise EditorError(f"{path} is too large to edit here")
+        raise DocError(f"{path} is too large to edit here")
     if b"\0" in raw[:8192]:
-        raise EditorError(f"{path} is not a text file")
+        raise DocError(f"{path} is not a text file")
     try:
         return raw.decode("utf-8"), _signature(after)
     except UnicodeDecodeError:
-        raise EditorError(f"{path} is not UTF-8 text") from None
+        raise DocError(f"{path} is not UTF-8 text") from None
 
 
 # What the Editor shows a file as, when not its text (`about`): by its name's ending -- else by its first bytes (MAGIC) --
@@ -243,14 +255,14 @@ def about(path: str, root: str) -> dict:
     try:
         st = os.stat(real)
     except FileNotFoundError:
-        raise EditorError(f"{path} does not exist") from None
+        raise DocError(f"{path} does not exist") from None
     if not stat.S_ISREG(st.st_mode):
-        raise EditorError(f"{path} is not a file")
+        raise DocError(f"{path} is not a file")
     try:
         with open(real, "rb") as fh:
             head = fh.read(SNIFF)
     except PermissionError:
-        raise EditorError(f"{path} may not be read") from None
+        raise DocError(f"{path} may not be read") from None
     name = os.path.basename(path.rstrip("/")) or os.path.basename(real)
     ext = os.path.splitext(name)[1][1:].lower()
     sniffed = next((x for magic, x in MAGIC if head.startswith(magic)), None) \
@@ -440,19 +452,6 @@ def writers(directories: List[str], since: float) -> Dict[str, List[dict]]:
     return {rel: sorted(by.values(), key=lambda w: -w["at"]) for rel, by in out.items()}
 
 
-def place(gatherer: str, channel: str, cwd: str = "") -> Optional[str]:
-    """Where an actor's work is, for the Editor opened from its pane: the deepest folder holding every file it changed
-    lately -- in its latest turn that changed any, and the last few minutes; not what git or its harness wrote, nor
-    its scratch files (files.lately_changed) -- or the nearest above it that is still there. None: none of those."""
-    changed = files.lately_changed(gatherer, channel, cwd)
-    if not changed:
-        return None
-    at = os.path.commonpath([os.path.dirname(p) for p in changed])
-    while not os.path.isdir(at) and at != os.path.dirname(at):
-        at = os.path.dirname(at)                    # a folder since removed
-    return at
-
-
 def _latest(found: List[dict]) -> List[dict]:
     """Writers, each actor's latest kept, the latest first."""
     kept: Dict[tuple, dict] = {}
@@ -465,24 +464,32 @@ def _latest(found: List[dict]) -> List[dict]:
 
 class Conn:
     """One page's stream of a file: what it is sent (`queue`: (event, value), or None to end), its Yjs client id,
-    and its last awareness update (its user and cursor)."""
+    its last awareness update (its user and cursor), and how it takes the file's changes on disk (`hold`: HOLDS)."""
 
-    def __init__(self, cid: str, client: int):
-        self.id, self.client, self.queue, self.aware = cid, client, queue.Queue(), None
+    def __init__(self, cid: str, client: int, hold: str = "merge"):
+        self.id, self.client, self.queue, self.aware, self.hold = cid, client, queue.Queue(), None, hold
 
 
 class Conflict:
     """Lines the pages and the file on disk both changed, differently, or that the file changed in the conflict zone
-    (`zone`): the pages' kept in the document -- from `start` to `end`, in UTF-8 bytes, moved with each edit
-    (`Room._move`) -- and the file's (`theirs`, over `base`), until a page settles it. Or an actor's change on a branch
-    of its own (`agent`, branches.py's: {gatherer, channel, branch, path, key, approve}), not taken in until a page
-    says: its branch's lines (`theirs`) in place of these."""
+    (`zone`), or anywhere while a page asks first (`asked`): the pages' kept in the document -- from `start` to `end`,
+    in UTF-8 bytes, moved with each edit (`Room._move`) -- and the file's (`theirs`, over `base`), until a page settles
+    it. Or an actor's change not taken in until a page says -- its lines (`theirs`) in place of these: one on a branch
+    of its own (`agent`, branches.py's: {gatherer, channel, branch, path, key, approve}), or one put in through an app
+    (`agent`: who the app said, with `put` and `why`: "approve", a proposal; "zone", lines the pages are editing)."""
 
     def __init__(self, start: int, end: int, base: str, theirs: str, zone: bool = False, since: Optional[float] = None,
-                 agent: Optional[dict] = None, cid: Optional[str] = None):
+                 agent: Optional[dict] = None, cid: Optional[str] = None, asked: bool = False):
         self.id, self.at, self.zone, self.agent = cid or uuid.uuid4().hex[:12], time.time(), zone, agent
         self.since = self.at if since is None else since      # when the file first changed these lines, unsettled
-        self.start, self.end, self.base, self.theirs = start, end, base, theirs
+        self.start, self.end, self.base, self.theirs, self.asked = start, end, base, theirs, asked
+
+
+def _put_by(c: Conflict, channel: Optional[str] = None, why: Optional[str] = None) -> bool:
+    """Whether `c` is an actor's change put in through an app (Room.put) -- that actor's (`channel`), held why (`why`)."""
+    a = c.agent
+    return bool(a and a.get("put") and (channel is None or a.get("channel") == channel)
+                and (why is None or a.get("why") == why))
 
 
 class Room:
@@ -591,10 +598,11 @@ class Room:
     def state(self) -> dict:
         raw = str(self.text).encode("utf-8")
         return {"dirty": self.dirty, "missing": self.missing, "error": self.error, "changed": self.changed,
-                "saved": self.saved, "editors": len(self.conns), "now": time.time(),
+                "saved": self.saved, "pages": len(self.conns), "now": time.time(),
                 "conflicts": [{"id": c.id, "from": _utf16(raw, c.start), "to": _utf16(raw, c.end), "base": c.base,
-                               "theirs": c.theirs, "at": c.at, "since": c.since, "zone": c.zone, "agent": c.agent}
-                              for c in sorted(self.conflicts.values(), key=lambda c: c.start)],
+                               "theirs": c.theirs, "at": c.at, "since": c.since, "zone": c.zone, "agent": c.agent,
+                               "asked": c.asked} for c in sorted(self.conflicts.values(), key=lambda c: c.start)],
+                "asking": self._asking(),
                 "zone": [[_utf16(raw, a), _utf16(raw, b)] for a, b in self.zone],
                 "marks": [{"from": _utf16(raw, a), "to": _utf16(raw, b), "gatherer": g, "channel": c}
                           for a, b, g, c in self.marks if b > a]}
@@ -613,12 +621,30 @@ class Room:
         self.dirty = text != self.disk
         self._send("state", self.state())
 
-    def join(self, cid: str, client: int) -> Conn:
+    def _asking(self) -> bool:
+        """Whether a page with the file open asks about each change on disk (`hold`), not merging it in."""
+        return any(c.hold == "ask" for c in self.conns.values())
+
+    def hold(self, cid: str, how: str) -> dict:
+        """How the page `cid` takes the file's changes on disk from now: HOLDS."""
+        if how not in HOLDS:
+            raise DocError(f"hold {how!r}: {', '.join(HOLDS)}")
+        with self.lock:
+            conn = self.conns.get(cid)
+            if conn is None:
+                raise DocError("this page has the file open no more: open it again")
+            conn.hold = how
+            self._restate()
+            return self.state()
+
+    def join(self, cid: str, client: int, hold: str = "merge") -> Conn:
+        if hold not in HOLDS:
+            raise DocError(f"hold {hold!r}: {', '.join(HOLDS)}")
         with self.lock:
             old = self.conns.pop(cid, None)
             if old is not None:                     # the page's stream again (it reconnected): the old one ends
                 old.queue.put(None)
-            conn = Conn(cid, client)
+            conn = Conn(cid, client, hold)
             conn.queue.put(("init", {"epoch": self.epoch, "update": b64(self.doc.get_update()),
                                      "sv": b64(self.doc.get_state()), "state": None,
                                      "aware": [b64(c.aware) for c in self.conns.values() if c.aware]}))
@@ -651,7 +677,7 @@ class Room:
         with self.lock:
             conn = self.conns.get(cid)
             if conn is None:
-                raise EditorError("this page has the file open no more: open it again")
+                raise DocError("this page has the file open no more: open it again")
             conn.aware = update
             self._send("aware", {"update": b64(update)}, but=cid)
 
@@ -671,7 +697,7 @@ class Room:
                 text, sig = read(self.path)
             except _Changing:
                 return                              # being written: the next look
-            except (EditorError, OSError) as exc:   # no longer text, or too large: kept as it was here
+            except (DocError, OSError) as exc:   # no longer text, or too large: kept as it was here
                 self.sig, self.error = sig, str(exc)
                 self._restate()
                 return
@@ -680,7 +706,9 @@ class Room:
                 return self._restate()
             mine = str(self.text)
             ours = [c for c in self.conflicts.values() if c.agent is None]     # the disk's (a branch's are branches.py's)
-            merged, found, _ = merge(self.disk, mine, text, self._lines(mine, self.zone),
+            asking = self._asking()                 # every line guarded: each change asked about
+            guard = [(-1, len(mine.splitlines(True)) + 1)] if asking else self._lines(mine, self.zone)
+            merged, found, _ = merge(self.disk, mine, text, guard,
                                      self._lines(mine, [(c.start, c.end) for c in ours]))
             if merged != mine:
                 before = self.doc.get_state()
@@ -695,7 +723,7 @@ class Room:
                     if old.start <= b1 and b0 <= old.end:                           # before: this one in its place
                         since = min(since, old.since)
                         del self.conflicts[old.id]
-                c = Conflict(b0, b1, was, theirs, zone, since)
+                c = Conflict(b0, b1, was, theirs, zone and not asking, since, asked=asking)
                 if raw[b0:b1].decode("utf-8") != theirs:
                     self.conflicts[c.id] = c
             self.disk, self.changed = text, time.time()
@@ -708,8 +736,17 @@ class Room:
         `theirs` and `mine`: the file's lines and the pages' it began from, as `settling` says)."""
         with self.lock:
             c = self.settling(conflict, take, text, theirs, mine)
+            raw = str(self.text).encode("utf-8")
+            here = raw[c.start:c.end].decode("utf-8", "replace")
+            if _put_by(c, why="approve") and take in ("theirs", "both") and here != c.base:
+                raise DocError("these lines changed since it was proposed: reject it, or Edit it in its box")
+            # what the file on disk has here now: the file's lines, where it asked; else the document's
+            before = (raw[:c.start] + c.theirs.encode("utf-8") + raw[c.end:]).decode("utf-8") if c.asked \
+                else raw.decode("utf-8")
             del self.conflicts[c.id]
             self.take(c, take, text)
+            if c.asked or _put_by(c):               # the lines it settles as, written to the file
+                self._put_disk(before, str(self.text))
             self._restate()
             return self.state()
 
@@ -719,17 +756,17 @@ class Room:
         from (`theirs`) -- not changed again on disk, or on its branch, meanwhile -- and the pages' lines too (`mine`):
         else the page is to look again, not to put its lines over what it did not see."""
         if take not in TAKES:
-            raise EditorError(f"take {take!r}: {', '.join(TAKES)}")
+            raise DocError(f"take {take!r}: {', '.join(TAKES)}")
         c = self.conflicts.get(conflict)
         if c is None:
-            raise EditorError("that conflict is settled already")
+            raise DocError("that conflict is settled already")
         if take == "edited":
             if not isinstance(text, str):
-                raise EditorError("edited: the lines, please")
+                raise DocError("edited: the lines, please")
             if theirs is not None and theirs != c.theirs:
-                raise EditorError("its lines changed again since you began editing them: look at them again")
+                raise DocError("its lines changed again since you began editing them: look at them again")
             if mine is not None and mine != str(self.text).encode("utf-8")[c.start:c.end].decode("utf-8", "replace"):
-                raise EditorError("your lines changed since you began editing its: look at them again")
+                raise DocError("your lines changed since you began editing its: look at them again")
         return c
 
     def _replace(self, c: Conflict, text: str) -> None:
@@ -772,19 +809,136 @@ class Room:
             self.text.insert(c.end, ("\n" if mine and not mine.endswith(b"\n") else "") + c.theirs)
         self._send("update", {"update": b64(self.doc.get_update(before))})
 
+    def view(self, channel: Optional[str] = None) -> str:
+        """The text as the actor `channel` would have it: its proposals (Room.put's) in, each in place of its lines."""
+        with self.lock:
+            raw = str(self.text).encode("utf-8")
+            out, at = [], 0
+            if channel:
+                for c in sorted((c for c in self.conflicts.values() if _put_by(c, channel, "approve")),
+                                key=lambda c: c.start):
+                    if c.start < at:                # (they never overlap: one actor's are made together)
+                        continue
+                    out += [raw[at:c.start], c.theirs.encode("utf-8")]
+                    at = c.end
+            return b"".join(out + [raw[at:]]).decode("utf-8")
+
+    def put(self, seen: str, wanted: str, by: dict, how: str) -> dict:
+        """An actor's change, `wanted` -- the whole text as it wants it -- made of `seen` (what it read: `view`,
+        its proposals in, for "propose"), put in as `how` says (PUTS; module doc). Where the text changed meanwhile, its
+        change is merged onto it; where they meet, refused. `by`: who it is, as the app says ({gatherer, channel, ...}),
+        kept on what is held. -> {landed: lines changed, held: [conflict ids], proposed: [ids], state}."""
+        if how not in PUTS:
+            raise DocError(f"how {how!r}: {', '.join(PUTS)}")
+        if not isinstance(by, dict) or not by.get("channel"):
+            raise DocError("who is changing it? (by: {channel, ...})")
+        channel = by["channel"]
+        with self.lock:
+            self.check()                            # the file's own change first
+            now = self.view(channel) if how == "propose" else str(self.text)
+            if now != seen:
+                wanted, found, _ = merge(seen, now, wanted)
+                if found:
+                    raise DocError("the file changed where you are changing it, since you read it: read it again")
+            doc = str(self.text)
+            if how == "propose":
+                return self._propose(doc, wanted, by)
+            lines, want = doc.splitlines(True), wanted.splitlines(True)
+            guard = self._lines(doc, self.zone)
+            held_at = self._lines(doc, [(c.start, c.end) for c in self.conflicts.values()])
+            out: List[str] = []
+            spots: List[tuple] = []                 # (landed?, start line, end line in out, base, theirs)
+            at = 0
+            for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, lines, want, autojunk=False).get_opcodes():
+                if tag == "equal":
+                    continue
+                out += lines[at:i1]
+                base, new = lines[i1:i2], want[j1:j2]
+                if _guarded(i1, i2, guard) or _meets(i1, i2, held_at):     # lines the pages are editing: theirs to say
+                    spots.append((False, len(out), len(out) + len(base), "".join(base), "".join(new)))
+                    out += base
+                else:
+                    spots.append((True, len(out), len(out) + len(new), "".join(base), "".join(new)))
+                    out += new
+                at = i2
+            out += lines[at:]
+            landed = "".join(out)
+            starts = [0]
+            for line in out:
+                starts.append(starts[-1] + len(line.encode("utf-8")))
+            if landed != doc:
+                before = self.doc.get_state()
+                change(self.text, landed)
+                self._send("update", {"update": b64(self.doc.get_update(before)), "by": channel})
+            self.marks = [m for m in self.marks if (m[2], m[3]) != (by.get("gatherer"), channel)]
+            held = []
+            for ok, a, b, base, theirs in spots:
+                if ok:
+                    if b > a:                       # what it put in, in its hue
+                        self.marks.append([starts[a], starts[b], by.get("gatherer"), channel])
+                    continue
+                c = Conflict(starts[a], starts[b], base, theirs, True, agent={**by, "put": True, "why": "zone"})
+                self.conflicts[c.id] = c
+                held.append(c.id)
+            if landed != doc:
+                self._put_disk(doc, landed)
+            self._restate()
+            return {"landed": sum(1 for s in spots if s[0]), "held": held, "proposed": [], "state": self.state()}
+
+    def _propose(self, doc: str, wanted: str, by: dict) -> dict:
+        """`wanted`, the actor's text, as its proposals: each change from the document, its lines whole -- in place of
+        those it had (one alike to one before keeps its id)."""
+        channel = by["channel"]
+        old = {(c.base, c.theirs, c.start): c for c in self.conflicts.values() if _put_by(c, channel, "approve")}
+        lines, want = doc.splitlines(True), wanted.splitlines(True)
+        starts = [0]
+        for line in lines:
+            starts.append(starts[-1] + len(line.encode("utf-8")))
+        made = []
+        for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, lines, want, autojunk=False).get_opcodes():
+            if tag == "equal":
+                continue
+            base, theirs = "".join(lines[i1:i2]), "".join(want[j1:j2])
+            was = old.pop((base, theirs, starts[i1]), None)
+            made.append(was or Conflict(starts[i1], starts[i2], base, theirs, agent={**by, "put": True,
+                                                                                     "why": "approve"}))
+        for c in old.values():
+            del self.conflicts[c.id]
+        for c in made:
+            self.conflicts[c.id] = c
+        self._restate()
+        return {"landed": 0, "held": [], "proposed": [c.id for c in made], "state": self.state()}
+
+    def _put_disk(self, before: str, after: str) -> bool:
+        """The change from `before` to `after` (the document's) written to the file, onto what it has -- the lines
+        the pages typed and did not save left out. False, nothing written, where the change meets those: the next
+        save writes it."""
+        for _ in range(3):
+            merged, found, _ = merge(before, self.disk, after)
+            if found:
+                return False
+            if merged == self.disk:
+                return True
+            sig = self._write(merged)
+            if sig is not None:
+                self.disk, self.sig, self.missing = merged, sig, False
+                return True
+            self.check()                            # changed on disk meanwhile: taken in, and again
+        return False
+
     def save(self) -> dict:
         with self.lock:
             shown = set(self.conflicts)
             for _ in range(3):
                 self.check()                        # the file's own change first, merged in
                 if set(self.conflicts) - shown:     # where it was edited here too: shown, not saved over
-                    raise EditorError("The file changed on disk where it was edited here: see the conflicts, then save.")
+                    raise DocError("The file changed on disk where it was edited here: see the conflicts, then save.")
                 text = str(self.text)
                 sig = self._write(text)
                 if sig is not None:
                     break
             else:
-                raise EditorError("the file keeps changing on disk: save again in a moment")
+                raise DocError("the file keeps changing on disk: save again in a moment")
             self.disk, self.sig = text, sig
             for c in [c for c in self.conflicts.values() if c.agent is None]:
                 del self.conflicts[c.id]            # those shown: settled as the lines kept here (a branch's wait)
@@ -820,7 +974,7 @@ class Room:
         return _signature(os.stat(self.path))
 
 
-class Editors:
+class LiveDocs:
     """Every file open for editing, each looked at on disk every POLL seconds while it is open."""
 
     def __init__(self, poll: Optional[float] = None):
@@ -829,18 +983,18 @@ class Editors:
         self.lock = threading.Lock()
         self.stop = threading.Event()
         self.poll = POLL if poll is None else poll
-        self.thread = threading.Thread(target=self._watch, name="editor-files", daemon=True)
+        self.thread = threading.Thread(target=self._watch, name="live-docs", daemon=True)
         self.thread.start()
 
     def _room(self, path: str, root: str, create: bool = False) -> Room:
         if not AVAILABLE:
-            raise EditorError("the Editor panel needs pycrdt: pip install pycrdt")
+            raise DocError("files shared live need pycrdt: pip install pycrdt")
         real = resolve(path, root)
         with self.lock:
             room = self.rooms.get(real)
             if room is None:
                 if not create:
-                    raise EditorError(f"{path} is not open: open it again")
+                    raise DocError(f"{path} is not open: open it again")
                 for _ in range(5):
                     try:
                         room = self.rooms[real] = Room(real)
@@ -848,16 +1002,37 @@ class Editors:
                     except _Changing:
                         time.sleep(0.05)
                 else:
-                    raise EditorError(f"{path} keeps changing on disk: open it again in a moment")
+                    raise DocError(f"{path} keeps changing on disk: open it again in a moment")
                 if self.branches is not None:       # its branches' changes to it, shown in it
                     self.branches.opened(real)
             return room
 
-    def join(self, path: str, root: str, cid: str, client: int) -> Tuple[Room, Conn]:
+    def join(self, path: str, root: str, cid: str, client: int, hold: str = "merge") -> Tuple[Room, Conn]:
         if not cid:
-            raise EditorError("a connection id, please")
+            raise DocError("a connection id, please")
         room = self._room(path, root, create=True)
-        return room, room.join(cid, client)
+        return room, room.join(cid, client, hold)
+
+    def open_room(self, path: str, root: str) -> Optional[Room]:
+        """The file's document, if a page has it open now; else None."""
+        if not AVAILABLE:
+            return None
+        room = self.rooms.get(resolve(path, root))
+        return room if room is not None and room.conns else None
+
+    def hold(self, path: str, root: str, cid: str, how: str) -> dict:
+        return self._room(path, root).hold(cid, how)
+
+    def state(self, path: str, root: str) -> dict:
+        room = self._room(path, root)
+        with room.lock:
+            return room.state()
+
+    def view(self, path: str, root: str, channel: Optional[str] = None) -> str:
+        return self._room(path, root).view(channel)
+
+    def put(self, path: str, root: str, seen: str, wanted: str, by: dict, how: str) -> dict:
+        return self._room(path, root).put(seen, wanted, by, how)
 
     def edit(self, path: str, root: str, cid: str, update: bytes) -> dict:
         return self._room(path, root).edit(cid, update)
@@ -872,7 +1047,7 @@ class Editors:
                theirs: Optional[str] = None, mine: Optional[str] = None) -> dict:
         room = self._room(path, root)
         c = room.conflicts.get(conflict)
-        if c is not None and c.agent is not None and self.branches is not None:
+        if c is not None and c.agent is not None and c.agent.get("branch") and self.branches is not None:
             return self.branches.settle(room, c, take, text, theirs, mine)   # its branch's base moved on too
         return room.settle(conflict, take, text, theirs, mine)
 
@@ -899,14 +1074,14 @@ class Editors:
                         continue
                     room = self.rooms.get(os.path.realpath(entry.path) if entry.is_symlink() else entry.path)
                     entries.append({"name": entry.name, "dir": is_dir, "size": st.st_size, "mtime": st.st_mtime,
-                                    "editors": len(room.conns) if room else 0, "dirty": bool(room and room.dirty),
+                                    "pages": len(room.conns) if room else 0, "dirty": bool(room and room.dirty),
                                     "conflicts": sum(c.agent is None for c in room.conflicts.values()) if room else 0,
                                     "pending": self.branches.pending(os.path.join(real, entry.name), is_dir)
                                     if self.branches is not None else 0})
         except (FileNotFoundError, NotADirectoryError):
-            raise EditorError(f"{directory} is not a directory") from None
+            raise DocError(f"{directory} is not a directory") from None
         except PermissionError:
-            raise EditorError(f"{directory} may not be read") from None
+            raise DocError(f"{directory} may not be read") from None
         found: Dict[str, List[dict]] = {}           # by entry: its own writers, or those of what is in it
         for rel, ws in writers([real, os.path.abspath(directory)], time.time() - RECENT).items():
             found.setdefault(rel.split("/")[0], []).extend(ws)

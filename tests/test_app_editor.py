@@ -1,8 +1,11 @@
-"""The Preview app (ag_apps/preview/; app_kit/DESIGN.md step 5): each git project's preview -- the command the Editor's
-Execute asks it to run in the checkout of the file open, and what it makes -- kept as its events, set by the user (its
-panel) or an agent (its tools, `ag preview`), an agent's command run only once the user lets it; its runs told to its
-panels, its files served on its own origin. Its run logic is tested directly (runs.py); the rest through the dashboard
-as its host, its tool gateway and its server."""
+"""The Editor app (ag_apps/editor/; app_kit/DESIGN.md step 7): set up as the Browser and DocWriter are -- one per Editor
+started, on a folder, its tools its attached actor's -- its panel and its routes over the host's files shared live
+(app_kit.docs; the routes' own tests are test_dashboard_editor*.py), and each git project's preview beside the file --
+the command its Execute runs in the checkout of the file open, and what it makes -- kept as its events (each project's
+by its repository, shared by the gatherer's Editors), set by the user (its panel) or an agent (its tools, `ag
+preview`), an agent's command run only once the user lets it; its runs told to its panels, its files served on its own
+origin. The run logic is tested directly (runs.py); the rest through the dashboard as its host, its tool gateway and its
+server."""
 import contextlib
 import importlib.util
 import io
@@ -25,8 +28,8 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from ag_dashboard import app_host, libs, server, tool_gateway  # noqa: E402
-from app_kit import Caller  # noqa: E402
+from ag_dashboard import app_host, libs, livedocs, server, tool_gateway  # noqa: E402
+from app_kit import AppError, Caller  # noqa: E402
 from test_dashboard import HomeBase  # noqa: E402
 from test_dashboard_app_host import insert_here  # noqa: E402
 
@@ -36,7 +39,7 @@ GIT_ENV = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAM
 
 def load(name: str):
     """A module of the app's, by its file (the host imports them as a package of its own)."""
-    spec = importlib.util.spec_from_file_location(f"preview_{name}", os.path.join(ROOT, "ag_apps", "preview", f"{name}.py"))
+    spec = importlib.util.spec_from_file_location(f"editor_{name}", os.path.join(ROOT, "ag_apps", "editor", f"{name}.py"))
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -233,14 +236,14 @@ class SyncTeXTest(RunsBase):
 
 
 class AppBase(HomeBase):
-    """The Preview as the dashboard hosts it: an AppHost on the test's home (gatherer `g`), the project in it."""
+    """The Editor as the dashboard hosts it: an AppHost on the test's home (gatherer `g`), the project in it."""
 
     def setUp(self):
         super().setUp()
         self.root = os.path.realpath(self.tmp.name)
         self.repo, self.plot = project(self.root)
         self.host = self.new_host()
-        self.i = self.host.open("preview", "g", self.repo)
+        self.i = self.host.open("editor", "g", self.repo)
 
     def new_host(self):
         h = app_host.AppHost(0, write=insert_here)
@@ -249,19 +252,28 @@ class AppBase(HomeBase):
         return h
 
     def call(self, tool, args, channel=None, host=None):
-        got = (host or self.host).call("preview", self.i, tool, args, Caller(channel=channel, gatherer="g"))
+        got = (host or self.host).call("editor", self.i, f"preview_{tool}", args, Caller(channel=channel, gatherer="g"))
         text = "".join(c.get("text", "") for c in got.content)
         return {"error": text} if got.is_error else json.loads(text)
 
 
 class AppTest(AppBase):
-    def test_it_is_found_with_the_dashboard_one_per_repository(self):
-        self.assertIn("preview", self.host.apps)
-        self.assertEqual(self.i.title, "proj")
+    def test_one_per_editor_started_on_a_folder_the_preview_by_repository(self):
+        self.assertIn("editor", self.host.apps)
+        self.assertNotIn("preview", self.host.apps)                       # the Editor's own now, not an app of its own
+        m = self.host.apps["editor"].manifest
+        self.assertEqual((m.instances, m.offer, m.agent.start), ("many", "attached", True))   # as the Browser's, DocWriter's
+        self.assertEqual((self.i.folder, self.i.title), (self.repo, "proj"))
+        src = self.host.open("editor", "g", os.path.join(self.repo, "src"))
+        self.assertNotEqual(src.id, self.i.id)                            # another, on its own folder
+        with self.assertRaises(AppError):
+            self.host.open("editor", "g", os.path.join(self.root, "nowhere"))
         wt = os.path.join(self.root, "proj-worktrees", "b")
         git(self.repo, "worktree", "add", "-q", "-b", "b", wt)
-        self.assertEqual(self.host.open("preview", "g", wt).id, self.i.id)       # its worktrees share it
-        self.assertEqual(self.host.open("preview", "g", os.path.join(self.repo, "src")).id, self.i.id)
+        self.call("set", {"path": self.repo, "command": "echo hi"})
+        self.assertEqual(self.call("show", {"path": wt})["preview"]["command"], "echo hi")   # its worktrees share it
+        got = self.host.call("editor", src, "preview_show", {"path": self.repo}, Caller(gatherer="g"))
+        self.assertEqual(json.loads(got.content[0]["text"])["preview"]["command"], "echo hi")   # and the other Editor
 
     def test_the_user_sets_and_runs_it(self):
         about = self.call("show", {"path": self.plot})
@@ -293,22 +305,26 @@ class AppTest(AppBase):
         self.call("run", {"path": self.repo, "ok": "echo hi", "wait": 10})
         self.host.flush()
         deadline = time.time() + 10
-        while time.time() < deadline and not self.host.read("preview", self.i, ["preview.ran"]):
+        while time.time() < deadline and not self.host.read("editor", self.i, ["editor.preview_ran"]):
             time.sleep(0.1)
-        kinds = [e["type"] for e in self.host.read("preview", self.i, ["preview.set", "preview.allowed", "preview.ran"])]
-        self.assertEqual(kinds, ["preview.set", "preview.allowed", "preview.ran"])
+        got = self.host.read("editor", self.i, ["editor.preview_set", "editor.preview_allowed", "editor.preview_ran"])
+        self.assertEqual([e["type"] for e in got], ["editor.preview_set", "editor.preview_allowed", "editor.preview_ran"])
+        self.assertEqual({e["payload"]["key"] for e in got}, {self.repo})
         again = self.new_host()
         row = self.call("show", {"path": self.repo}, host=again)["preview"]
         self.assertEqual((row["command"], row["set_by"], row["needs_ok"]), ("echo hi", "c1", False))
         self.call("clear", {"path": self.repo}, host=again)
         self.assertIsNone(self.call("show", {"path": self.repo}, host=again)["preview"])
 
-    def test_a_path_in_another_project_is_refused(self):
+    def test_each_project_keeps_its_own(self):
         other, _ = project(os.path.join(self.root, "x"))
-        self.assertIn("another project", self.call("show", {"path": other})["error"])
+        self.call("set", {"path": self.repo, "command": "echo mine"})
+        self.assertIsNone(self.call("show", {"path": other})["preview"])
+        self.assertEqual(self.call("show", {"path": self.repo})["preview"]["command"], "echo mine")
+        self.assertIn("which project", self.call("show", {})["error"])  # the user's call names its file, an agent's its cwd
 
     def test_its_panels_hear_each_run_and_a_server_none_shows_is_stopped(self):
-        sub, leave = self.host.subscribe("preview", self.i, [])
+        sub, leave = self.host.subscribe("editor", self.i, [])
         self.call("set", {"path": self.repo, "command": "echo told"})
         self.call("run", {"path": self.repo, "wait": 10})
         heard = []
@@ -319,7 +335,7 @@ class AppTest(AppBase):
         self.assertIn("told", "".join(m["out"]["text"] for m in heard if "out" in m))
         leave()                                                          # no panel of it open any more
         port = free_port()
-        backend = self.host.backend("preview")
+        backend = self.host.backend("editor")
         B = sys.modules[type(backend).__module__]
         self.call("set", {"path": self.repo, "command": f"exec python3 -m http.server {port} --bind 127.0.0.1",
                           "show": f"http://127.0.0.1:{port}/"})
@@ -335,9 +351,8 @@ class AppTest(AppBase):
         self.assertEqual(r.state, "stopped")
 
 
-class ServedTest(AppBase):
-    """The Preview through the dashboard's server: its panel's own routes on its origin, the libraries it shares,
-    the gateway's tools and `ag preview` in an agent's shell."""
+class ServedBase(AppBase):
+    """The Editor through the dashboard's server."""
 
     def setUp(self):
         super().setUp()
@@ -351,12 +366,12 @@ class ServedTest(AppBase):
         self.port = self.httpd.server_port
         self.url = f"http://127.0.0.1:{self.port}"
         self.h = self.httpd.app_host
-        self.inst = self.h.open("preview", "g", self.repo)
+        self.inst = self.h.open("editor", "g", self.repo)
 
     def at_app(self, path, method="GET", body=None, origin=None):
         import http.client
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=30)
-        headers = {"Host": f"preview.localhost:{self.port}"}
+        headers = {"Host": f"editor.localhost:{self.port}"}
         if origin:
             headers["Origin"] = origin
         conn.request(method, path, body, headers)
@@ -365,25 +380,50 @@ class ServedTest(AppBase):
         conn.close()
         return r.status, dict(r.getheaders()), raw
 
+
+class ServedTest(ServedBase):
+    """The Editor through the dashboard's server: its panel and its own routes on its origin, the libraries it shares,
+    the gateway's tools and `ag preview` in an agent's shell."""
+
     def test_its_panel_s_routes_on_its_own_origin(self):
         q = f"gatherer=g&instance={self.inst.id}"
-        self.h.call("preview", self.inst, "set", {"path": self.repo, "command": "python3 {file}", "show": "out.svg"},
+        self.h.call("editor", self.inst, "preview_set", {"path": self.repo, "command": "python3 {file}", "show": "out.svg"},
                     Caller(gatherer="g"))
-        self.h.call("preview", self.inst, "run", {"path": self.plot, "file": self.plot, "wait": 20}, Caller(gatherer="g"))
-        status, _, raw = self.at_app(f"/api/about?path={urllib.parse.quote(self.plot)}&{q}")
+        self.h.call("editor", self.inst, "preview_run", {"path": self.plot, "file": self.plot, "wait": 20}, Caller(gatherer="g"))
+        status, _, raw = self.at_app(f"/api/preview/about?path={urllib.parse.quote(self.plot)}&{q}")
         about = json.loads(raw)
         self.assertEqual((status, about["run"]["state"]), (200, "done"))
         self.assertIn("drawing", about["output"])
-        status, headers, raw = self.at_app(f"/api/files/{about['token']}/out.svg?{q}")
+        status, headers, raw = self.at_app(f"/api/preview/files/{about['token']}/out.svg?{q}")
         self.assertEqual(status, 200)
         self.assertTrue(raw.startswith(b"<svg"))
         csp = " ".join(v for k, v in headers.items() if k.lower() == "content-security-policy")
         self.assertIn("sandbox", csp)                                      # a page it shows: no script of the panel's
         self.assertIn("frame-ancestors 'self'", csp)
-        self.assertEqual(self.at_app(f"/api/files/{about['token']}/..%2F..%2Fhome%2Fdashboard.db?{q}")[0], 403)
-        self.assertEqual(self.at_app(f"/api/files/{'0' * 16}/out.svg?{q}")[0], 404)
+        self.assertEqual(self.at_app(f"/api/preview/files/{about['token']}/..%2F..%2Fhome%2Fdashboard.db?{q}")[0], 403)
+        self.assertEqual(self.at_app(f"/api/preview/files/{'0' * 16}/out.svg?{q}")[0], 404)
 
-    def test_pdf_js_is_shared_with_its_panel_and_the_editor(self):
+    def test_its_panel_its_page_s_helpers_and_the_editor_bundle(self):
+        status, _, raw = self.at_app("/")
+        self.assertEqual(status, 200)
+        for script in (b"page.js", b"editor.js", b"preview.js", b"editor-start.js", b"/_ag/app.js"):
+            self.assertIn(script, raw)
+        status, _, raw = self.at_app("/vendor/editor.js")
+        self.assertEqual(status, 200)
+        self.assertIn(b"agEditor", raw)
+        self.assertIn(b"hlLines", raw)                                    # the dashboard's highlighter, in its bundle
+
+    def test_the_host_s_shared_files_are_its_own_by_its_manifest(self):
+        from app_kit import AppError
+        backend = self.h.backend("editor")
+        self.assertTrue(backend.host.docs().available)
+        got = backend.host.docs().listing(self.repo, self.repo)
+        self.assertIn("src", [e["name"] for e in got["entries"]])
+        docwriter = self.h.backend("docwriter")                          # an app that does not ask for them
+        with self.assertRaises(AppError):
+            docwriter.host.docs()
+
+    def test_pdf_js_is_shared_with_its_panel_and_the_dashboard(self):
         if not os.path.isfile(os.path.join(libs.PDFJS, "web", "viewer.html")):
             self.skipTest("pdf.js (DocWriter's build) is not here")
         for path, kind in (("web/viewer.html", "text/html"), ("build/pdf.mjs", "text/javascript")):
@@ -396,12 +436,14 @@ class ServedTest(AppBase):
             self.assertEqual(self.at_app(f"/_ag/lib/pdfjs/{outside}")[0], 404, outside)
         self.assertEqual(self.at_app("/_ag/lib/marked.min.js")[0], 200)
 
-    def test_an_agent_has_its_tools_from_the_gateway(self):
-        names = [t["name"] for t in tool_gateway.tools("g")]
-        self.assertIn("preview_run", names)
-        got = tool_gateway.call(self.rows, "c1", "preview_show", {})
+    def test_its_actor_has_its_tools_from_the_gateway_another_none(self):
+        self.assertNotIn("editor_preview_run", [t["name"] for t in tool_gateway.tools("g", ("c1",))])
+        self.h.attach("g", self.inst.id, "c1")                            # the actor it was started with
+        names = [t["name"] for t in tool_gateway.tools("g", ("c1",))]
+        self.assertIn("editor_preview_run", names)
+        got = tool_gateway.call(self.rows, "c1", "editor_preview_show", {})
         self.assertIsNone(json.loads(got["content"][0]["text"])["preview"])           # its folder's project, by its cwd
-        self.assertIn("Preview runs a project's preview command", tool_gateway.instructions("g"))
+        self.assertNotIn("user's Editor", tool_gateway.instructions("g", channels=("c1",)))   # its own, not the gatherer's
 
     def run_cli(self, *args):
         from ag.cli import preview as cli
@@ -414,6 +456,7 @@ class ServedTest(AppBase):
         return code, out.getvalue(), err.getvalue()
 
     def test_an_agent_sets_shows_and_runs_it_with_ag_preview(self):
+        self.h.attach("g", self.inst.id, "c1")                            # its Editor's actor
         code, out, _ = self.run_cli()
         self.assertEqual(code, 0)
         self.assertIn("No preview is set for", out)
@@ -425,8 +468,9 @@ class ServedTest(AppBase):
         code, _, err = self.run_cli("run", "--file", self.plot)
         self.assertEqual(code, 1)
         self.assertIn("the user has not let this command run yet", err)
-        self.h.call("preview", self.inst, "run", {"path": self.repo, "ok": "python3 {file}", "file": self.plot, "wait": 20},
-                    Caller(gatherer="g"))                                  # the user lets it run, in the Preview
+        self.h.call("editor", self.inst, "preview_run", {"path": self.repo, "ok": "python3 {file}", "file": self.plot,
+                                                          "wait": 20}, Caller(gatherer="g"))   # the user lets it run
+
         code, out, _ = self.run_cli("run", "--file", self.plot, "--wait", "20")
         self.assertEqual(code, 0)
         self.assertIn("done", out)
@@ -443,3 +487,135 @@ class ServedTest(AppBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(livedocs.AVAILABLE, "pycrdt is not installed")
+class EditToolsTest(ServedBase):
+    """Its agents' tools -- editor_read, editor_edit, editor_write, editor_open -- on files open in it and not, as its
+    mode says (live, review, handsoff); the guard on Claude Code's own edit tools; the agent told what the user chose."""
+
+    def setUp(self):
+        super().setUp()
+        self.h.attach("g", self.inst.id, "c1")
+        self.told = []
+        insert = self.h.insert
+
+        def kept(name, instance, events, channel=None):
+            self.told += [(e, channel) for e in events if e.get("type") == "context_stream"]
+            return insert(name, instance, events, channel)
+        self.h.insert = kept
+        self.own = f"http://editor.localhost:{self.port}"
+        self.q = f"gatherer=g&instance={self.inst.id}"
+
+    def tool(self, name, args, actor="c1"):
+        got = tool_gateway.call(self.rows, actor, f"editor_{name}", args)
+        return ("error: " if got.get("isError") else "") + "".join(c.get("text", "") for c in got["content"])
+
+    def post(self, path, body):
+        status, _, raw = self.at_app(f"/api/{path}?{self.q}", "POST", json.dumps(body), origin=self.own)
+        got = json.loads(raw)
+        self.assertEqual(status, 200, got)
+        return got
+
+    def disk(self):
+        with open(self.plot) as fh:
+            return fh.read()
+
+    def opened(self, conn="p1"):
+        """The file open in the Editor's panel: its stream, read until the end of the test."""
+        q = urllib.parse.urlencode({"path": self.plot, "root": self.repo, "conn": conn, "client": 1})
+        req = urllib.request.Request(f"{self.url}/api/edit/stream?{self.q}&{q}",
+                                     headers={"Host": f"editor.localhost:{self.port}"})
+        resp = urllib.request.urlopen(req, timeout=10)
+        self.addCleanup(resp.close)
+        got = queue.Queue()
+
+        def read():
+            name = None
+            try:
+                for raw in resp:
+                    line = raw.decode().rstrip("\n")
+                    if line.startswith("event: "):
+                        name = line[7:]
+                    elif line.startswith("data: "):
+                        got.put((name, json.loads(line[6:])))
+            except Exception:                        # noqa: BLE001 - closed
+                pass
+        threading.Thread(target=read, daemon=True).start()
+        self.assertEqual(got.get(timeout=10)[0], "init")
+        deadline = time.time() + 5                   # kept as the Editor's page
+        while time.time() < deadline and not self.h.backend("editor").file_mode(self.plot):
+            time.sleep(0.02)
+        return got
+
+    def test_a_file_no_editor_has_open_is_read_and_written_on_disk(self):
+        new = os.path.join(self.repo, "notes", "a.md")
+        self.assertIn("Made", self.tool("write", {"path": "notes/a.md", "content": "one\ntwo\n"}))   # from its folder
+        with open(new) as fh:
+            self.assertEqual(fh.read(), "one\ntwo\n")
+        self.assertIn("Wrote", self.tool("edit", {"path": new, "old_string": "two", "new_string": "three"}))
+        self.assertEqual(self.tool("read", {"path": new}), "     1\tone\n     2\tthree")
+        self.assertIn("is in", self.tool("edit", {"path": self.plot, "old_string": "'", "new_string": '"'}))   # twice
+        self.assertIn("not in", self.tool("edit", {"path": new, "old_string": "nine", "new_string": "ten"}))
+        self.assertIsNone(self.h.guard("g", "c1", new))                   # its own tools may change it
+
+    def test_live_its_edit_lands_in_the_open_file_and_on_disk_and_its_own_edit_tool_is_pointed_there(self):
+        self.opened()
+        self.assertIn("editor_edit", self.h.guard("g", "c1", self.plot))
+        said = self.tool("edit", {"path": self.plot, "old_string": "print('drawing'", "new_string": "print('drew'"})
+        self.assertIn("shows as it lands", said)
+        self.assertIn("print('drew'", self.disk())
+        self.assertIn("Open in the user's Editor (Live)", self.tool("read", {"path": self.plot}))
+        self.assertIsNone(self.h.guard("g", "c2", self.plot))             # an actor not attached: its own tools
+
+    def test_review_its_edit_is_a_proposal_and_it_is_told_what_the_user_chose(self):
+        self.opened()
+        self.post("mode", {"mode": "handsoff"})
+        self.assertFalse(self.told)                  # an agent that has not used its tools: told by them, not now
+        self.tool("read", {"path": self.plot})
+        self.assertEqual(self.post("mode", {"mode": "review"})["mode"], "review")
+        self.assertIn("set the Editor to Review", self.told[-1][0]["payload"]["text"])
+        self.assertEqual(self.told[-1][1], "c1")
+        was = self.disk()
+        said = self.tool("edit", {"path": self.plot, "old_string": "import sys", "new_string": "import os, sys"})
+        self.assertIn("Proposed", said)
+        self.assertIn("Do not wait for the user: carry on with your task", said)   # proposed, and on it goes
+        self.assertEqual(self.disk(), was)                                # until the user accepts
+        self.assertIn("import os, sys", self.tool("read", {"path": self.plot}))   # its own, in
+        self.assertIn("Review", self.h.guard("g", "c1", self.plot))
+        state = self.post("edit/settle_all", {"path": self.plot, "root": self.repo, "take": "theirs", "channel": "c1"})
+        self.assertFalse(state["conflicts"])
+        self.assertTrue(self.disk().startswith("import os, sys\n"))
+        self.assertIn("The user accepted the change you proposed", self.told[-1][0]["payload"]["text"])
+        self.tool("edit", {"path": self.plot, "old_string": "import os, sys", "new_string": "import sys"})
+        (c,) = [c for c in self.h.docs.state(self.plot, self.repo)["conflicts"]]
+        self.post("edit/settle", {"path": self.plot, "root": self.repo, "conflict": c["id"], "take": "mine"})
+        self.assertTrue(self.disk().startswith("import os, sys\n"))
+        self.assertIn("rejected", self.told[-1][0]["payload"]["text"])
+        self.assertEqual(self.h.backend("editor").mode(self.inst), "review")          # kept: its event
+        self.h.backend("editor").modes.clear()
+        self.assertEqual(self.h.backend("editor").mode(self.inst), "review")
+
+    def test_hands_off_it_is_refused_and_a_write_around_it_is_asked_about(self):
+        self.opened()
+        self.post("mode", {"mode": "handsoff"})
+        self.assertIn("ask the user first", self.h.guard("g", "c1", self.plot))
+        self.assertIn("Ask them first", self.tool("edit", {"path": self.plot, "old_string": "import sys",
+                                                            "new_string": "import os"}))
+        with open(self.plot, "a") as fh:            # a shell's write, around the tools
+            fh.write("# appended\n")
+        deadline = time.time() + 10
+        while time.time() < deadline and not self.h.docs.state(self.plot, self.repo)["conflicts"]:
+            time.sleep(0.05)
+        (c,) = self.h.docs.state(self.plot, self.repo)["conflicts"]
+        self.assertEqual((c["asked"], c["theirs"]), (True, "# appended\n"))
+        self.post("edit/settle", {"path": self.plot, "root": self.repo, "conflict": c["id"], "take": "mine"})
+        self.assertNotIn("# appended", self.disk())                      # put back
+        self.post("mode", {"mode": "live"})                              # merged again
+        self.assertFalse(self.h.docs.state(self.plot, self.repo)["asking"])
+
+    def test_open_shows_the_file_in_its_panel(self):
+        self.assertIn("not open now", self.tool("open", {"path": self.plot, "line": 2}))
+        with mock.patch.object(self.h, "panels_of", return_value=1), mock.patch.object(self.h, "tell") as tell:
+            self.assertIn("Shown", self.tool("open", {"path": self.plot, "line": 2}))
+        self.assertEqual(tell.call_args[0][1], {"show": {"path": self.plot, "line": 2}})

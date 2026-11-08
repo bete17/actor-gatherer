@@ -20,11 +20,12 @@ else {
 }
 refresh(true).then(connect).then(() => { if (PANE) paneReady(); }).then(loadOwnViews);
 if (!PANE && !SNAPSHOT) {
-  const row = $("top-row");                          // the row above the panes -- the Editor, apps' panels -- its height dragged
+  const row = $("top-row");                          // the row above the panes -- the apps' panels -- its height dragged
   row.append(topGrip(row));
   window.agNext.apps.load().then(() => restoreAppPanes()).then(() => {
     if (state.selected) showActorsApp(...state.selected);   // an app's actor selected before the apps were known
     if (state.home) renderAgents();
+    topChanged();                                    // the panes' buttons for the apps now known, the row as restored
   });
 }
 if (!SNAPSHOT) setInterval(() => { if (!state.paused) render(); }, AGO_MS);

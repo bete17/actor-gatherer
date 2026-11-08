@@ -435,8 +435,8 @@ function panesTake(name, data) {
   for (const p of actorPanes()) if (!to || isAt(to, p.g, p.c)) p.call("take", name, data);
 }
 // ------------------------------------------------------------------ apps' panels
-// An app's panel (app_kit/DESIGN.md) is in the top row, above the actors' panes, beside the Editor: the row as tall
-// as the Editor's (its grip, 21-start.js), each panel's width its share (`size`, a gutter before it to drag). Opening
+// An app's panel (app_kit/DESIGN.md) is in the top row, above the actors' panes: the row as tall as it is dragged (its
+// grip, 18-top.js's topGrip), each panel's width its share (`size`, a gutter before it to drag). Opening
 // one opens the actor it is attached to below it, in the pane in focus (one open already: its pane focused). Its head
 // and its iframe are made by features/apps/host.ts (window.agNext.apps); what its panel asks goes through it to the
 // dashboard's /api/apps; the actor in focus (appsSelected) and the theme are told to it. The panels open are kept in
@@ -445,11 +445,9 @@ const TOP_APPS_KEY = "ag-dashboard-top-apps";
 panes.apps = [];
 const topRowEl = () => document.getElementById("top-row");
 function topLayout() {
-  const ed = document.getElementById("ed-top");
-  if (ed) ed.style.flexGrow = String(panes.edSize || 1);
   for (const p of panes.apps) p.node.style.flexGrow = String(p.size);
 }
-// The bar before an app's panel, dragged: it and the panel before it (the Editor, shown, or another app's) resized.
+// The bar before an app's panel, dragged: it and the panel shown before it resized.
 function topGutter(p) {
   const bar = el("div", { class: "top-gutter", role: "separator", "aria-orientation": "vertical", title: "Drag to resize · double-click: all the same width" });
   bar.addEventListener("pointerdown", (ev) => {
@@ -459,14 +457,14 @@ function topGutter(p) {
     if (!leftNode) return;
     ev.preventDefault();
     bar.setPointerCapture(ev.pointerId);
-    const left = panes.apps.find((q) => q.node === leftNode) || null;      // null: the Editor
-    const lSize = () => left ? left.size : (panes.edSize || 1);
-    const wl = leftNode.getBoundingClientRect().width, wr = p.node.getBoundingClientRect().width, share = lSize() + p.size, x0 = ev.clientX;
+    const left = panes.apps.find((q) => q.node === leftNode);
+    if (!left) return;
+    const wl = leftNode.getBoundingClientRect().width, wr = p.node.getBoundingClientRect().width, share = left.size + p.size, x0 = ev.clientX;
     topRowEl().classList.add("resizing");             // the frames let the pointer by while it drags
     const move = (e) => {
       const w = Math.min(Math.max(wl + e.clientX - x0, Math.min(MIN_PANE, wl)), wl + wr - Math.min(MIN_PANE, wr));
       const l = share * w / (wl + wr);
-      if (left) left.size = l; else panes.edSize = l;
+      left.size = l;
       p.size = share - l;
       topLayout();
     };
@@ -475,7 +473,7 @@ function topGutter(p) {
     bar.addEventListener("pointerup", up, { once: true });
     bar.addEventListener("pointercancel", up, { once: true });
   });
-  bar.addEventListener("dblclick", () => { panes.edSize = 1; for (const q of panes.apps) q.size = 1; topLayout(); saveAppPanes(); });
+  bar.addEventListener("dblclick", () => { for (const q of panes.apps) q.size = 1; topLayout(); saveAppPanes(); });
   return bar;
 }
 // An actor of the home (its gatherer, its channel), as the page has it now; a codex actor's thread it was renamed to.
@@ -483,6 +481,16 @@ const appActor = (g, c) => {
   const gg = state.home && state.home.gatherers.find((x) => x.name === g);
   return (gg && gg.agents.find((a) => a.channel === c || a.started_as === c)) || null;
 };
+// The actors as the list has them, for a panel that asks (the SDK's ag.actors): each one's name, avatar, hue, folder and
+// status -- what an app shows of an actor -- by gatherer; and the dashboard's own folder and the home folder.
+function appActors() {
+  const h = state.home;
+  if (!h) return { gatherers: [], home_dir: "", cwd: "" };
+  return { home_dir: h.home_dir || "", cwd: h.cwd || "",
+    gatherers: h.gatherers.map((g) => ({ name: g.name, agents: g.agents.map((a) => ({ channel: a.channel, name: a.name || null,
+      last_user_message: firstLine(a.last_user_message || "", 200), avatar: a.avatar || null, avatar_hue: a.avatar_hue || null,
+      cwd: a.cwd || null, last: a.last || 0, status: statusOf(a) })) })) };
+}
 // What a panel is told of an attached agent (the SDK's agents.state), as DocWriter's page was told its actor's.
 function appAgentState(g, c) {
   const a = appActor(g, c);
@@ -521,6 +529,7 @@ function addAppPane(app, instance, size = 1, held = false) {
     agents: (g) => ((state.home && state.home.gatherers.find((x) => x.name === g)) || { agents: [] }).agents
       .filter((a) => !a.closed).map((a) => ({ channel: a.channel, name: (a.name && a.name.text) || a.last_user_message || a.channel })),
     agentState: appAgentState, send: appSend, answer: appAnswer, interrupt: appInterrupt, focusAgent: appFocusAgent,
+    actors: appActors,
   });
   p.node = p.panel.node; p.frame = p.panel.frame;
   p.gutter = topGutter(p);
@@ -530,6 +539,7 @@ function addAppPane(app, instance, size = 1, held = false) {
   watchTop(p.node.querySelector(".app-head"), p);
   topLayout();
   p.panel.refresh();                                 // its agents, as the host has them
+  topChanged();
   return p;
 }
 // A panel held out of sight shown (opened by the reader), or one shown held (closed while it is needed: appsAtWork).
@@ -538,7 +548,7 @@ function holdAppPane(p, held) {
   if (held) unselectApp(p.instance.id);
   p.node.hidden = p.gutter.hidden = held;
   if (held) topRow(p, null);
-  topLayout(); saveAppPanes();
+  topLayout(); saveAppPanes(); topChanged();
 }
 function closeAppPane(p) {
   const i = panes.apps.indexOf(p);
@@ -550,7 +560,7 @@ function closeAppPane(p) {
   p.gutter.remove(); p.node.remove();
   topRow(p, null);
   appsOnlyLeft();
-  saveAppPanes(); renderAgents();
+  saveAppPanes(); renderAgents(); topChanged();
 }
 // a task of apps only shown, its last panel gone: the actors' panes in sight again (nothing else to show)
 function appsOnlyLeft() { if (appsOnly && !panes.apps.some((q) => !q.held)) setAppsOnly(null); }
@@ -567,7 +577,7 @@ function appNeeded(p) {
 let appsWorking = "";
 async function appsAtWork() {
   if (PANE || SNAPSHOT || !state.home || !window.agNext) return;
-  for (const p of panes.apps) p.panel.agentsChanged();
+  for (const p of panes.apps) { p.panel.agentsChanged(); p.panel.actorsChanged(); }
   const working = [];
   for (const g of state.home.gatherers) for (const a of g.agents) if (agentAtWork(a)) working.push([g.name, a.channel]);
   const sig = JSON.stringify(working);
@@ -592,7 +602,7 @@ function saveAppPanes() {
   if (PANE || SNAPSHOT) return;
   try {
     if (!panes.apps.some((p) => !p.held)) localStorage.removeItem(TOP_APPS_KEY);
-    else localStorage.setItem(TOP_APPS_KEY, JSON.stringify({ ed: panes.edSize || 1,
+    else localStorage.setItem(TOP_APPS_KEY, JSON.stringify({
       apps: panes.apps.filter((p) => !p.held).map((p) => ({ app: p.app.name, instance: p.instance.id, g: p.instance.gatherer, size: p.size })) }));
   } catch (e) { /* this page only */ }
 }
@@ -633,10 +643,13 @@ async function appIntent(kind, data, g) {
   const type = { md: "text/markdown", txt: "text/plain", pdf: "application/pdf", png: "image/png", jpg: "image/jpeg",
     jpeg: "image/jpeg", svg: "image/svg+xml", html: "text/html", json: "application/json" }[ext] || (ext ? "text/plain" : undefined);
   const app = window.agNext.apps.handler(kind, type);
-  if (!app && kind === "open-file" && data && data.path) return edShowFile(String(data.path), Number(data.line) || 0);   // the Editor's
   if (!app) throw new Error(`no app here takes ${kind}`);
+  const into = g || (focusedActor() || [])[0] || ((state.home && state.home.gatherers[0]) || {}).name;
+  // an app opened anew each time (instances "many": the Editor's) with one open above the panes: that one told, not
+  // another opened -- any other is opened as its instances say (one per folder: the file's folder's)
+  const open = app.instances === "many" && panes.apps.find((q) => !q.held && q.app.name === app.name && q.instance.gatherer === into);
+  if (open) return open.panel.intent(kind, data || {});
   const folder = data && data.path ? String(data.path).replace(/\/[^/]*$/, "") : null;
-  const into = g || (focusedActor() || [])[0] || ((state.home && state.home.gatherers[0]) || {}).name;   // the Editor's: no actor
   const p = await openApp(into, app.name, folder, false);
   if (!p) throw new Error(`${app.label} could not be opened`);
   p.panel.intent(kind, data || {});
@@ -674,7 +687,6 @@ async function restoreAppPanes() {
   let kept = null;
   try { kept = JSON.parse(localStorage.getItem(TOP_APPS_KEY)); } catch (e) { /* none kept */ }
   if (!kept || !Array.isArray(kept.apps)) return;
-  panes.edSize = +kept.ed || 1;
   for (const o of kept.apps) {
     const app = o && window.agNext.apps.named(o.app);
     if (!app || panes.apps.some((p) => p.instance.id === o.instance)) continue;
@@ -726,8 +738,8 @@ function paneReady() {
     earlier: (pick) => setEarlierTurns(pick, false),
     focused: (on) => document.documentElement.classList.toggle("pane-focused", !!on),
     top: (h) => setTopRow(h),
-    editor: () => minRedraw(),                       // the Editor opened or closed above the panes: its head, in the bar or not
-    minimized: () => minRedraw(),                    // the chat minimized under the Editor, or shown again (setChatMin)
+    toprow: () => minRedraw(),                       // a panel opened, or the last closed, above the panes: its head, in the bar or not
+    minimized: () => minRedraw(),                    // the chat minimized under the top row, or shown again (setChatMin)
     escape: () => escapeShown(),                     // an Esc on the page outside the frame, this pane in focus
   });
   PANE.ready(window, state.selected);

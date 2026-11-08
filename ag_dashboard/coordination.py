@@ -5,7 +5,7 @@ reach them: `ag actors` (ag/cli/actors.py), run in its shell, asks this dashboar
     list      the actors of its gatherer, those not closed (`all`: every one): each one's id, name, status, harness,
               directory, what it was last asked and its recap
     show      one actor: that, what it said last, and the files its latest turn changed (files.py's `files`)
-    who       the actors of its gatherer that changed a file lately, the latest first (editor.py's `writers`)
+    who       the actors of its gatherer that changed a file lately, the latest first (livedocs.py's `writers`)
     send      a message to an actor -- `gatherer` names the gatherer agent, started for it if it has none -- typed into
               its terminal as a message of its conversation, as Chat sends one (sessions.py's `send`: its terminal opened
               for it, if it has none open), in an envelope saying who it is from and how to answer (`envelope`)
@@ -86,7 +86,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import harness_kit
 from app_kit import AppError
 
-from . import actions, branches, data, editor, files, folders, naming, saved, sessions
+from . import actions, branches, data, files, folders, livedocs, naming, saved, sessions
 
 COORDINATOR = sessions.COORDINATOR
 ALIASES = ("gatherer", "gatherer-agent", "coordinator")   # what `send`, `show` and `when` take for the gatherer agent
@@ -350,7 +350,7 @@ class Coordination:
         if not path:
             raise CoordinationError("which file?")
         full = os.path.normpath(os.path.join(me.get("cwd") or os.getcwd(), os.path.expanduser(path)))
-        found = editor.writers([os.path.dirname(full)], time.time() - WHO_SECONDS).get(os.path.basename(full), [])
+        found = livedocs.writers([os.path.dirname(full)], time.time() - WHO_SECONDS).get(os.path.basename(full), [])
         by = {a["channel"]: a for a in agents}
         return {"path": full, "actors": [{**self._view(by[w["channel"]], me), "how": w["how"], "at": w["at"]}
                                          for w in found if w["gatherer"] == g and w["channel"] in by]}
@@ -387,7 +387,7 @@ class Coordination:
         chosen = [found[n] for n in asked]
         if approve and not branch:
             raise CoordinationError("--approve is for an actor on a branch of its own (--branch): each change it makes "
-                                    "there waits for the user in the Editor")
+                                    "there waits for the user to accept or reject it")
         try:
             target = folders.find_or_make(g, folder) if folder else None
         except folders.FolderError as exc:
