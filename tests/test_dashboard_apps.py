@@ -30,6 +30,8 @@ ALLOWED = {
     ("__main__.py", "webbrowser"): "Python's module that opens the page in the user's web browser",
     ("__main__.py", "the browser"): "the user's web browser, which `ag dashboard` opens the page in",
     ("__main__.py", "open a browser"): "the same",
+    ("files.py", "NOTES = {"): "what Chat calls each kind of a harness's note (a skill, a report): not the Notes app",
+    ("files.py", "NOTES.get("): "the same",
 }
 
 

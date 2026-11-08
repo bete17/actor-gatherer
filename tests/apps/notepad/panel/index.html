@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Notes</title>
+<title>Notepad</title>
 <style>
   :root { color-scheme: light dark; }
   body { margin: 0; padding: 14px 16px; font: 14px/1.45 system-ui, sans-serif; background: var(--surface, Canvas); color: var(--ink, CanvasText); }
@@ -21,7 +21,7 @@
 </style>
 </head>
 <body>
-<h1>Notes</h1>
+<h1>Notepad</h1>
 <ul id="notes"></ul>
 <form id="add"><input id="text" placeholder="A note" autocomplete="off"><button>Add</button></form>
 <dl>
@@ -51,16 +51,16 @@
     });
     $("notes").append(li);
   };
-  ag.events.subscribe(["notes.added"], draw);
+  ag.events.subscribe(["notepad.added"], draw);
   ag.tools.handle("picked", () => picked ? `the user picked: ${picked}` : "the user has picked no note");
   $("add").addEventListener("submit", async (ev) => {
     ev.preventDefault();
     const text = $("text").value.trim();
     if (!text) return;
     $("text").value = "";
-    await ag.events.insert([{ type: "notes.added", payload: { text }, properties: { by: "user" } }]);
+    await ag.events.insert([{ type: "notepad.added", payload: { text }, properties: { by: "user" } }]);
     for (const channel of ag.agents.attached)            // what the user did, told to each agent working with it
-      await ag.events.insert([ag.context("Notes", "the user", `added a note: ${text}`)], { channel });
+      await ag.events.insert([ag.context("Notepad", "the user", `added a note: ${text}`)], { channel });
   });
   const agents = (list) => { $("agents").textContent = list.length ? list.join(", ") : "none"; };
   agents(ag.agents.attached); ag.agents.onChange(agents);

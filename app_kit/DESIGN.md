@@ -393,7 +393,7 @@ Each step is one PR and leaves the dashboard working. Steps 1–3 change nothing
    - Intents: a panel's `intents.open` opens the app that takes it (for `open-file`, by the file's media type), in
      the instance for the file's folder, and tells its panel. The agent views raising them comes with step 6.
    - The selection: the actor in the actor's pane in focus last, told to every panel as it changes.
-   - The test app, Notes (`tests/apps/notes/`), uses each part, and `frontend/e2e/apps.spec.ts` drives it; the e2e
+   - The test app, Notepad (`tests/apps/notepad/`), uses each part, and `frontend/e2e/apps.spec.ts` drives it; the e2e
      dashboard finds it (`AG_APPS_PATH`) and inserts through this checkout's `ag` (`AG_COMMAND`).
 5. **Preview, the first real app.** Built, as one change, so there is never a second preview beside the first:
    - The apps that come with ag are a package, `ag_apps/` (found through Python's imports, so a wheel carries them).
@@ -571,6 +571,15 @@ Each step is one PR and leaves the dashboard working. Steps 1–3 change nothing
     `<home>/apps/<name>/app/` (data kept in `data/`), permissions shown and confirmed, off until turned on, run in a
     process of its own, `update` / `remove`, loaded without a restart; `native_view` unavailable to it (as in a
     browser tab) until the desktop link can be passed to an app's own process.
+
+**Notes**, a new app (2026-11-08), not a move: a notebook per gatherer (`ag_apps/notes/`, instances `one`), pages
+and subpages of blocks (text, headings, to-dos, lists, quotes, code, dividers), a minimal Notion. It is kept in a file
+of the app's data folder (`<home>/apps/notes/data/<gatherer>.json`), not as events: each keystroke's change would be
+an `ag home insert`, and a gatherer with no database yet holds its writes. The panel and the agents change it by the
+same ops (`notebook.py`), one batch at a time; the backend tells every open panel each batch, numbered, in order.
+Agents get `notes_read`, `notes_add` and `notes_change` (offer `always`), and read and write pages as markdown with
+each block's id. The test app it took the name of is now Notepad (`tests/apps/notepad/`). An app's mark now shows
+on its "+ ⋯" menu entry too.
 
 Steps 6–8 change what the user sees the most. Each gets its Playwright tests before it moves and keeps them after,
 as the move to React did.

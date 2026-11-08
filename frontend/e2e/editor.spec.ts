@@ -32,18 +32,18 @@ function project(): { repo: string; plot: string } {
   return { repo, plot };
 }
 
-/** An intent raised from a panel, as a page's link raises it: through the test app's SDK (tests/apps/notes). */
+/** An intent raised from a panel, as a page's link raises it: through the test app's SDK (tests/apps/notepad). */
 async function raise(page: Page, kind: string, data: Record<string, unknown>) {
   const row = page.locator("#agents .gatherer-row").first();
-  if (!(await page.locator("#top-row > .app-pane[data-app=notes]").count())) {
+  if (!(await page.locator("#top-row > .app-pane[data-app=notepad]").count())) {
     await row.hover();
     await row.locator("button.new-more").click();
-    await page.locator(".row-menu[role=menu]").getByText("Notes", { exact: true }).click();
+    await page.locator(".row-menu[role=menu]").getByText("Notepad", { exact: true }).click();
     await expect(
-      page.locator("#top-row > .app-pane[data-app=notes]").frameLocator("iframe").locator("body[data-ready='1']"),
+      page.locator("#top-row > .app-pane[data-app=notepad]").frameLocator("iframe").locator("body[data-ready='1']"),
     ).toHaveCount(1);
   }
-  const notes = page.frames().find((f) => /^http:\/\/notes\.localhost:\d+\//.test(f.url()))!;
+  const notes = page.frames().find((f) => /^http:\/\/notepad\.localhost:\d+\//.test(f.url()))!;
   type Notes = { notes: { intents: { open: (k: string, d: object) => Promise<unknown> } } };
   await notes.evaluate(
     ([k, d]) => (window as unknown as Notes).notes.intents.open(k as string, d as object),
@@ -82,10 +82,15 @@ async function startEditor(page: Page, repo: string) {
   await box.locator("input").fill(repo);
   await box.locator("button.go").first().click();
   await expect(editorPane(page)).toHaveCount(1);
-  const actor = page.locator("#agents button.agent[aria-current=true]");
-  await expect(actor.locator("img.dw-badge")).toHaveAttribute("src", "/apps/mark/editor.svg");
-  const sid = ((await actor.getAttribute("data-key")) || "").split("/").pop() || "";
+  // the Editor and its actor, one task (the dashboard's task_links.py): the task's row shown, the Editor's mark among its
+  // faces; its actor, the one attached to the Editor's instance
+  const actor = page.locator("#agents button.agent.task[aria-current=true]");
+  await expect(actor.locator(".t-faces img.t-app")).toHaveAttribute("src", "/apps/mark/editor.svg");
+  await expect(actor.locator(".t-faces .t-face")).toHaveCount(1);
   const src = new URL((await editorPane(page).locator("iframe").getAttribute("src")) || "");
+  const listed = await (await page.request.get(`/api/apps?gatherer=${src.searchParams.get("gatherer")}`)).json();
+  const sid: string = (listed.attached[src.searchParams.get("instance") || ""] || [])[0] || "";
+  expect(sid).toMatch(/^[0-9a-f-]{36}$/);
   return { actor, sid, src };
 }
 

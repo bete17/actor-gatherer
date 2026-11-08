@@ -206,7 +206,7 @@ class Manifest:
     instructions: str = ""
     agent: "Agent" = field(default_factory=lambda: Agent())
     asked: "Asked" = field(default_factory=lambda: Asked())
-    mark: Optional[str] = None                   # its mark (an SVG in its folder): an agent it started is badged so
+    mark: Optional[str] = None                   # an SVG in its folder: on its menu entry, and on the agent it started
     backend: Backend = field(default_factory=Backend)
     panel: Optional[str] = None
     tools: Tuple[Tool, ...] = ()
