@@ -639,7 +639,7 @@ function moreStarts(g, hs, where, key = `more:${g.name}`) {
       run: (button) => openPop(key, button, appStartBox(g, tooled, a)) })),
     state.home.terminals !== false ? { icon: ICONS.terminal, text: "Terminal", note: there, run: () => addSession(g, SHELL_START) } : null,
     ...(PANE || SNAPSHOT ? [] : window.agNext.apps.found()).filter((a) => !(a.agent && a.agent.start)).map((a) => ({ icon: ICONS.app,
-      text: a.label, note: a.description || "an app", run: () => openApp(g.name, a.name, startCwd(g)) })),
+      mark: a.mark ? appMarkImg(a) : null, text: a.label, note: a.description || "an app", run: () => openApp(g.name, a.name, startCwd(g)) })),
   ].filter(Boolean);
 }
 // `key`: the button's data-pop (the list's "+ actor", or the rail's "+"); `start`: what a harness chosen does; `place`: the

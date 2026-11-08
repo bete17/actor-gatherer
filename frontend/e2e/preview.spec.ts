@@ -29,18 +29,18 @@ function project(): { repo: string; plot: string } {
   return { repo, plot };
 }
 
-/** An intent raised from a panel, as the Editor raises it: through the test app's SDK (tests/apps/notes). */
+/** An intent raised from a panel, as the Editor raises it: through the test app's SDK (tests/apps/notepad). */
 async function raise(page: Page, kind: string, data: Record<string, unknown>) {
   const row = page.locator("#agents .gatherer-row").first();
-  if (!(await page.locator("#top-row > .app-pane[data-app=notes]").count())) {
+  if (!(await page.locator("#top-row > .app-pane[data-app=notepad]").count())) {
     await row.hover();
     await row.locator("button.new-more").click();
-    await page.locator(".row-menu[role=menu]").getByText("Notes", { exact: true }).click();
+    await page.locator(".row-menu[role=menu]").getByText("Notepad", { exact: true }).click();
     await expect(
-      page.locator("#top-row > .app-pane[data-app=notes]").frameLocator("iframe").locator("body[data-ready='1']"),
+      page.locator("#top-row > .app-pane[data-app=notepad]").frameLocator("iframe").locator("body[data-ready='1']"),
     ).toHaveCount(1);
   }
-  const notes = page.frames().find((f) => /^http:\/\/notes\.localhost:\d+\//.test(f.url()))!;
+  const notes = page.frames().find((f) => /^http:\/\/notepad\.localhost:\d+\//.test(f.url()))!;
   type Notes = { notes: { intents: { open: (k: string, d: object) => Promise<unknown> } } };
   await notes.evaluate(
     ([k, d]) => (window as unknown as Notes).notes.intents.open(k as string, d as object),

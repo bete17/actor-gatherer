@@ -36,6 +36,8 @@ ALLOWED = {
     ("history.py", "def _preview("): "an event's words, shortened for its outline",
     ("history.py", "or _preview("): "the same",
     ("history.py", "since the preview (a file changed)"): "what a history export would write, shown first",
+    ("files.py", "NOTES = {"): "what Chat calls each kind of a harness's note (a skill, a report): not the Notes app",
+    ("files.py", "NOTES.get("): "the same",
 }
 
 
