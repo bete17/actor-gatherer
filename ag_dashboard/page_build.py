@@ -78,12 +78,13 @@ def _node_ok(text: str) -> bool:
 def pnpm() -> List[str]:
     """How pnpm is run here: Node's corepack (the version frontend/package.json names), a pnpm of one's own, else npx
     fetching that version."""
-    if not shutil.which("node"):
+    node = shutil.which("node")
+    if not node:
         raise NoTools(f"building the dashboard's page from source needs {NODE_SAID} (https://nodejs.org, or "
                          "`brew install node`), and none is on PATH. (`pip install actor-gatherer` installs ag with "
                          "its page built, no Node needed.)")
     try:
-        version = subprocess.run(["node", "--version"], capture_output=True, text=True, timeout=30).stdout
+        version = subprocess.run([node, "--version"], capture_output=True, text=True, timeout=30).stdout
     except (OSError, subprocess.SubprocessError):
         version = ""
     if not _node_ok(version):
