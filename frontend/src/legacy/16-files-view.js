@@ -51,11 +51,32 @@ async function loadFilesNow() {
   if (!state.files || state.files.key !== k) state.files = { key: k, turn: null, sel: null, data: null };
   const f = state.files, info = selectedInfo();
   const cwd = (info && (info.cwd || (info.session && info.session.cwd))) || "";
+  const turn = f.turn;
   const got = await get(`/api/files?gatherer=${encodeURIComponent(g)}&channel=${encodeURIComponent(c)}`
-    + `${f.turn === null ? "" : `&turn=${f.turn}`}&cwd=${encodeURIComponent(cwd)}`);
+    + `${turn === null ? "" : `&turn=${turn}`}&cwd=${encodeURIComponent(cwd)}`);
   if (state.files !== f) return;
   if (!got.error) f.data = got;                      // no database yet (none before the gatherer's first call): no turns
   else if (got.error.startsWith("no database")) f.data = { turns: [], turn: null, files: [], commands: [], home: "" };
+  if (turn === null && f.data) keep(k, "data", f.data);   // the latest turn's: what the actor opens on, kept for next time
+}
+// The Chat of the actors shown lately, as last loaded -- its files feed's data (at the latest turn) and the server's view --
+// drawn at once when one is picked again (`showKept`), then each brought up to date as it comes. Together, as one moment's:
+// the turns are not drawn before the view of what they are at (Chat waits for both, `filesRender`).
+const KEPT_ACTORS = 12;
+const chatKept = new Map();                           // key -> {data, view}, the latest shown last
+function keep(k, what, value) {
+  const got = chatKept.get(k) || {};
+  chatKept.delete(k);
+  chatKept.set(k, { ...got, [what]: value });
+  while (chatKept.size > KEPT_ACTORS) chatKept.delete(chatKept.keys().next().value);
+}
+// The actor's Chat as last loaded, made the one shown: true if both its parts were kept, false (nothing changed) if not.
+function showKept(g, c) {
+  const k = key(g, c), got = chatKept.get(k);
+  if (!got || !got.data || !got.view) return false;
+  state.files = { key: k, turn: null, sel: null, data: got.data };
+  state.chatView = { key: k, view: got.view };
+  return true;
 }
 CHAT_FEEDS.files = {
   load: loadFiles,
@@ -528,6 +549,7 @@ function takeChatView(g, c, view) {
   if (!view || view.error || !view.current) view = null;   // one the server could not make: none
   const k = key(g, c), has = window.agNext.chat.cidsOf(view);
   state.chatView = { key: k, view };
+  if (view) keep(k, "view", view);
   for (let i = chatSends.length - 1; i >= 0; i--) if (chatSends[i].key === k && has.has(chatSends[i].cid)) chatSends.splice(i, 1);
 }
 // the view of an actor -- the selected one's; null before it has come

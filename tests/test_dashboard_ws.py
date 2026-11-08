@@ -124,8 +124,8 @@ class StreamsOverOneSocketTest(HomeBase):
         s = self.page()
         s.say({"open": "1", "url": "/api/stream?gatherer=g&channel=c1"})
         self.assertEqual(s.next(), ("1", "!open", ""))
-        names = {s.next()[1], s.next()[1]}
-        self.assertEqual(names, {"home", "agent"})
+        names = [s.next()[1], s.next()[1], s.next()[1]]
+        self.assertEqual(names, ["chat", "agent", "home"])
         self.assertTrue(until(lambda: len(self.httpd.hub.watches) == 1))
         s.say({"open": "2", "url": f"/api/preview/stream?path={self.work}"})
         self.assertIsNotNone(s.until("2", "!open"))

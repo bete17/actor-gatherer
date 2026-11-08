@@ -942,9 +942,15 @@ async function select(g, c) {
   markSeen();
   savePanes();
   if (SNAPSHOT || state.paused) { await refresh(true); chatToEnd(); return; }
+  const kept = !isShell(c) && showKept(g, c);        // shown before: drawn at once as it was, dimmed until brought up to date
   connect();
   const main = document.getElementById("main");
   main.classList.add("stale");
+  if (kept) { render(true); chatToEnd(); }
   try { await loadChat(); } finally { main.classList.remove("stale"); }
-  if (state.selected[0] === g && state.selected[1] === c) { render(true); chatToEnd(); }
+  if (state.selected[0] === g && state.selected[1] === c) {
+    const end = !kept || chatAtEnd();                // drawn already: the reader's place kept, should they have moved it
+    render(true);
+    if (end) chatToEnd();
+  }
 }
