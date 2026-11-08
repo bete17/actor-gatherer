@@ -180,6 +180,8 @@ def resolve(row: dict, name: str, args: dict) -> Tuple[str, str, Instance, dict]
                        f"({', '.join(f'{i.id} ({i.title or i.folder or i.id})' for i in mine)})")
     else:
         inst = HOST.open(app, gatherer, row.get("cwd") or None, {}, by=channel)
+        from . import task_links                                         # (it imports this module)
+        task_links.link(gatherer, inst.id, channel)                     # the app, in no task, in the agent's
         HOST.attach(gatherer, inst.id, channel, by=channel)
     return app, tool, inst, args
 

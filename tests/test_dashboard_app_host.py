@@ -24,7 +24,7 @@ from ag.ag_harness.home.__main__ import main as home_main  # noqa: E402
 from ag.ag_harness.store import operations as store  # noqa: E402
 from ag.ag_harness.store import paths  # noqa: E402
 from ag.cli import apps as apps_cli  # noqa: E402
-from ag_dashboard import app_host, data, server, tool_gateway  # noqa: E402
+from ag_dashboard import app_host, data, server, tasks, tool_gateway  # noqa: E402
 import app_kit  # noqa: E402
 from app_kit import AppError, Caller  # noqa: E402
 from channels import ch  # noqa: E402
@@ -440,8 +440,11 @@ class GatewayTest(GatewayBase):
         self.assertEqual(got, {"content": [{"type": "text", "text": "kept"}], "isError": False})
         mine = self.host.attached_to("g", "c1")
         self.assertEqual([(i.app, i.folder) for i in mine], [("notes", os.path.realpath(self.folder))])
+        item = "app:" + mine[0].id
+        self.assertEqual(set(tasks.of("g")["tasked"]), {"c1", item})                # opened by it: in a task with it
         tool_gateway.call(self.rows, "tmp-2", "notes_add", {"text": "eggs"})        # codex, by the id it started as
         self.assertEqual(self.host.attached_to("g", "c2"), mine)                    # the folder's one, shared
+        self.assertEqual(set(tasks.of("g")["tasked"]), {"c1", "c2", item})          # alone, put in the app's task
         self.host.flush()
         self.assertEqual([(e["properties"]["channel"], e["payload"]["text"]) for e in
                           self.host.read("notes", mine[0], ["notes.added"])], [("c1", "milk"), ("c2", "eggs")])
@@ -584,6 +587,26 @@ class ServedTest(HostBase):
                                                             "events": [{"type": "user_message", "payload": {}}]})
         self.assertEqual(status, 403)
         self.assertEqual(self.api("GET", "/api/apps/events?app=notes&gatherer=g&instance=nope&types=x")[0], 404)
+
+    def test_an_app_and_the_agents_working_with_it_are_one_task(self):
+        """task_links.py through the routes: an app opened by an agent put in a task with it; another the reader attaches
+        put in it too, and detached taken out; the app closed, out of it."""
+        _, inst = self.api("POST", "/api/apps/open", {"app": "notes", "gatherer": "g", "folder": self.folder,
+                                                      "channel": "c1"})
+        item, host = "app:" + inst["id"], self.httpd.app_host
+        tasked = lambda: self.api("GET", "/api/apps?gatherer=g")[1]["tasks"]["tasked"]   # noqa: E731
+        agents = lambda: host.agents_of(host.instance("g", inst["id"]))                    # noqa: E731
+        self.assertEqual(set(tasked()), {"c1", item})
+        self.assertEqual(self.api("POST", "/api/apps/attach", {"gatherer": "g", "instance": inst["id"],
+                                                               "channel": "c2"})[0], 200)
+        self.assertEqual((set(tasked()), agents()), ({"c1", "c2", item}, ["c1", "c2"]))
+        self.assertEqual(self.api("POST", "/api/apps/detach", {"gatherer": "g", "instance": inst["id"],
+                                                               "channel": "c2"})[0], 200)
+        self.assertEqual((set(tasked()), agents()), ({"c1", item}, ["c1"]))
+        self.assertEqual(self.api("POST", "/api/apps/close", {"gatherer": "g", "instance": inst["id"]})[0], 200)
+        self.assertEqual(tasked(), {})
+        self.assertEqual(self.api("POST", "/api/apps/attach", {"gatherer": "g", "instance": "nope", "channel": "c2"})[0],
+                         404)
 
     def test_an_app_in_its_own_process_reaches_the_host_with_its_token(self):
         status, inst = self.api("POST", "/api/apps/open", {"app": "far_notes", "gatherer": "g",

@@ -53,10 +53,25 @@ async function tellSeen(looked) {
 // the change is rung.
 let homesTaken = 0;
 const homeSince = (asked) => homesTaken !== asked;
+// THE TASKS of each gatherer (05-agent-list.js's TASKS) come in a home, in the apps' list and in a change's answer, each
+// read on the server at its `now`: those of a gatherer read before the ones the page has (`tasksRead`, the server's
+// clock) not taken -- a home read before a change can come after the change's own answer
+const tasksRead = new Map();
+function newerTasks(had, got, at, only = null) {
+  const next = { ...(had || {}) };
+  for (const g of only ? [only] : new Set([...Object.keys(next), ...Object.keys(got || {})])) {
+    if ((at || 0) < (tasksRead.get(g) || 0)) continue;
+    tasksRead.set(g, at || 0);
+    if (got && got[g]) next[g] = got[g]; else delete next[g];
+  }
+  return next;
+}
 // Each actor's key, and what the reader has seen of a new home: what the server kept (everything, before
 // it kept any); the selected actor, while the page is visible.
 function takeHome(home) {
   homesTaken++;
+  if (state.home) home.tasks = newerTasks(state.home.tasks, home.tasks, home.now);
+  else newerTasks({}, home.tasks, home.now);
   window.agNext.home(home);                        // the new code's store has it too (src/bridge.ts)
   for (const g of home.gatherers) for (const a of g.agents) {
     a.key = key(g.name, a.channel);

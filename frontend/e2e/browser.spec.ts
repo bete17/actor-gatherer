@@ -32,10 +32,12 @@ const REFUSED = act(
 );
 
 /** The test home's Claude Code actor (CLAUDE) as a Browser's (its session's `role`), the Browser an instance of the
- * app attached to it; the home's own stream held back, so it does not replace this one. Every request of its panel's
- * to its backend answered {} unless a test says otherwise (routes added later are tried first). */
+ * app attached to it, the two one task (as the server keeps an app and the agent it started: task_links.py); the home's
+ * own stream held back, so it does not replace this one. Every request of its panel's to its backend answered {} unless
+ * a test says otherwise (routes added later are tried first). */
 async function browserActors(page: Page) {
   let channel = "";
+  const task = () => ({ tasks: [{ id: 99, name: "" }], tasked: { [channel]: 99, [`app:${KEY}`]: 99 } });
   await page.route("**/api/home", async (route) => {
     const home = await (await route.fetch()).json();
     for (const a of home.gatherers.find((g: { name: string }) => g.name === GATHERER).agents)
@@ -43,17 +45,25 @@ async function browserActors(page: Page) {
         a.session = { ...(a.session || {}), role: JSON.stringify({ app: "browser", key: KEY }) };
         channel = a.channel;
       }
+    home.tasks = { ...(home.tasks || {}), [GATHERER]: task() };
     await route.fulfill({ json: home });
   });
   await page.route("**/api/apps?gatherer=*", async (route) => {
     const got = await (await route.fetch()).json();
     got.instances.push({ id: KEY, app: "browser", gatherer: GATHERER, folder: "/work", title: "work", data: {} });
     got.attached[KEY] = [channel];
+    got.tasks = task();
     await route.fulfill({ json: got });
   });
   await streamsAsRequests(page);
   await page.route("**/api/stream*", (route) => route.abort());
   await page.route(`**/api/w/*/${KEY}/**`, (route) => route.fulfill({ json: {} }));
+}
+/** The Browser's actor shown -- its row a task's, with its Browser -- the pointer then off the list, so the task's card
+ * (live while hovered) does not lie over the panel. */
+async function openOwn(page: Page) {
+  await openActor(page, CLAUDE);
+  await page.mouse.move(0, 0);
 }
 /** The Browser's panel: its frame, on the app's own origin, above the actor. */
 const panel = (page: Page): FrameLocator => page.frameLocator("#top-row .app-pane[data-app=browser] iframe");
@@ -120,7 +130,7 @@ test("what the agent did is said under the page and flashed on it; what it didn'
     asked.push(route.request().postDataJSON().i);
     await route.fulfill({ json: { box: NOW_BOX } });
   });
-  await openActor(page, CLAUDE);
+  await openOwn(page);
 
   const feed = panel(page).locator(".bw-feed"),
     line = feed.locator(".line"),
@@ -177,7 +187,7 @@ test("the first action done is flashed: an outline drawn as the agent acts, then
       ),
     }),
   );
-  await openActor(page, CLAUDE);
+  await openOwn(page);
   const line = panel(page).locator(".bw-feed .line"),
     outline = panel(page).locator(".bw-stage .acting");
   await expect(line.locator(".tx")).toHaveText('Clicking "Delete"…');
@@ -195,7 +205,7 @@ test("before the agent has acted the line says so, and does not open", async ({ 
   await page.route(`**/api/w/*/${KEY}/stream*`, (route) =>
     route.fulfill({ status: 200, contentType: "text/event-stream", body: events([{ actions: [] }], "") }),
   );
-  await openActor(page, CLAUDE);
+  await openOwn(page);
   const line = panel(page).locator(".bw-feed .line");
   await expect(line.locator(".tx")).toHaveText("The agent has done nothing on the page yet");
   await expect(line).toBeDisabled();
@@ -209,7 +219,7 @@ test("an action done while the view was away is listed when it comes back, not f
     const actions = joins === 1 ? [] : [act(4, 30, true, 'Clicked "Archive"', DELETE)];
     return route.fulfill({ status: 200, contentType: "text/event-stream", body: events([{ actions }], "") });
   });
-  await openActor(page, CLAUDE);
+  await openOwn(page);
   const line = panel(page).locator(".bw-feed .line");
   await expect(line.locator(".tx")).toHaveText('Clicked "Archive"');
   await expect(line.locator(".tm")).toHaveText("30s ago");
@@ -238,7 +248,7 @@ test("an action shown coming: the agent's pointer moves to it, Next is said, and
     for (const e of route.request().postDataJSON().events || []) if (e.type === "key") keys.push(e.key);
     await route.fulfill({ json: {} });
   });
-  await openActor(page, CLAUDE);
+  await openOwn(page);
   const feed = panel(page).locator(".bw-feed"),
     outline = panel(page).locator(".bw-stage .acting"),
     pointer = panel(page).locator(".bw-stage .agent-pointer");
@@ -277,7 +287,7 @@ test("stopped: the line says the agent waits for the user's message, and Esc is 
     for (const e of route.request().postDataJSON().events || []) if (e.type === "key") keys.push(e.key);
     await route.fulfill({ json: {} });
   });
-  await openActor(page, CLAUDE);
+  await openOwn(page);
   const feed = panel(page).locator(".bw-feed");
   await expect(feed.locator(".line .tx")).toHaveText("You stopped the agent (Esc): it waits for your next message");
   await expect(feed).toHaveClass(/\bhalted\b/);
@@ -299,7 +309,7 @@ test("the page says whether it shows the view: when it joins, and as its tab is 
     watched.push(route.request().postDataJSON());
     await route.fulfill({ json: {} });
   });
-  await openActor(page, CLAUDE);
+  await openOwn(page);
   await expect.poll(() => joined.length).toBe(1);
   const id = new URL(joined[0]).searchParams.get("page");
   expect(id).toBeTruthy();
@@ -358,7 +368,7 @@ for (const c of CUES)
         body: events([{ actions: [OLD], next: c.next }], "", 60000),
       }),
     );
-    await openActor(page, CLAUDE);
+    await openOwn(page);
     await expect(panel(page).locator(".bw-feed .line .tx")).toHaveText(`Next: ${(c.next as { label: string }).label}…`);
     await c.check(page);
   });
@@ -377,7 +387,7 @@ test("the agent looking at the page is said in the line, a moment, however quick
         : [{ actions: [OLD] }];
     return route.fulfill({ status: 200, contentType: "text/event-stream", body: events(states, "", 60000) });
   });
-  await openActor(page, CLAUDE);
+  await openOwn(page);
   const tx = panel(page).locator(".bw-feed .line .tx");
   await expect(tx).toHaveText("Looking at the page…");
   await expect(panel(page).locator(".bw-feed")).toHaveClass(/\breading\b/);
@@ -409,7 +419,7 @@ test("in the desktop app the page's own native page is placed over the panel's s
       body: events([{ actions: [], tabs: [tab] }], "", 60000),
     }),
   );
-  await openActor(page, CLAUDE);
+  await openOwn(page);
   const stage = panel(page).locator(".bw-stage");
   await expect(stage).toBeVisible();
   type Placed = {

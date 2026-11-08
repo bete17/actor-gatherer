@@ -1,13 +1,14 @@
 // DocWriter as an app (ag_apps/docwriter/): started from a gatherer's "+ ⋯" menu with an agent of its own -- its panel
-// (DocWriter's page, on the app's own origin) in the row above the panes, its new actor below it, marked with the app's
-// mark -- and its page talking to its backend through the panel SDK. The folder it writes in is one the test makes.
+// (DocWriter's page, on the app's own origin) in the row above the panes, its new actor below it, the two one task, the
+// app's mark among its faces -- and its page talking to its backend through the panel SDK. The folder it writes in is
+// one the test makes.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { expect, streamsAsRequests, test } from "./test";
 import { CLAUDE, openActor } from "./home";
 
-test("a DocWriter started from the menu: its page above, its actor below with its mark", async ({ page, request }) => {
+test("a DocWriter started from the menu: its page above, its actor below, one task", async ({ page, request }) => {
   const folder = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ag-docwriter-")));
   fs.writeFileSync(path.join(folder, "draft.md"), "# A draft\n\nIts first line.\n");
   // the home as the server has it, but with Claude Code set up here, whether or not it is on this machine (CI has
@@ -46,9 +47,10 @@ test("a DocWriter started from the menu: its page above, its actor below with it
   });
   expect(cfg.root).toBe(folder);
   expect(cfg.channel).toMatch(/^[0-9a-f-]{36}$/);
-  // its actor below: the new one, shown, marked as DocWriter's
-  const actor = page.locator("#agents button.agent[aria-current=true]");
-  await expect(actor.locator("img.dw-badge")).toHaveAttribute("src", "/apps/mark/docwriter.svg");
+  // its actor below: the new one, shown, in a task with its DocWriter -- the task's row, the app's mark among its faces
+  const task = page.locator("#agents button.agent.task[aria-current=true]");
+  await expect(task.locator(".t-faces img.t-app")).toHaveAttribute("src", "/apps/mark/docwriter.svg");
+  await expect(task.locator(".t-faces .t-face")).toHaveCount(1);
   await expect(page.locator("#panes > .pane")).toHaveCount(1);
   const below = (await page.locator("#panes").boundingBox())!,
     above = (await panel.boundingBox())!;
@@ -56,7 +58,6 @@ test("a DocWriter started from the menu: its page above, its actor below with it
 
   // the home as it was, for the tests after: its DocWriter closed, its actor (never started) forgotten
   const src = new URL((await panel.locator("iframe").getAttribute("src")) || "");
-  const actorKey = (await actor.getAttribute("data-key")) || "";
   await panel.locator(".app-close").click();
   expect(
     (
@@ -65,7 +66,7 @@ test("a DocWriter started from the menu: its page above, its actor below with it
       })
     ).ok(),
   ).toBe(true);
-  const sid = actorKey.split("/").pop();
+  const sid = cfg.channel; // its actor's, as DocWriter has it
   const discarded = await request.post("/api/discard", { data: { session_id: sid } });
   expect(discarded.ok(), await discarded.text()).toBe(true);
   const home = await (await request.get("/api/home")).json(); // the server's (the page's stream is held back)

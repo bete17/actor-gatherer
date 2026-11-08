@@ -1,0 +1,419 @@
+// TASKS (05-agent-list.js, tasks.py): actors and apps alike kept together as one task -- one row in the list, its actors'
+// faces and its apps' marks at its right, opened as one layout (its apps above, its actors side by side), its card listing
+// them, each taken out from there -- "+", on an item's row or a task's, adding to its task a new actor or an app (a task
+// made of the two, for a lone one), an item dragged onto another's row put in its task, and an app in no task a row of
+// its own.
+import type { Page } from "@playwright/test";
+import { expect, streamsAsRequests, test } from "./test";
+import { CLAUDE, CODEX, GATHERER, open } from "./home";
+import { newFolder, noFolders, treeOf } from "./folder-tree";
+
+type Agent = { harness?: string; channel: string; cwd?: string };
+
+// the home as the server has it -- its two actors made one task ("Parser work") on the server first if `together` --
+// with two harnesses a session can be started on here and its actors working in a directory (its stream held back, so the
+// server's own home does not replace it)
+async function taskHome(page: Page, together: boolean) {
+  if (together) {
+    const home = await (await page.request.get("/api/home")).json();
+    const agents: Agent[] = home.gatherers.find((x: { name: string }) => x.name === GATHERER).agents;
+    const [a, b] = agents.filter((x) => x.harness === "claude" || x.harness === "codex").map((x) => x.channel);
+    const made = await page.request.post("/api/tasks", {
+      data: { gatherer: GATHERER, do: "add", to: a, items: [b], name: "Parser work" },
+    });
+    expect(made.ok()).toBe(true);
+  }
+  await page.route("**/api/home", async (route) => {
+    const home = await (await route.fetch()).json();
+    const agents: Agent[] = home.gatherers.find((x: { name: string }) => x.name === GATHERER).agents;
+    for (const a of agents) a.cwd = "/work/demo";
+    home.harnesses = ["claude", "codex"];
+    for (const h of home.harnesses) home.harness_info[h] = { ...home.harness_info[h], runs: true };
+    await route.fulfill({ json: home });
+  });
+  await streamsAsRequests(page);
+  await page.route("**/api/stream*", (route) => route.abort());
+}
+// Notes added from the "+" of `row` (an item's or a task's): its menu's Notes picked
+async function addNotes(page: Page, row: ReturnType<Page["locator"]>) {
+  await row.hover();
+  await row.locator(".task-add").first().click();
+  await page.locator(".row-menu[role=menu] [role=menuitem] .nm", { hasText: /^Notes$/ }).click();
+}
+const taskRow = (page: Page) => page.locator("#agents button.agent.task");
+
+test("a task is one row, its actors' faces at its right; opened, its actors side by side; its card takes one out", async ({
+  page,
+}) => {
+  await taskHome(page, true);
+  await open(page);
+  const row = page.locator("#agents button.agent.task");
+  await expect(row).toHaveCount(1);
+  await expect(row.locator(".name")).toHaveText("Parser work");
+  await expect(row.locator(".t-face")).toHaveCount(2);
+  await expect(page.locator("#agents button.agent:not(.task)", { hasText: CLAUDE })).toHaveCount(0); // in it, not a row
+
+  await row.click(); // opened: both, side by side, the task the one shown
+  await expect(page.locator("#panes > .pane")).toHaveCount(2); // this page's own pane, and one beside it
+  await expect(row).toHaveAttribute("aria-current", "true");
+
+  await page.mouse.move(0, 0);
+  await row.hover(); // its card: live, its two actors, each with its own "take out"
+  const card = page.locator("#actor-card.live");
+  await expect(card).toHaveAttribute("aria-label", "The task Parser work");
+  await expect(card.locator(".c-task-row")).toHaveCount(2);
+  await card.locator(".c-task-row", { hasText: CODEX }).locator(".take-out").hover();
+  await card.locator(".c-task-row", { hasText: CODEX }).locator(".take-out").click(); // one left: the task gone
+  await expect(page.locator("#agents button.agent.task")).toHaveCount(0);
+  await expect(page.locator("#agents button.agent", { hasText: CLAUDE })).toHaveCount(1);
+  await expect(page.locator("#agents button.agent", { hasText: CODEX })).toHaveCount(1);
+});
+
+test("an actor's + starts a new agent in its directory, put in a task with it, opened beside it", async ({ page }) => {
+  await taskHome(page, false);
+  const asked: { path: string; body: Record<string, unknown> }[] = [];
+  await page.route("**/api/sessions", async (route) => {
+    asked.push({ path: "sessions", body: route.request().postDataJSON() });
+    await route.fulfill({ json: { session_id: "new-1", gatherer: GATHERER, harness: "codex", cwd: "/work/demo" } });
+  });
+  await page.route("**/api/tasks", async (route) => {
+    const body = route.request().postDataJSON();
+    asked.push({ path: "tasks", body });
+    await route.fulfill({
+      json: { task: 3, tasks: { [GATHERER]: { tasks: [{ id: 3, name: body.name }], tasked: {} } }, attached: {} },
+    });
+  });
+  await open(page);
+  const row = page.locator("#agents button.agent", { hasText: CLAUDE });
+  await row.hover();
+  const add = row.locator(".task-add");
+  await expect(add).toBeVisible(); // shown while hovered
+  await add.click();
+  await page.locator(".row-menu[role=menu] [role=menuitem] .nm", { hasText: /^Codex$/ }).click();
+  await expect.poll(() => asked.map((x) => x.path)).toEqual(["sessions", "tasks"]);
+  const claude = (asked[1].body as { to: string }).to;
+  expect(asked[0].body).toEqual({ gatherer: GATHERER, cwd: "/work/demo", harness: "codex" });
+  expect(asked[1].body).toEqual({ gatherer: GATHERER, do: "add", to: claude, items: ["new-1"] }); // named by what is in it
+});
+
+test("a task's + adds an app to it: in it, opened above its actors, every one of them attached to it", async ({
+  page,
+}) => {
+  await taskHome(page, true);
+  await open(page);
+  const row = taskRow(page);
+  await row.hover();
+  await row.locator(".task-add").click();
+  const menu = page.locator(".row-menu[role=menu]");
+  await expect(menu.locator("[role=menuitem] .nm").first()).toHaveText("Claude Code"); // the agents first, then the apps
+  await menu.locator("[role=menuitem] .nm", { hasText: /^Notes$/ }).click();
+  const pane = page.locator("#top-row > .app-pane[data-app=notes]");
+  await expect(pane).toHaveCount(1);
+  await expect(pane.locator(".app-agents")).toHaveText(/2 agents/);
+  await expect(row.locator(".t-faces .t-app")).toHaveCount(1); // in it: its mark among the task's faces
+  await expect(page.locator("#agents button.agent.app-row")).toHaveCount(0); // not a row of its own
+  await expect(row).toHaveAttribute("aria-current", "true"); // the task's: the app, selected
+});
+
+test("a task opened again is as it was left: an actor's pane closed in it stays closed", async ({ page }) => {
+  await taskHome(page, true);
+  await open(page);
+  const row = page.locator("#agents button.agent.task");
+  const panes = page.locator("#panes > .pane");
+  await page.locator("#agents").hover({ position: { x: 5, y: 5 } });
+  await row.click(); // at first: both, side by side
+  await expect(panes).toHaveCount(2);
+  await panes.nth(1).frameLocator("iframe").locator("#pane-close").click(); // one of them closed
+  await expect(panes).toHaveCount(1);
+  await row.click(); // the task shown already: as it is
+  await expect(panes).toHaveCount(1);
+});
+
+test("a task opened in the list shows its actors, to save or close, and its apps, each closed from there", async ({
+  page,
+}) => {
+  await taskHome(page, true);
+  await open(page);
+  const row = taskRow(page);
+  await addNotes(page, row);
+  await expect(page.locator("#top-row > .app-pane[data-app=notes]")).toHaveCount(1);
+  await expect(row.locator(".t-faces .t-app")).toHaveCount(1); // the app's mark among its faces
+  await row.locator(".t-caret").click();
+  await expect(row.locator(".t-caret")).toHaveAttribute("aria-expanded", "true");
+  const kids = page.locator("#agents .t-kids");
+  await expect(kids.locator("button.agent")).toHaveCount(2); // its actors, each its own row
+  await expect(kids.locator("button.agent .save-btn")).toHaveCount(2);
+  for (const r of await kids.locator("button.agent").all()) await expect(r.locator(".a-face .t-app")).toHaveCount(0); // its face alone
+  const app = kids.locator(".t-app-line", { hasText: "Notes" });
+  await expect(app).toHaveCount(1);
+  await expect(app).toHaveAttribute("aria-current", "true"); // its panel above the panes: marked
+  await app.hover();
+  await app.locator(".t-app-close").click(); // closed: its panel gone, and its line
+  await expect(page.locator("#top-row > .app-pane[data-app=notes]")).toHaveCount(0);
+  await expect(app).toHaveCount(0);
+  await expect(row.locator(".t-faces .t-app")).toHaveCount(0); // out of the task
+});
+
+test("an app's panel closed in a task stays closed when the task is opened again", async ({ page }) => {
+  await taskHome(page, false); // each actor a task of its own
+  await open(page);
+  const claude = page.locator("#agents button.agent", { hasText: CLAUDE });
+  await claude.click();
+  await addNotes(page, claude); // Claude and Notes: one task, its row Claude's
+  const notes = page.locator("#top-row > .app-pane[data-app=notes]");
+  await expect(notes).toHaveCount(1);
+  await expect(taskRow(page)).toHaveCount(1);
+  await page.locator("#agents button.agent", { hasText: CODEX }).click(); // another task: Claude's Notes goes with its own
+  await expect(notes).toHaveCount(0);
+  await claude.click(); // back: as it was left, Notes with it
+  await expect(notes).toHaveCount(1);
+  await notes.locator(".app-close").click(); // closed in it
+  await page.locator("#agents button.agent", { hasText: CODEX }).click();
+  await claude.click(); // back again: as it was left, Notes closed
+  await expect(page.locator("#agents button.agent[aria-current=true]", { hasText: CLAUDE })).toHaveCount(1);
+  await page.waitForTimeout(1500); // what the task opens comes after a read of its apps: none came
+  await expect(notes).toHaveCount(0);
+});
+
+test("in the folded rail, a task is one tile: its actors' faces grouped in the room of one avatar", async ({
+  page,
+}) => {
+  await taskHome(page, true);
+  await open(page);
+  await page.locator("#agents .lb-fold").click();
+  const rail = page.locator("#rail");
+  const tile = rail.locator(".r-task");
+  await expect(tile).toHaveCount(1);
+  await expect(tile.locator(".r-group.n2 > .logo")).toHaveCount(2);
+  await expect(rail.locator(".r-actor:not(.r-task)")).toHaveCount(0); // its actors in it, not tiles of their own
+  const [group, face] = [
+    await tile.locator(".r-group").boundingBox(),
+    await tile.locator(".r-group > .logo").first().boundingBox(),
+  ];
+  expect(Math.round(group!.width)).toBe(30); // the room of one avatar
+  expect(face!.width).toBeLessThan(group!.width);
+  await tile.click(); // opened: both side by side
+  await expect(page.locator("#panes > .pane")).toHaveCount(2);
+});
+
+test("an app added to an actor on its own makes a task of the two: its row opens to them, its rail tile has both", async ({
+  page,
+}) => {
+  await taskHome(page, false);
+  await open(page);
+  const claude = page.locator("#agents button.agent:not(.task)", { hasText: CLAUDE });
+  await claude.click();
+  await expect(claude.locator(".t-caret")).toHaveCount(0); // on its own: nothing to open it to
+  await addNotes(page, claude);
+  const notes = page.locator("#top-row > .app-pane[data-app=notes]");
+  await expect(notes).toHaveCount(1);
+  const row = taskRow(page);
+  await expect(row).toHaveCount(1);
+  await expect(row.locator(".name")).toHaveText(CLAUDE); // named by its actor
+  await expect(row.locator(".t-faces .t-face")).toHaveCount(1);
+  await expect(row.locator(".t-faces .t-app")).toHaveCount(1);
+  await row.locator(".t-caret").click(); // opened: Claude, and Notes a line of its own
+  const line = page.locator("#agents .t-kids .t-app-line", { hasText: "Notes" });
+  await expect(page.locator("#agents .t-kids button.agent", { hasText: CLAUDE })).toHaveCount(1);
+  await expect(line).toHaveAttribute("aria-current", "true");
+  await notes.locator(".app-close").click(); // its panel closed: the app still in it, the line not marked
+  await expect(line).toHaveAttribute("aria-current", "false");
+  await line.locator(".t-app-open").click(); // selected: its panel back
+  await expect(notes).toHaveCount(1);
+  await expect(line).toHaveAttribute("aria-current", "true");
+
+  await page.locator("#agents .lb-fold").click(); // in the rail: one tile, Claude's face and the app's mark beside it
+  const tile = page.locator("#rail .r-task");
+  await expect(tile).toHaveCount(1);
+  await expect(tile.locator(".r-apps .t-app")).toHaveCount(1);
+  const [face, mark] = [
+    await tile.locator(".r-pic > .logo").boundingBox(),
+    await tile.locator(".r-apps .t-app").boundingBox(),
+  ];
+  expect(mark!.width).toBeLessThan(face!.width / 2);
+  expect(mark!.x + mark!.width).toBeGreaterThan(face!.x + face!.width); // outside it, at its right
+});
+
+test("a task's card lists its apps: one selected by a click, taken out by its ×, a row of its own then", async ({
+  page,
+}) => {
+  await taskHome(page, true);
+  await open(page);
+  const row = taskRow(page);
+  await addNotes(page, row);
+  const notes = page.locator("#top-row > .app-pane[data-app=notes]");
+  await expect(notes).toHaveCount(1);
+  await notes.locator(".app-close").click();
+  await expect(notes).toHaveCount(0);
+  await page.mouse.move(0, 0);
+  await row.hover();
+  const card = page.locator("#actor-card.live");
+  const app = card.locator(".c-app-row", { hasText: "Notes" });
+  await expect(app).toHaveCount(1);
+  await expect(card.locator(".c-sub")).toHaveText(/2 actors, 1 app/);
+  await app.locator(".c-row").click(); // selected: its panel back
+  await expect(notes).toHaveCount(1);
+  await page.mouse.move(0, 0);
+  await row.hover();
+  await card.locator(".c-app-row", { hasText: "Notes" }).locator(".take-out").click(); // out of the task: gone from the card
+  await expect(card.locator(".c-app-row")).toHaveCount(0);
+  await expect(page.locator("#agents button.agent.app-row", { hasText: "Notes" })).toHaveCount(1); // an app of its own
+  await expect(row.locator(".t-faces .t-app")).toHaveCount(0);
+});
+
+// the gatherer's apps as `instances` (Notes, each {id, title}), the host's own left out -- as they are listed to the page
+async function fakeApps(page: Page, instances: { id: string; title: string }[]) {
+  await page.route("**/api/apps?gatherer=*", async (route) => {
+    const got = await (await route.fetch()).json();
+    got.instances = instances.map((i) => ({ ...i, app: "notes", gatherer: GATHERER, folder: null, data: {} }));
+    got.attached = {};
+    await route.fulfill({ json: got });
+  });
+}
+
+test("several apps' marks in a task are stacked over one another, as its faces are", async ({ page }) => {
+  await taskHome(page, false);
+  await fakeApps(page, [
+    { id: "n1", title: "notes 1" },
+    { id: "n2", title: "notes 2" },
+  ]);
+  const home = await (await page.request.get("/api/home")).json();
+  const claude = home.gatherers[0].agents.find((a: Agent) => a.harness === "claude").channel;
+  await page.request.post("/api/tasks", {
+    data: { gatherer: GATHERER, do: "add", to: claude, items: ["app:n1", "app:n2"] },
+  });
+  await open(page);
+  const marks = taskRow(page).locator(".t-faces .t-apps .t-app");
+  await expect(marks).toHaveCount(2);
+  const [a, b] = [(await marks.nth(0).boundingBox())!, (await marks.nth(1).boundingBox())!];
+  expect(b.x).toBeLessThan(a.x + a.width); // over the first, not beside it
+  expect(b.x).toBeGreaterThan(a.x);
+});
+
+test("an app in no task is a row of its own, its face lined up with the actors'; dragged onto an actor, in its task", async ({
+  page,
+}) => {
+  await taskHome(page, false);
+  await fakeApps(page, [{ id: "n1", title: "Shopping list" }]);
+  await open(page);
+  const app = page.locator("#agents button.agent.app-row");
+  await expect(app).toHaveCount(1);
+  await expect(app.locator(".name")).toHaveText("Shopping list");
+  await expect(app.locator(".meta")).toContainText("Notes");
+  const faces = page.locator("#agents button.agent .a-face > .logo");
+  await expect(faces).toHaveCount(3);
+  const xs = await Promise.all([0, 1, 2].map(async (n) => Math.round((await faces.nth(n).boundingBox())!.x)));
+  expect(new Set(xs).size).toBe(1);
+  const asked: Record<string, unknown>[] = [];
+  await page.route("**/api/tasks", async (route) => {
+    asked.push(route.request().postDataJSON());
+    await route.continue();
+  });
+  await app.dragTo(page.locator("#agents button.agent", { hasText: CODEX }));
+  await expect.poll(() => asked.length).toBe(1);
+  expect(asked[0]).toMatchObject({ do: "add", items: ["app:n1"] });
+  await expect(taskRow(page)).toHaveCount(1); // Codex and the app: one task
+  await expect(taskRow(page).locator(".t-faces .t-app")).toHaveCount(1);
+  await expect(app).toHaveCount(0);
+});
+
+test("a task dragged onto a folder goes in it whole: every actor in it filed there", async ({ page }) => {
+  const fid = await newFolder(page, "Trips");
+  try {
+    await taskHome(page, true);
+    await open(page);
+    const line = page.locator("#agents .folder-line", { hasText: "Trips" });
+    await page.locator("#agents button.agent.task").dragTo(line);
+    await expect.poll(async () => Object.values((await treeOf(page)).filed)).toEqual([fid, fid]);
+    await expect(page.locator("#agents .f-kids button.agent.task")).toHaveCount(1); // the task, in it
+  } finally {
+    await noFolders(page);
+  }
+});
+
+test("⌘/Ctrl+click on a task opens it whole beside the one shown: its actor and its apps, nothing closed", async ({
+  page,
+}) => {
+  const beside = process.platform === "darwin" ? "Meta" : "Control";
+  await taskHome(page, false); // each actor a task of its own
+  await open(page);
+  const claude = page.locator("#agents button.agent", { hasText: CLAUDE });
+  const codex = page.locator("#agents button.agent", { hasText: CODEX });
+  const notes = page.locator("#top-row > .app-pane[data-app=notes]");
+  const panes = page.locator("#panes > .pane");
+  await codex.click();
+  await addNotes(page, codex);
+  await expect(notes).toHaveCount(1); // Codex's app, in its task
+  await claude.click(); // another task: Codex's Notes goes with Codex
+  await expect(notes).toHaveCount(0);
+  await expect(panes).toHaveCount(1);
+  await codex.click({ modifiers: [beside] }); // Codex's task beside Claude's: Codex in a pane of its own, its Notes above
+  await expect(panes).toHaveCount(2);
+  await expect(notes).toHaveCount(1);
+  await expect(page.locator("#agents button.agent[aria-current=true]", { hasText: CODEX })).toHaveCount(1);
+  await expect(claude).toHaveAttribute("data-open", "true"); // Claude's still open, beside
+});
+
+test("the actor the page opens on, given an app since, gets it once clicked, and keeps it when left and come back to", async ({
+  page,
+}) => {
+  await taskHome(page, false);
+  await open(page);
+  const shown = page.locator("#agents button.agent[aria-current=true]");
+  await expect(shown).toHaveCount(1); // the one the page opened on: its apps not opened with it
+  const channel = ((await shown.getAttribute("data-key")) || "").split("/").pop();
+  const opened = await page.request.post("/api/apps/open", {
+    data: { app: "notes", gatherer: GATHERER, folder: "/w/opened-on", channel },
+  });
+  expect(opened.ok()).toBe(true); // opened by the actor: in its task (its stream held back: the page not told yet)
+  const notes = page.locator("#top-row > .app-pane[data-app=notes]");
+  await expect(notes).toHaveCount(0);
+  await shown.click(); // laid out now: its app with it
+  await expect(notes).toHaveCount(1);
+  const other = page.locator("#agents button.agent:not(.task)[aria-current=false]").first();
+  await other.click(); // another task: its app goes
+  await expect(notes).toHaveCount(0);
+  await taskRow(page).click(); // back: as it was left, its app with it
+  await expect(notes).toHaveCount(1);
+});
+
+test("an app is selected as an actor is: one thing selected, the panes below left as they are, ⌘ beside", async ({
+  page,
+}) => {
+  const beside = process.platform === "darwin" ? "Meta" : "Control";
+  await taskHome(page, false); // each actor a task of its own
+  await open(page);
+  const claude = page.locator("#agents button.agent", { hasText: CLAUDE });
+  const codex = page.locator("#agents button.agent", { hasText: CODEX });
+  const notes = page.locator("#top-row > .app-pane[data-app=notes]");
+  const panes = page.locator("#panes > .pane");
+  await claude.click();
+  await addNotes(page, claude);
+  await expect(notes).toHaveClass(/focused/); // added: selected
+  const task = taskRow(page),
+    kid = page.locator("#agents .t-kids button.agent", { hasText: CLAUDE });
+  await task.locator(".t-caret").click();
+  await expect(kid).toHaveAttribute("aria-current", "false"); // the actor not, while it is
+  await expect(panes.and(page.locator(".focused"))).toHaveCount(0);
+  await kid.click(); // the actor: selected again, the app not
+  await expect(kid).toHaveAttribute("aria-current", "true");
+  await expect(notes).not.toHaveClass(/focused/);
+  const line = page.locator("#agents .t-kids .t-app-line", { hasText: "Notes" });
+  await expect(line).toHaveAttribute("data-open", "true"); // shown, not selected
+  await line.locator(".t-app-open").click(); // selected: filled, its panel marked, the pane below as it was
+  await expect(line).toHaveAttribute("aria-current", "true");
+  await expect(notes).toHaveClass(/focused/);
+  await expect(panes).toHaveCount(1);
+  await codex.click(); // another task: Claude's Notes goes
+  await expect(notes).toHaveCount(0);
+  await line.locator(".t-app-open").click(); // Claude's app selected from Codex's task: Claude's task entered, it selected
+  await expect(notes).toHaveCount(1);
+  await expect(notes).toHaveClass(/focused/);
+  await expect(kid).toHaveAttribute("data-open", "true"); // Claude below it, shown
+  await codex.click();
+  await expect(notes).toHaveCount(0);
+  await line.locator(".t-app-open").click({ modifiers: [beside] }); // ⌘: beside, no task entered
+  await expect(notes).toHaveCount(1);
+  await expect(notes).toHaveClass(/focused/);
+  await expect(page.locator("#agents button.agent[data-open=true]", { hasText: CODEX })).toHaveCount(1); // Codex still below
+});

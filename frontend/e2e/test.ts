@@ -1,5 +1,7 @@
 // Playwright's `test`, with one check more on every test: the page threw no error while it ran (an error in the page's
-// script would otherwise pass unseen, its view drawn as far as it got).
+// script would otherwise pass unseen, its view drawn as far as it got). And after each, every agent it attached to an
+// app's instance detached again: an actor opened opens the apps it is attached to with it (its task's, 07-panes.js's
+// openTaskApps), so one a test left attached would open above a later test's view. The instances stay.
 import { expect, test as base, type Page, type WebSocketRoute } from "@playwright/test";
 
 export const test = base.extend({
@@ -8,8 +10,27 @@ export const test = base.extend({
     page.on("pageerror", (err) => errors.push(err.message));
     await use(page);
     expect(errors, "errors thrown in the page").toEqual([]);
+    await page.unrouteAll({ behavior: "ignoreErrors" }); // a request a test's route still answers, as it ends: let go
+    await clearApps(page);
   },
 });
+
+/** Every app a test opened closed, and every task it made undone: an app open is a row of the list, and an actor in a
+ * task one of its row's, in the tests after it. */
+async function clearApps(page: Page) {
+  type Listed = { instances: { id: string; gatherer: string }[] };
+  type Home = { gatherers: { name: string }[]; tasks?: Record<string, { tasked: Record<string, number> }> };
+  const home = (await (await page.request.get("/api/home")).json()) as Home;
+  for (const g of home.gatherers) {
+    const got = (await (await page.request.get(`/api/apps?gatherer=${encodeURIComponent(g.name)}`)).json()) as Listed;
+    for (const i of got.instances || [])
+      await page.request.post("/api/apps/close", { data: { gatherer: g.name, instance: i.id } });
+  }
+  const left = ((await (await page.request.get("/api/home")).json()) as Home).tasks || {};
+  for (const [g, t] of Object.entries(left))
+    if (Object.keys(t.tasked).length)
+      await page.request.post("/api/tasks", { data: { gatherer: g, do: "out", items: Object.keys(t.tasked) } });
+}
 export { expect };
 
 /** The page's streams each its own HTTP request, as before they shared a WebSocket (src/core/api/stream.ts): the socket

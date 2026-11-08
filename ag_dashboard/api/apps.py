@@ -30,6 +30,7 @@ import hmac
 import mimetypes
 import os
 import re
+import time
 from typing import Optional
 from urllib.parse import parse_qsl, unquote
 
@@ -42,7 +43,7 @@ import app_kit
 import harness_kit
 from app_kit import AppError, Caller, remote
 
-from .. import app_agents, app_host, desktop, editor, libs, mcp, tool_gateway
+from .. import app_agents, app_host, desktop, editor, libs, mcp, task_links, tasks, tool_gateway
 from .common import (KEEPALIVE_EVENT, Body, Errors, Events, Parts, answer, blocking, event, failure, local_only, named_here, not_found,
                      queue_events)
 
@@ -79,9 +80,14 @@ def _need(body: dict, *keys: str) -> list:
 @router.get("/api/apps", dependencies=[Depends(local_only)])
 def apps_listed(srv: Parts, gatherer: str = "") -> Response:
     """The apps found (each its manifest, its panel's origin), those whose manifest can't be read (`broken`), and --
-    for gatherer G -- its open instances and the agents attached to each."""
+    for gatherer G -- its open instances, the agents attached to each, and its tasks (tasks.py: which an app is in, read
+    with them), with when they were read (`now`, as the home's: the page takes no tasks read before those it has)."""
     try:
-        return answer(_host(srv).listed(gatherer or None))
+        got = _host(srv).listed(gatherer or None)
+        if not gatherer:
+            return answer(got)
+        now = time.time()                                     # (taken before they are read: no later than they are)
+        return answer({**got, "tasks": tasks.of(gatherer), "now": now})
     except AppError as exc:
         return _failed(exc)
 
@@ -89,12 +95,14 @@ def apps_listed(srv: Parts, gatherer: str = "") -> Response:
 @router.post("/api/apps/open")
 def apps_open(srv: Parts, body: Body) -> Response:
     """The app's instance for the gatherer (and folder, for an app with one per folder or checkout): the open one, or
-    a new one. With `channel`, that agent attached to it."""
+    a new one. With `channel`, that agent attached to it -- the app, in no task, put in the agent's (task_links.py's
+    `link`)."""
     try:
         name, gatherer = _need(body, "app", "gatherer")
         h = _host(srv)
         i = h.open(name, gatherer, body.get("folder") or None, body.get("args") or {})
-        if body.get("channel"):
+        if body.get("channel"):                                # its task first: whoever hears of the attaching
+            task_links.link(gatherer, i.id, body["channel"])   # finds it in it
             h.attach(gatherer, i.id, body["channel"])
         return answer(i.to_dict())
     except AppError as exc:
@@ -103,10 +111,11 @@ def apps_open(srv: Parts, body: Body) -> Response:
 
 @router.post("/api/apps/close")
 def apps_close(srv: Parts, body: Body) -> Response:
-    """The instance closed: its agents detached, its backend told."""
+    """The instance closed: its agents detached, its backend told; out of its task."""
     try:
         gatherer, instance = _need(body, "gatherer", "instance")
         _host(srv).close_instance(gatherer, instance)
+        task_links.closed(gatherer, instance)
         return answer({})
     except AppError as exc:
         return _failed(exc)
@@ -114,9 +123,12 @@ def apps_close(srv: Parts, body: Body) -> Response:
 
 @router.post("/api/apps/attach")
 def apps_attach(srv: Parts, body: Body) -> Response:
-    """An agent (its channel) attached to the instance."""
+    """An agent (its channel) attached to the instance by the reader: put in the app's task, so attached to its other
+    apps too (task_links.py's `link`, `move`) -- the app in none, the app put in the agent's."""
     try:
         gatherer, instance, channel = _need(body, "gatherer", "instance", "channel")
+        _host(srv).instance(gatherer, instance)
+        task_links.link(gatherer, instance, channel, move=True)   # its task first, as `apps_open`
         _host(srv).attach(gatherer, instance, channel)
         return answer({})
     except AppError as exc:
@@ -125,10 +137,12 @@ def apps_attach(srv: Parts, body: Body) -> Response:
 
 @router.post("/api/apps/detach")
 def apps_detach(srv: Parts, body: Body) -> Response:
-    """An agent detached from the instance."""
+    """An agent detached from the instance by the reader: in the app's task, taken out of it (task_links.py's
+    `unlink`), so detached from its other apps too."""
     try:
         gatherer, instance, channel = _need(body, "gatherer", "instance", "channel")
-        _host(srv).detach(gatherer, instance, channel)
+        _host(srv).instance(gatherer, instance)
+        task_links.unlink(gatherer, instance, channel)
         return answer({})
     except AppError as exc:
         return _failed(exc)

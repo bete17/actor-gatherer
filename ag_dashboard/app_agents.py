@@ -26,7 +26,7 @@ from typing import Optional, Tuple
 
 from app_kit import AppError, Instance
 
-from . import naming, sessions
+from . import naming, sessions, task_links
 
 NAME_WAIT = 600.0           # how long a new actor's first call is waited for, to name it (its gatherer has it then)
 
@@ -64,6 +64,7 @@ def adopt_all(started: "sessions.Sessions", host) -> None:
         name, key = got
         try:
             host.adopt(name, s["gatherer"], key, s.get("cwd") or None, s["session_id"])
+            task_links.link(s["gatherer"], key, s["session_id"])     # in one task, if its app is in none
         except Exception:  # noqa: BLE001 - one actor's trouble is not the others'
             pass
 
@@ -83,6 +84,7 @@ def start(started: "sessions.Sessions", host, app: str, gatherer: str, cwd: str,
     except sessions.SessionError as exc:
         host.close_instance(gatherer, inst.id)
         raise AppError(str(exc)) from None
+    task_links.link(gatherer, inst.id, s["session_id"])                # the app and its agent: one task
     host.attach(gatherer, inst.id, s["session_id"])
     said = name or m.agent.name.format(app=m.label, folder=os.path.basename(cwd.rstrip("/")) or cwd)
     threading.Thread(target=_name, args=(started, gatherer, s["session_id"], said), name=f"ag-{app}-name",

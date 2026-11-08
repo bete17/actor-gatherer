@@ -94,6 +94,7 @@ class AppHost:
         self.instances: Dict[str, Instance] = {}
         self.attached: Dict[str, Set[str]] = {}                # an instance's id -> its agents' channels
         self.loaded: Set[str] = set()                          # the gatherers whose records were read
+        self.loaded_then: Optional[Callable[[str], None]] = None   # told each gatherer read (task_links.py's on_load)
         self.subs: List[_Sub] = []
         self.asked: Dict[str, dict] = {}                       # a call its panel answers, by its id: {done, result}
         self.page_wait, self.tool_wait = PAGE_WAIT, TOOL_WAIT
@@ -659,6 +660,11 @@ class AppHost:
                 if inst.app in self.apps:                          # an app no longer found: its instances wait for it
                     self.instances.setdefault(i, inst)
                     self.attached.setdefault(i, set()).update(attached.get(i, ()))
+        if self.loaded_then is not None:
+            try:
+                self.loaded_then(gatherer)
+            except Exception:  # noqa: BLE001 - what is told of it is not what reads it
+                pass
 
 
 def _tagged(text: str, app: str) -> str:

@@ -108,3 +108,7 @@ main:has(> .chat.mini) { align-items: flex-end; }
 .ed-grip:hover, .ed-grip.on { background: color-mix(in srgb, var(--s1) 35%, transparent); }
 .ed-close { border: 0; background: none; font-size: 18px; line-height: 1; padding: 2px 6px; color: var(--muted); }
 .ed-close:hover { color: var(--ink); background: var(--wash); }
+/* A task of apps only shown (07-panes.js's appsOnly): its apps' panels take the room, the actors' panes out of sight */
+.work.apps-only > .panes { display: none; }
+.work.apps-only > .top-row { flex: 1 1 0; }
+.work.apps-only > .top-row > .ed-grip { display: none; }

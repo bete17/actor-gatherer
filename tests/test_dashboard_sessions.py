@@ -1578,6 +1578,24 @@ class EndpointTest(SessionsBase):
         self.assertEqual(self.post("/api/saved", {"gatherer": "g", "channel": "c3", "saved": True}, {"Origin": "https://evil.example"})[0], 403)
         self.post("/api/saved", {"gatherer": "g", "channel": "c2", "saved": False})
 
+    def test_actors_and_apps_are_kept_together_as_tasks(self):
+        ask = lambda body: self.post("/api/tasks", body)         # noqa: E731
+        self.assertEqual(json.load(urllib.request.urlopen(self.url + "/api/home", timeout=10))["tasks"], {})
+        code, got = ask({"gatherer": "g", "do": "add", "to": "c1", "channels": ["c2"], "name": "Book the trip"})
+        tid = got["task"]
+        self.assertEqual((code, got["tasks"], got["attached"]),
+                         (200, {"g": {"tasks": [{"id": tid, "name": "Book the trip"}], "tasked": {"c1": tid, "c2": tid}}}, {}))
+        self.assertEqual(json.load(urllib.request.urlopen(self.url + "/api/home", timeout=10))["tasks"], got["tasks"])
+        self.assertEqual(ask({"gatherer": "g", "do": "rename", "id": tid, "to": "Trip"})[1]["tasks"]["g"]["tasks"][0]["name"], "Trip")
+        self.assertEqual(ask({"gatherer": "g", "do": "add", "to": "c1", "channels": "c3"}), (400, {"error": "which actors or apps? `items`, a list"}))
+        code, got = ask({"gatherer": "g", "do": "add", "to": "c1", "items": ["app:b1"]})    # an app: an item as an actor is
+        self.assertEqual((code, got["tasks"]["g"]["tasked"]), (200, {"c1": tid, "c2": tid, "app:b1": tid}))
+        self.assertEqual(ask({"gatherer": "g", "do": "out", "items": ["app:b1"]})[0], 200)
+        self.assertEqual(ask({"gatherer": "g", "do": "join"})[0], 400)
+        self.assertEqual(self.post("/api/tasks", {"gatherer": "g", "do": "out", "channels": ["c1"]}, {"Origin": "https://evil.example"})[0], 403)
+        code, got = ask({"gatherer": "g", "do": "out", "channels": ["c1"]})
+        self.assertEqual((code, got["tasks"], type(got["now"])), (200, {}, float))                       # one left: none
+
     def test_actors_are_kept_in_folders_in_folders(self):
         ask = lambda body: self.post("/api/folders", body)       # noqa: E731
         self.assertEqual(json.load(urllib.request.urlopen(self.url + "/api/home", timeout=10))["folders"], {})

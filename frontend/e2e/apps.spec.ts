@@ -158,9 +158,12 @@ test("an app opened shows the actor it is attached to below it", async ({ page }
   await there.locator(".app-menu-item", { hasText: CODEX }).click(); // Codex attached to it
   await expect(there.locator(".app-agents")).toHaveText(/1 agent/);
   await there.locator(".app-close").click();
-  await raise(); // opened again: its agent shown below, in the pane in focus
+  // opened again: its agent shown below, in the pane in focus -- another task than Claude's, so Claude's Notes, whose
+  // panel asked, goes with that task (07-panes.js's enterTask), its frame gone before the answer
+  await raise().catch(() => null);
   await expect(there).toHaveCount(1);
   await expect(page.locator("#agents button.agent[aria-current=true]", { hasText: CODEX })).toHaveCount(1);
+  await expect(page.locator("#top-row > .app-pane")).toHaveCount(1);
   await there.locator(".app-agents").click();
   await there.locator(".app-menu-item", { hasText: CODEX }).click(); // detached again
   await expect(there.locator(".app-agents")).toHaveText("No agent");
