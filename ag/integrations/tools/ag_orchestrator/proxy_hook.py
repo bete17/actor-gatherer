@@ -27,6 +27,8 @@ background, so the call is not held up for it; `close` waits for what is under w
 """
 
 import asyncio
+import os
+import subprocess
 import time
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
@@ -37,6 +39,38 @@ from .adaptor import CHANNEL
 from .call_ag import HUNG_UP, read_of, report_measured
 from .records import call_failed, derived, model_call, record, recap, reply_end, reply_parts, name
 from .session_files import SessionFiles
+
+
+PROC = "/proc"
+
+
+def process_ended(pid) -> Optional[bool]:
+    """Whether process `pid` has ended: True when it is gone or a zombie (exited, its parent yet to reap it -- as a
+    harness is for a moment after its terminal closes), False while it runs, None when it cannot be told. From /proc
+    where there is one, else from `ps` (macOS): a call to make when the process's end matters, not on every request."""
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return None
+    if pid <= 0:
+        return None
+    if os.path.isdir(PROC):
+        try:
+            with open(os.path.join(PROC, str(pid), "stat"), encoding="ascii", errors="replace") as fh:
+                fields = fh.read().rsplit(")", 1)[-1].split()      # after the command, which may hold spaces and ')'
+        except FileNotFoundError:
+            return True
+        except OSError:
+            return None
+        return bool(fields) and fields[0] in ("Z", "X")
+    try:
+        done = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    state = done.stdout.strip()
+    if not state:
+        return True if done.returncode == 1 else None              # ps: 1 when there is no such process
+    return state.startswith("Z")
 
 
 class ProxyHook:
@@ -274,6 +308,20 @@ class ProxyHook:
         reached = getattr(request, "answer_reached", None) if status == HUNG_UP else None   # Esc: before its words, or after
         withdrawn = bool(withdrawn) if status == HUNG_UP else None
         await self.recorded(gatherer, channel, [call_failed(read_of(request), status, error, reached, withdrawn)])
+
+    @staticmethod
+    async def harness_ended(request) -> bool:
+        """Whether the harness's process that made the call has ended (`process_ended`) -- its run, the URL's /r/,
+        where its launcher names it by its process id (ag execs the harness, so it is the harness's), else the process
+        the connection came from (Linux): a call it dropped as its terminal closed, which a harness does once its
+        process is gone, not one it gave up (Esc). False where that cannot be told."""
+        run = getattr(request, "run", None)
+        process = getattr(request, "process", None)
+        pid = int(run) if isinstance(run, str) and run.isdigit() else (
+            process.get("pid") if isinstance(process, dict) else None)
+        if not pid:
+            return False
+        return bool(await asyncio.to_thread(process_ended, pid))
 
     async def before_end(self, request, status: int, answer: dict) -> None:
         """The hook server's report, once the answer to one of the session's own calls is back whole and before the

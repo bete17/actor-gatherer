@@ -264,7 +264,8 @@ every call (`model_call`), a reply's parts as they stream and its end (`reply_pa
 (`call_failed`), a side call's recap or title (`side_answered`), and the files a call touched (`before_end`).
 Each subclass keeps its own flow: Claude Code's continuity of ids, claims, counting, suggestions and compaction;
 Codex's runs, side calls and compaction. On a hang-up (499) the Claude hook also withdraws what the call stored
-(#133). From each call of a session on, it follows the session's own record (`following`, the watcher above).
+(#133) -- while Claude Code still runs (an Esc), not once its process has ended (its terminal closed: it keeps the
+message, `harness_ended`). From each call of a session on, it follows the session's own record (`following`, the watcher above).
 
 ## The old tables (step 6)
 
