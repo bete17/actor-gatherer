@@ -1,0 +1,1757 @@
+{
+ "_reads": [
+  {
+   "_at": 1794097678.804391,
+   "answered_at": null,
+   "basis": null,
+   "context_id": 2,
+   "error": null,
+   "error_status": null,
+   "est_tokens": 185,
+   "limit_tokens": 967000,
+   "manager": "proactive_context_manager",
+   "p_answer_id": null,
+   "p_channel": "9b46101d-d393-46a2-8233-7d50f6d02652",
+   "p_cwd": "/tmp/claude-501/eq/cwd",
+   "p_kind": null,
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "pid": null,
+   "pid_started": null,
+   "preamble_json": "[3, 2]",
+   "read_at": "2026-11-08T00:27:58.804391+00:00",
+   "read_id": 3,
+   "real_tokens": null,
+   "row_id": 38,
+   "run": null,
+   "sent_tokens": 41094
+  },
+  {
+   "_at": 1794097681.213638,
+   "answered_at": null,
+   "basis": null,
+   "context_id": 2,
+   "error": null,
+   "error_status": null,
+   "est_tokens": 9671,
+   "limit_tokens": 967000,
+   "manager": "proactive_context_manager",
+   "p_answer_id": null,
+   "p_channel": "9b46101d-d393-46a2-8233-7d50f6d02652",
+   "p_cwd": "/tmp/claude-501/eq/cwd",
+   "p_kind": null,
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "pid": null,
+   "pid_started": null,
+   "preamble_json": "[3, 2]",
+   "read_at": "2026-11-08T00:28:01.213638+00:00",
+   "read_id": 4,
+   "real_tokens": 61417,
+   "row_id": 45,
+   "run": null,
+   "sent_tokens": 50580
+  }
+ ],
+ "actions": [
+  {
+   "at": 1794097671.708,
+   "what": "signal STOP"
+  },
+  {
+   "at": 1794097671.711,
+   "what": "typed"
+  },
+  {
+   "at": 1794097671.711,
+   "what": "key Enter"
+  },
+  {
+   "at": 1794097674.718,
+   "what": "typed"
+  },
+  {
+   "at": 1794097674.718,
+   "what": "key Enter"
+  },
+  {
+   "at": 1794097677.225,
+   "what": "key Escape"
+  },
+  {
+   "at": 1794097678.729,
+   "what": "signal CONT"
+  }
+ ],
+ "channel": "9b46101d-d393-46a2-8233-7d50f6d02652",
+ "event_type_properties": [
+  {
+   "event_type_id": 1,
+   "identifies": 1,
+   "name": "channel",
+   "required": 0
+  },
+  {
+   "event_type_id": 1,
+   "identifies": 0,
+   "name": "cwd",
+   "required": 0
+  },
+  {
+   "event_type_id": 2,
+   "identifies": 1,
+   "name": "channel",
+   "required": 0
+  },
+  {
+   "event_type_id": 2,
+   "identifies": 0,
+   "name": "cwd",
+   "required": 0
+  },
+  {
+   "event_type_id": 3,
+   "identifies": 1,
+   "name": "channel",
+   "required": 0
+  },
+  {
+   "event_type_id": 3,
+   "identifies": 0,
+   "name": "cwd",
+   "required": 0
+  },
+  {
+   "event_type_id": 4,
+   "identifies": 1,
+   "name": "channel",
+   "required": 0
+  },
+  {
+   "event_type_id": 4,
+   "identifies": 0,
+   "name": "cwd",
+   "required": 0
+  },
+  {
+   "event_type_id": 5,
+   "identifies": 1,
+   "name": "channel",
+   "required": 0
+  },
+  {
+   "event_type_id": 5,
+   "identifies": 0,
+   "name": "cwd",
+   "required": 0
+  },
+  {
+   "event_type_id": 6,
+   "identifies": 1,
+   "name": "channel",
+   "required": 0
+  },
+  {
+   "event_type_id": 6,
+   "identifies": 0,
+   "name": "poller",
+   "required": 0
+  },
+  {
+   "event_type_id": 6,
+   "identifies": 0,
+   "name": "cwd",
+   "required": 0
+  },
+  {
+   "event_type_id": 7,
+   "identifies": 1,
+   "name": "channel",
+   "required": 0
+  },
+  {
+   "event_type_id": 7,
+   "identifies": 0,
+   "name": "poller",
+   "required": 0
+  },
+  {
+   "event_type_id": 8,
+   "identifies": 1,
+   "name": "channel",
+   "required": 0
+  },
+  {
+   "event_type_id": 8,
+   "identifies": 0,
+   "name": "cwd",
+   "required": 0
+  },
+  {
+   "event_type_id": 9,
+   "identifies": 0,
+   "name": "channel",
+   "required": 0
+  },
+  {
+   "event_type_id": 10,
+   "identifies": 0,
+   "name": "channel",
+   "required": 0
+  },
+  {
+   "event_type_id": 5,
+   "identifies": 0,
+   "name": "kind",
+   "required": 0
+  },
+  {
+   "event_type_id": 1,
+   "identifies": 0,
+   "name": "kind",
+   "required": 0
+  },
+  {
+   "event_type_id": 1,
+   "identifies": 0,
+   "name": "words",
+   "required": 0
+  },
+  {
+   "event_type_id": 11,
+   "identifies": 0,
+   "name": "channel",
+   "required": 0
+  },
+  {
+   "event_type_id": 11,
+   "identifies": 0,
+   "name": "read_id",
+   "required": 0
+  },
+  {
+   "event_type_id": 12,
+   "identifies": 0,
+   "name": "channel",
+   "required": 0
+  },
+  {
+   "event_type_id": 13,
+   "identifies": 0,
+   "name": "channel",
+   "required": 0
+  },
+  {
+   "event_type_id": 14,
+   "identifies": 0,
+   "name": "channel",
+   "required": 0
+  },
+  {
+   "event_type_id": 15,
+   "identifies": 0,
+   "name": "channel",
+   "required": 0
+  },
+  {
+   "event_type_id": 15,
+   "identifies": 0,
+   "name": "answer_id",
+   "required": 0
+  },
+  {
+   "event_type_id": 16,
+   "identifies": 0,
+   "name": "channel",
+   "required": 0
+  },
+  {
+   "event_type_id": 16,
+   "identifies": 0,
+   "name": "answer_id",
+   "required": 0
+  },
+  {
+   "event_type_id": 16,
+   "identifies": 0,
+   "name": "read_id",
+   "required": 0
+  },
+  {
+   "event_type_id": 17,
+   "identifies": 0,
+   "name": "channel",
+   "required": 0
+  },
+  {
+   "event_type_id": 18,
+   "identifies": 0,
+   "name": "channel",
+   "required": 0
+  },
+  {
+   "event_type_id": 19,
+   "identifies": 0,
+   "name": "channel",
+   "required": 0
+  }
+ ],
+ "event_types": [
+  {
+   "created_at": "2026-11-08T00:27:15.615619+00:00",
+   "event_type_id": 1,
+   "name": "user_message"
+  },
+  {
+   "created_at": "2026-11-08T00:27:15.616713+00:00",
+   "event_type_id": 2,
+   "name": "agent_message"
+  },
+  {
+   "created_at": "2026-11-08T00:27:15.616855+00:00",
+   "event_type_id": 3,
+   "name": "tool_call"
+  },
+  {
+   "created_at": "2026-11-08T00:27:15.616951+00:00",
+   "event_type_id": 4,
+   "name": "tool_output"
+  },
+  {
+   "created_at": "2026-11-08T00:27:15.617042+00:00",
+   "event_type_id": 5,
+   "name": "context"
+  },
+  {
+   "created_at": "2026-11-08T00:27:15.618655+00:00",
+   "event_type_id": 6,
+   "name": "environment_update"
+  },
+  {
+   "created_at": "2026-11-08T00:27:15.619064+00:00",
+   "event_type_id": 7,
+   "name": "context_stream"
+  },
+  {
+   "created_at": "2026-11-08T00:27:15.619294+00:00",
+   "event_type_id": 8,
+   "name": "agent_reasoning"
+  },
+  {
+   "created_at": "2026-11-08T00:27:15.626078+00:00",
+   "event_type_id": 9,
+   "name": "model_call"
+  },
+  {
+   "created_at": "2026-11-08T00:27:25.982131+00:00",
+   "event_type_id": 10,
+   "name": "chat_sent"
+  },
+  {
+   "created_at": "2026-11-08T00:27:26.262021+00:00",
+   "event_type_id": 11,
+   "name": "call_failed"
+  },
+  {
+   "created_at": "2026-11-08T00:27:26.581194+00:00",
+   "event_type_id": 12,
+   "name": "session_file"
+  },
+  {
+   "created_at": "2026-11-08T00:27:26.586653+00:00",
+   "event_type_id": 13,
+   "name": "message_sent"
+  },
+  {
+   "created_at": "2026-11-08T00:27:26.840906+00:00",
+   "event_type_id": 14,
+   "name": "name"
+  },
+  {
+   "created_at": "2026-11-08T00:27:28.659863+00:00",
+   "event_type_id": 15,
+   "name": "reply_part"
+  },
+  {
+   "created_at": "2026-11-08T00:27:28.673377+00:00",
+   "event_type_id": 16,
+   "name": "reply_end"
+  },
+  {
+   "created_at": "2026-11-08T00:27:57.334424+00:00",
+   "event_type_id": 17,
+   "name": "terminal_input"
+  },
+  {
+   "created_at": "2026-11-08T00:27:58.751405+00:00",
+   "event_type_id": 18,
+   "name": "message_queued"
+  },
+  {
+   "created_at": "2026-11-08T00:27:58.751528+00:00",
+   "event_type_id": 19,
+   "name": "turn_stopped"
+  }
+ ],
+ "events": [
+  {
+   "_at": 1794097659.531465,
+   "counted": null,
+   "event_id": "call:af87916a3e6e4524a6905e25fda02261",
+   "event_type_id": 9,
+   "inserted_at": "2026-11-08T00:27:39.531465+00:00",
+   "p_answer_id": null,
+   "p_channel": "9b46101d-d393-46a2-8233-7d50f6d02652",
+   "p_cwd": null,
+   "p_kind": null,
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "payload_json": "{\"derives\": true, \"harness\": \"claude\", \"kind\": \"other\", \"version\": \"2.1.319\"}",
+   "row_id": 19,
+   "text": null,
+   "tokens": 30
+  },
+  {
+   "_at": 1794097671.952478,
+   "counted": null,
+   "event_id": "chat_sent:f2d484d936bd4aa79f5beae9cfb7f985",
+   "event_type_id": 10,
+   "inserted_at": "2026-11-08T00:27:51.952478+00:00",
+   "p_answer_id": null,
+   "p_channel": "9b46101d-d393-46a2-8233-7d50f6d02652",
+   "p_cwd": null,
+   "p_kind": null,
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "payload_json": "{\"at\": 1794097671.7161589, \"cid\": \"page:572dabd8-6c14-43c8-bf0d-15bcd0341424\", \"text\": \"Write a haiku about autumn leaves.\"}",
+   "row_id": 20,
+   "text": null,
+   "tokens": 56
+  },
+  {
+   "_at": 1794097674.931331,
+   "counted": null,
+   "event_id": "chat_sent:48f82fdb86634b63b71a5212c8f350dd",
+   "event_type_id": 10,
+   "inserted_at": "2026-11-08T00:27:54.931331+00:00",
+   "p_answer_id": null,
+   "p_channel": "9b46101d-d393-46a2-8233-7d50f6d02652",
+   "p_cwd": null,
+   "p_kind": null,
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "payload_json": "{\"at\": 1794097674.723642, \"cid\": \"page:24c22674-5bf7-46c3-b9e4-fd7818495726\", \"text\": \"Make it rhyme.\"}",
+   "row_id": 21,
+   "text": null,
+   "tokens": 50
+  },
+  {
+   "_at": 1794097677.504221,
+   "counted": null,
+   "event_id": "terminal_input:78e15ce642384dc795baa2c80c40410b",
+   "event_type_id": 17,
+   "inserted_at": "2026-11-08T00:27:57.504221+00:00",
+   "p_answer_id": null,
+   "p_channel": "9b46101d-d393-46a2-8233-7d50f6d02652",
+   "p_cwd": null,
+   "p_kind": null,
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "payload_json": "{\"at\": 1794097677.227275}",
+   "row_id": 22,
+   "text": null,
+   "tokens": 12
+  },
+  {
+   "_at": 1794097678.739279,
+   "counted": null,
+   "event_id": "call:4e7d6e000a974e3c8d37f668b4a796cf",
+   "event_type_id": 9,
+   "inserted_at": "2026-11-08T00:27:58.739279+00:00",
+   "p_answer_id": null,
+   "p_channel": "9b46101d-d393-46a2-8233-7d50f6d02652",
+   "p_cwd": null,
+   "p_kind": null,
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "payload_json": "{\"derives\": true, \"harness\": \"claude\", \"kind\": \"other\", \"version\": \"2.1.319\"}",
+   "row_id": 23,
+   "text": null,
+   "tokens": 30
+  },
+  {
+   "_at": 1794097678.745384,
+   "counted": null,
+   "event_id": "file:/home/user/.claude/projects/-private-tmp-claude-501-eq-cwd/9b46101d-d393-46a2-8233-7d50f6d02652.jsonl",
+   "event_type_id": 12,
+   "inserted_at": "2026-11-08T00:27:58.745384+00:00",
+   "p_answer_id": null,
+   "p_channel": "9b46101d-d393-46a2-8233-7d50f6d02652",
+   "p_cwd": null,
+   "p_kind": null,
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "payload_json": "{\"harness\": \"claude\", \"path\": \"/home/user/.claude/projects/-private-tmp-claude-501-eq-cwd/9b46101d-d393-46a2-8233-7d50f6d02652.jsonl\"}",
+   "row_id": 24,
+   "text": null,
+   "tokens": 59
+  },
+  {
+   "_at": 1794097678.747316,
+   "counted": null,
+   "event_id": "call:ba4101a807b1469a9172d6c52f811f16",
+   "event_type_id": 9,
+   "inserted_at": "2026-11-08T00:27:58.747316+00:00",
+   "p_answer_id": null,
+   "p_channel": "9b46101d-d393-46a2-8233-7d50f6d02652",
+   "p_cwd": null,
+   "p_kind": null,
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "payload_json": "{\"derives\": true, \"harness\": \"claude\", \"kind\": \"turn\", \"version\": \"2.1.319\"}",
+   "row_id": 25,
+   "text": null,
+   "tokens": 30
+  },
+  {
+   "_at": 1794097678.751838,
+   "counted": null,
+   "event_id": "message_sent:9b46101d-d393-46a2-8233-7d50f6d02652.jsonl:691.061a2b51",
+   "event_type_id": 13,
+   "inserted_at": "2026-11-08T00:27:58.751838+00:00",
+   "p_answer_id": null,
+   "p_channel": "9b46101d-d393-46a2-8233-7d50f6d02652",
+   "p_cwd": null,
+   "p_kind": null,
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "payload_json": "{\"at\": 1794097671.884, \"how\": \"prompt\", \"joins\": false, \"queued\": null, \"text\": \"Write a haiku about autumn leaves.\", \"words\": \"Write a haiku about autumn leaves.\", \"written\": 1794097671.884}",
+   "row_id": 26,
+   "text": null,
+   "tokens": 62
+  },
+  {
+   "_at": 1794097678.752001,
+   "counted": null,
+   "event_id": "name:9b46101d-d393-46a2-8233-7d50f6d02652.jsonl:236788.dd89af1a",
+   "event_type_id": 14,
+   "inserted_at": "2026-11-08T00:27:58.752001+00:00",
+   "p_answer_id": null,
+   "p_channel": "9b46101d-d393-46a2-8233-7d50f6d02652",
+   "p_cwd": null,
+   "p_kind": null,
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "payload_json": "{\"at\": null, \"by\": \"claude\", \"text\": \"Autumn leaves haiku\"}",
+   "row_id": 27,
+   "text": null,
+   "tokens": 22
+  },
+  {
+   "_at": 1794097678.752109,
+   "counted": null,
+   "event_id": "message_queued:9b46101d-d393-46a2-8233-7d50f6d02652.jsonl:236891.5f6f3f2b",
+   "event_type_id": 18,
+   "inserted_at": "2026-11-08T00:27:58.752109+00:00",
+   "p_answer_id": null,
+   "p_channel": "9b46101d-d393-46a2-8233-7d50f6d02652",
+   "p_cwd": null,
+   "p_kind": null,
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "payload_json": "{\"at\": 1794097674.878, \"joins_after\": 1794097675.878, \"queued\": \"236891.5f6f3f2b\", \"text\": \"Make it rhyme.\", \"words\": \"Make it rhyme.\"}",
+   "row_id": 28,
+   "text": null,
+   "tokens": 56
+  },
+  {
+   "_at": 1794097678.752184,
+   "counted": null,
+   "event_id": "message_sent:9b46101d-d393-46a2-8233-7d50f6d02652.jsonl:237057.8945fb2d",
+   "event_type_id": 13,
+   "inserted_at": "2026-11-08T00:27:58.752184+00:00",
+   "p_answer_id": null,
+   "p_channel": "9b46101d-d393-46a2-8233-7d50f6d02652",
+   "p_cwd": null,
+   "p_kind": null,
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "payload_json": "{\"at\": 1794097677.292, \"how\": \"next\", \"joins\": true, \"queued\": \"236891.5f6f3f2b\", \"text\": \"Make it rhyme.\", \"words\": \"Make it rhyme.\", \"written\": 1794097674.878}",
+   "row_id": 29,
+   "text": null,
+   "tokens": 65
+  },
+  {
+   "_at": 1794097678.752313,
+   "counted": null,
+   "event_id": "turn_stopped:9b46101d-d393-46a2-8233-7d50f6d02652.jsonl:237196.e39f0e62",
+   "event_type_id": 19,
+   "inserted_at": "2026-11-08T00:27:58.752313+00:00",
+   "p_answer_id": null,
+   "p_channel": "9b46101d-d393-46a2-8233-7d50f6d02652",
+   "p_cwd": null,
+   "p_kind": null,
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "payload_json": "{\"at\": 1794097677.283, \"how\": \"interrupted\"}",
+   "row_id": 30,
+   "text": null,
+   "tokens": 18
+  },
+  {
+   "_at": 1794097678.755402,
+   "counted": null,
+   "event_id": "call:20f3a505891b4549adf0212ed316ab3a",
+   "event_type_id": 9,
+   "inserted_at": "2026-11-08T00:27:58.755402+00:00",
+   "p_answer_id": null,
+   "p_channel": "9b46101d-d393-46a2-8233-7d50f6d02652",
+   "p_cwd": null,
+   "p_kind": null,
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "payload_json": "{\"derives\": true, \"harness\": \"claude\", \"kind\": \"turn\", \"version\": \"2.1.319\"}",
+   "row_id": 31,
+   "text": null,
+   "tokens": 30
+  },
+  {
+   "_at": 1794097678.758332,
+   "counted": 1,
+   "event_id": "sha256:83ccbcb65cf30c5888d19b79a04973a6c4edc1fe1b02b836c16ab225a97037a7",
+   "event_type_id": 5,
+   "inserted_at": "2026-11-08T00:27:58.758332+00:00",
+   "p_answer_id": null,
+   "p_channel": "9b46101d-d393-46a2-8233-7d50f6d02652",
+   "p_cwd": "/tmp/claude-501/eq/cwd",
+   "p_kind": "environment",
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "payload_json": "{\"trimmed\": 797}",
+   "row_id": 32,
+   "text": "[797 characters]",
+   "tokens": 219
+  },
+  {
+   "_at": 1794097678.75861,
+   "counted": 1,
+   "event_id": "sha256:ceef01890e415f7d023faa8cd64f9e5d70419f79ec8afaf18d9ab445cc56467d",
+   "event_type_id": 5,
+   "inserted_at": "2026-11-08T00:27:58.758610+00:00",
+   "p_answer_id": null,
+   "p_channel": "9b46101d-d393-46a2-8233-7d50f6d02652",
+   "p_cwd": "/tmp/claude-501/eq/cwd",
+   "p_kind": "environment",
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "payload_json": "{\"trimmed\": 647}",
+   "row_id": 33,
+   "text": "[647 characters]",
+   "tokens": 210
+  },
+  {
+   "_at": 1794097678.767967,
+   "counted": 1,
+   "event_id": "sha256:18f328441fb4f67d695f66edc7eee051e196bd97803748a0b668e55323ecd5fe",
+   "event_type_id": 5,
+   "inserted_at": "2026-11-08T00:27:58.767967+00:00",
+   "p_answer_id": null,
+   "p_channel": "9b46101d-d393-46a2-8233-7d50f6d02652",
+   "p_cwd": "/tmp/claude-501/eq/cwd",
+   "p_kind": "environment",
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "payload_json": "{\"trimmed\": 38067}",
+   "row_id": 34,
+   "text": "[38067 characters]",
+   "tokens": 13939
+  },
+  {
+   "_at": 1794097678.76941,
+   "counted": 1,
+   "event_id": "sha256:e997b7078af251a67ae2faecc36d4735222905e1cd2c5d24109dbdffed7a8169",
+   "event_type_id": 5,
+   "inserted_at": "2026-11-08T00:27:58.769410+00:00",
+   "p_answer_id": null,
+   "p_channel": "9b46101d-d393-46a2-8233-7d50f6d02652",
+   "p_cwd": "/tmp/claude-501/eq/cwd",
+   "p_kind": "tool_notice",
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "payload_json": "{\"trimmed\": 534}",
+   "row_id": 35,
+   "text": "[534 characters]",
+   "tokens": 184
+  },
+  {
+   "_at": 1794097678.769542,
+   "counted": 1,
+   "event_id": "sha256:c88efe472acc9968105dccae9303fdfef92c7da3a0d02610d8731da224a11a1c",
+   "event_type_id": 5,
+   "inserted_at": "2026-11-08T00:27:58.769542+00:00",
+   "p_answer_id": null,
+   "p_channel": "9b46101d-d393-46a2-8233-7d50f6d02652",
+   "p_cwd": "/tmp/claude-501/eq/cwd",
+   "p_kind": "tool_notice",
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "payload_json": "{\"trimmed\": 620}",
+   "row_id": 36,
+   "text": "[620 characters]",
+   "tokens": 206
+  },
+  {
+   "_at": 1794097678.769674,
+   "counted": 1,
+   "event_id": "sha256:f21fa5901c27748f4c913d81ac65e7a4f0b8ff0af67205e2fb6517c9b548b909",
+   "event_type_id": 5,
+   "inserted_at": "2026-11-08T00:27:58.769674+00:00",
+   "p_answer_id": null,
+   "p_channel": "9b46101d-d393-46a2-8233-7d50f6d02652",
+   "p_cwd": "/tmp/claude-501/eq/cwd",
+   "p_kind": "tool_notice",
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "payload_json": "{\"trimmed\": 882}",
+   "row_id": 37,
+   "text": "[882 characters]",
+   "tokens": 379
+  },
+  {
+   "_at": 1794097678.769738,
+   "counted": 1,
+   "event_id": "sha256:08668f01b9ee2c318c6b523eec8489f1e2bb5e83dcf0d1328e88c94a4ac1849b",
+   "event_type_id": 1,
+   "inserted_at": "2026-11-08T00:27:58.769738+00:00",
+   "p_answer_id": null,
+   "p_channel": "9b46101d-d393-46a2-8233-7d50f6d02652",
+   "p_cwd": "/tmp/claude-501/eq/cwd",
+   "p_kind": "user",
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": "Write a haiku about autumn leaves.",
+   "payload_json": "{\"content\": [{\"text\": \"Write a haiku about autumn leaves.\", \"type\": \"text\"}], \"role\": \"user\"}",
+   "row_id": 38,
+   "text": "Write a haiku about autumn leaves.",
+   "tokens": 16
+  },
+  {
+   "_at": 1794097678.813506,
+   "counted": 1,
+   "event_id": "sha256:15b01a01e05087b3ce8b9339ff160e9eb51176cbd23c95e570c0eb2b58ffc87d",
+   "event_type_id": 1,
+   "inserted_at": "2026-11-08T00:27:58.813506+00:00",
+   "p_answer_id": null,
+   "p_channel": "9b46101d-d393-46a2-8233-7d50f6d02652",
+   "p_cwd": "/tmp/claude-501/eq/cwd",
+   "p_kind": "user",
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": "Write a haiku about autumn leaves.\n",
+   "payload_json": "{\"content\": [{\"text\": \"Write a haiku about autumn leaves.\\n\", \"type\": \"text\"}], \"role\": \"user\"}",
+   "row_id": 39,
+   "text": "Write a haiku about autumn leaves.\n",
+   "tokens": 15
+  },
+  {
+   "_at": 1794097678.813905,
+   "counted": 1,
+   "event_id": "sha256:f8d28b440d5075e988dee9623c1a48d323f46992c76a091fe7507cdd2eaeb569",
+   "event_type_id": 5,
+   "inserted_at": "2026-11-08T00:27:58.813905+00:00",
+   "p_answer_id": null,
+   "p_channel": "9b46101d-d393-46a2-8233-7d50f6d02652",
+   "p_cwd": "/tmp/claude-501/eq/cwd",
+   "p_kind": "interrupt",
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "payload_json": "{\"trimmed\": 90}",
+   "row_id": 40,
+   "text": "[90 characters]",
+   "tokens": 11
+  },
+  {
+   "_at": 1794097678.816239,
+   "counted": 1,
+   "event_id": "sha256:3643640fad1ecea7fa1b3149289224ca85f766ea6170aace499d780482d8bb8b",
+   "event_type_id": 5,
+   "inserted_at": "2026-11-08T00:27:58.816239+00:00",
+   "p_answer_id": null,
+   "p_channel": "9b46101d-d393-46a2-8233-7d50f6d02652",
+   "p_cwd": "/tmp/claude-501/eq/cwd",
+   "p_kind": "environment",
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "payload_json": "{\"trimmed\": 38067}",
+   "row_id": 41,
+   "text": "[38067 characters]",
+   "tokens": 13939
+  },
+  {
+   "_at": 1794097678.816571,
+   "counted": 1,
+   "event_id": "sha256:7b74263c8b9da62275058dcdd8811199946f23cb5b05229db84e0a57b08d78de",
+   "event_type_id": 5,
+   "inserted_at": "2026-11-08T00:27:58.816571+00:00",
+   "p_answer_id": null,
+   "p_channel": "9b46101d-d393-46a2-8233-7d50f6d02652",
+   "p_cwd": "/tmp/claude-501/eq/cwd",
+   "p_kind": "tool_notice",
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "payload_json": "{\"trimmed\": 534}",
+   "row_id": 42,
+   "text": "[534 characters]",
+   "tokens": 184
+  },
+  {
+   "_at": 1794097678.816685,
+   "counted": 1,
+   "event_id": "sha256:679698e5d4002f9051b15a409a03eaec5cfa8ecd4683000e8147bba0fdf3eed5",
+   "event_type_id": 5,
+   "inserted_at": "2026-11-08T00:27:58.816685+00:00",
+   "p_answer_id": null,
+   "p_channel": "9b46101d-d393-46a2-8233-7d50f6d02652",
+   "p_cwd": "/tmp/claude-501/eq/cwd",
+   "p_kind": "tool_notice",
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "payload_json": "{\"trimmed\": 620}",
+   "row_id": 43,
+   "text": "[620 characters]",
+   "tokens": 206
+  },
+  {
+   "_at": 1794097678.816815,
+   "counted": 1,
+   "event_id": "sha256:4b5b20a80be15e331b5a006dce47e93d5bb8f8830ba85b6e80140155efed4919",
+   "event_type_id": 5,
+   "inserted_at": "2026-11-08T00:27:58.816815+00:00",
+   "p_answer_id": null,
+   "p_channel": "9b46101d-d393-46a2-8233-7d50f6d02652",
+   "p_cwd": "/tmp/claude-501/eq/cwd",
+   "p_kind": "tool_notice",
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "payload_json": "{\"trimmed\": 882}",
+   "row_id": 44,
+   "text": "[882 characters]",
+   "tokens": 379
+  },
+  {
+   "_at": 1794097678.816876,
+   "counted": 1,
+   "event_id": "sha256:7bc9b9ade7461140509905cef444ab24670ac0685ffc41d9922a510f912a5c9d",
+   "event_type_id": 1,
+   "inserted_at": "2026-11-08T00:27:58.816876+00:00",
+   "p_answer_id": null,
+   "p_channel": "9b46101d-d393-46a2-8233-7d50f6d02652",
+   "p_cwd": "/tmp/claude-501/eq/cwd",
+   "p_kind": "user",
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": "Make it rhyme.",
+   "payload_json": "{\"content\": [{\"text\": \"Make it rhyme.\", \"type\": \"text\"}], \"role\": \"user\"}",
+   "row_id": 45,
+   "text": "Make it rhyme.",
+   "tokens": 10
+  },
+  {
+   "_at": 1794097681.225662,
+   "counted": null,
+   "event_id": "failed:3",
+   "event_type_id": 11,
+   "inserted_at": "2026-11-08T00:28:01.225662+00:00",
+   "p_answer_id": null,
+   "p_channel": "9b46101d-d393-46a2-8233-7d50f6d02652",
+   "p_cwd": null,
+   "p_kind": null,
+   "p_poller": null,
+   "p_read_id": 3,
+   "p_words": null,
+   "payload_json": "{\"error\": \"the harness hung up before the answer was through: stopped by the user\", \"reached\": \"nothing\", \"status\": 499, \"withdrawn\": true}",
+   "row_id": 46,
+   "text": null,
+   "tokens": 38
+  },
+  {
+   "_at": 1794097689.203035,
+   "counted": null,
+   "event_id": "msg_011CgpWks39kwuuqCZb4P1qd:0",
+   "event_type_id": 15,
+   "inserted_at": "2026-11-08T00:28:09.203035+00:00",
+   "p_answer_id": "msg_011CgpWks39kwuuqCZb4P1qd",
+   "p_channel": "9b46101d-d393-46a2-8233-7d50f6d02652",
+   "p_cwd": null,
+   "p_kind": null,
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "payload_json": "{\"payload\": {\"content\": [{\"signature\": \"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\", \"thinking\": \"\", \"type\": \"thinking\"}], \"role\": \"assistant\"}, \"properties\": {\"kind\": \"reasoning\"}, \"type\": \"agent_reasoning\"}",
+   "row_id": 47,
+   "text": null,
+   "tokens": 3411
+  },
+  {
+   "_at": 1794097689.350318,
+   "counted": null,
+   "event_id": "msg_011CgpWks39kwuuqCZb4P1qd:1",
+   "event_type_id": 15,
+   "inserted_at": "2026-11-08T00:28:09.350318+00:00",
+   "p_answer_id": "msg_011CgpWks39kwuuqCZb4P1qd",
+   "p_channel": "9b46101d-d393-46a2-8233-7d50f6d02652",
+   "p_cwd": null,
+   "p_kind": null,
+   "p_poller": null,
+   "p_read_id": null,
+   "p_words": null,
+   "payload_json": "{\"payload\": {\"content\": [{\"text\": \"Gold leaves twirl and sway,\\ndancing on the wind's cold breath,\\ndrifting down to stay.\", \"type\": \"text\"}], \"role\": \"assistant\"}, \"properties\": {\"kind\": \"agent\"}, \"text\": \"Gold leaves twirl and sway,\\ndancing on the wind's cold breath,\\ndrifting down to stay.\", \"type\": \"agent_message\"}",
+   "row_id": 48,
+   "text": null,
+   "tokens": 89
+  },
+  {
+   "_at": 1794097689.350484,
+   "counted": null,
+   "event_id": "msg_011CgpWks39kwuuqCZb4P1qd:end",
+   "event_type_id": 16,
+   "inserted_at": "2026-11-08T00:28:09.350484+00:00",
+   "p_answer_id": "msg_011CgpWks39kwuuqCZb4P1qd",
+   "p_channel": "9b46101d-d393-46a2-8233-7d50f6d02652",
+   "p_cwd": null,
+   "p_kind": null,
+   "p_poller": null,
+   "p_read_id": 4,
+   "p_words": null,
+   "payload_json": "{\"stop\": \"end_turn\"}",
+   "row_id": 49,
+   "text": null,
+   "tokens": 7
+  }
+ ],
+ "gatherer": "eq1794097632",
+ "harness": "claude",
+ "recorded": 1794097698.743867,
+ "sampled": {
+  "_boundaries": [
+   {
+    "at": 1794097670.6565351,
+    "rows": []
+   },
+   {
+    "at": 1794097678.792507,
+    "rows": [
+     {
+      "asked_at": 1794097678.822795,
+      "channel_key": "9b46101d-d393-46a2-8233-7d50f6d02652",
+      "decided_at": null,
+      "new_task": null,
+      "row_id": 45,
+      "why": null
+     }
+    ]
+   },
+   {
+    "at": 1794097681.208621,
+    "rows": [
+     {
+      "asked_at": 1794097678.822795,
+      "channel_key": "9b46101d-d393-46a2-8233-7d50f6d02652",
+      "decided_at": 1794097681.1892722,
+      "new_task": 0,
+      "row_id": 45,
+      "why": "'Make it rhyme' refines the haiku about autumn leaves from the previous requests"
+     }
+    ]
+   }
+  ],
+  "_builds": [
+   {
+    "at": 1794097670.6565351,
+    "rows": []
+   }
+  ],
+  "_withdrawn": [
+   {
+    "at": 1794097670.6565351,
+    "rows": []
+   },
+   {
+    "at": 1794097681.2665138,
+    "rows": [
+     {
+      "read_id": 3,
+      "row_id": 32,
+      "withdrawn_at": "2026-11-08T00:28:01.218371+00:00"
+     },
+     {
+      "read_id": 3,
+      "row_id": 33,
+      "withdrawn_at": "2026-11-08T00:28:01.218372+00:00"
+     },
+     {
+      "read_id": 3,
+      "row_id": 34,
+      "withdrawn_at": "2026-11-08T00:28:01.218373+00:00"
+     },
+     {
+      "read_id": 3,
+      "row_id": 35,
+      "withdrawn_at": "2026-11-08T00:28:01.218374+00:00"
+     },
+     {
+      "read_id": 3,
+      "row_id": 36,
+      "withdrawn_at": "2026-11-08T00:28:01.218375+00:00"
+     },
+     {
+      "read_id": 3,
+      "row_id": 37,
+      "withdrawn_at": "2026-11-08T00:28:01.218376+00:00"
+     },
+     {
+      "read_id": 3,
+      "row_id": 38,
+      "withdrawn_at": "2026-11-08T00:28:01.218377+00:00"
+     }
+    ]
+   }
+  ]
+ },
+ "schema": [
+  "CREATE TABLE event_types (\n    event_type_id INTEGER PRIMARY KEY,\n    name        TEXT    NOT NULL UNIQUE,  -- what identifies the type (e.g. user_message)\n    created_at  TEXT    NOT NULL    -- UTC time the type was defined\n)",
+  "CREATE TABLE events (\n    row_id      INTEGER PRIMARY KEY,  -- insertion order; what `read` sorts by. Not\n                                      -- AUTOINCREMENT: that spends an id (and a\n                                      -- write) on every duplicate DO NOTHING\n                                      -- skips. Rows are never deleted, so ids\n                                      -- are never reused either way.\n    inserted_at TEXT    NOT NULL,   -- UTC time the event was first stored\n    event_id    TEXT,               -- the caller's id for the event: what makes a\n                                    -- re-sent event a duplicate. NULL = the caller\n                                    -- gave none; the row is then its own event,\n                                    -- known by row_id, and never a duplicate.\n    event_type_id INTEGER NOT NULL REFERENCES event_types (event_type_id),\n    payload_json TEXT   NOT NULL,   -- the payload, as given\n    tokens      INTEGER NOT NULL,   -- the caller's count if it gave one, else the\n                                    -- tokenizer's count of `text` (of payload_json\n                                    -- without one), taken at insert\n    text        TEXT,               -- the event's readable text, as the caller gave it:\n                                    -- what a policy shows and counts of it. NULL: none\n    counted     INTEGER             -- 1: `tokens` is the model's provider's count, set after\n                                    -- insert (`record_counts`); NULL: the caller's or the tokenizer's\n                                    -- given; its payload as JSON stands in\n                                    -- (then a p_<name> column per property: add_properties)\n, p_channel, p_cwd, p_poller, p_kind, p_words, p_read_id, p_answer_id)",
+  "CREATE TABLE event_type_properties (\n    event_type_id INTEGER NOT NULL REFERENCES event_types (event_type_id),\n    name        TEXT    NOT NULL,   -- the property; its column is p_<name>\n    required    INTEGER NOT NULL,   -- 1: an event of the type must carry it\n    identifies  INTEGER NOT NULL DEFAULT 0,   -- 1: part of an event's identity, with its id\n    PRIMARY KEY (event_type_id, name)\n)",
+  "CREATE TABLE _made_items (\n    made_id     INTEGER PRIMARY KEY,\n    created_at  TEXT    NOT NULL,   -- (and the properties of the read it was made for)\n    name        TEXT,               -- what it is, in the manager's terms\n    source      TEXT,               -- what made it, in the manager's terms (e.g. a build)\n    item_json   TEXT    NOT NULL,   -- the item, exactly as returned by read\n    tokens      INTEGER,            -- its size, by the manager's tokenizer (or, `counted`, the provider's)\n    counted     INTEGER,            -- 1: `tokens` is the provider's count (`record_counts`)\n    sha         TEXT                -- of its name, source and text (`made_sha`): what makes it the same item;\n                                    -- NULL: made by an older ag, not yet folded (migrate.py)\n, p_channel, p_cwd, p_poller, p_kind, p_words, p_read_id, p_answer_id)",
+  "CREATE TABLE _reads (\n    read_id     INTEGER PRIMARY KEY,\n    read_at     TEXT    NOT NULL,   -- (and the read's properties)\n    row_id      INTEGER,            -- the event (an events row) the read responded to\n    manager     TEXT,               -- which implementation read\n    basis       TEXT,               -- what the context was built from, in the\n                                    -- manager's terms (e.g. a build id); NULL = none\n    est_tokens  INTEGER,            -- the context's size by the manager's own count; NULL = not given\n    real_tokens INTEGER,            -- its size as the model's provider counted it (the\n                                    -- call's input tokens, reported after it); NULL = not yet\n    limit_tokens INTEGER,           -- the harness's own limit the call stated (where it compacts,\n                                    -- or its window ends); NULL = none\n    preamble_json TEXT,             -- the harness's preamble the call stated: the _preambles it\n                                    -- sent besides its messages, as a JSON list of ids; NULL = none\n    sent_tokens INTEGER,            -- all the call sent -- every item and the preamble -- as the\n                                    -- manager counted it at the read (less what the harness then\n                                    -- left out, as it reports); NULL = not known\n    pid         INTEGER,            -- the harness's process that made the call, and when it started\n    pid_started TEXT,               -- (\"<boot id>:<start ticks>\", so a reused pid is not it); NULL = not known\n    run         TEXT,               -- the harness's run that made the call, as its launcher named it (the hook\n                                    -- server's /r/<run>/: codex's, the id of the process ag started); NULL = none\n    error_status INTEGER,           -- no longer set: a failed call is a `call_failed` event (an older\n    error       TEXT,               -- file's copied there once, `_migrated`)\n    answered_at TEXT,               -- no longer set: an answer is its `reply_end` event\n    context_id  INTEGER             -- the reads it shares its context with: those with the same properties\n                                    -- (set as it is logged, `_reads_context`); NULL: an older file's, until moved\n, p_channel, p_cwd, p_poller, p_kind, p_words, p_read_id, p_answer_id)",
+  "CREATE TABLE _contexts (\n    context_id  INTEGER PRIMARY KEY,\n    key         TEXT    NOT NULL UNIQUE   -- the properties set, as JSON, by name (`context_key`)\n)",
+  "CREATE TABLE _preambles (\n    preamble_id INTEGER PRIMARY KEY,\n    name        TEXT    NOT NULL,   -- what it is, as the harness names it: \"instructions\", \"tools\", ...\n    sha         TEXT    NOT NULL UNIQUE,   -- of the name and the text\n    text        TEXT    NOT NULL,\n    tokens      INTEGER,            -- its size, by the manager's tokenizer (or, `counted`, the provider's)\n    counted     INTEGER             -- 1: `tokens` is the provider's count (`record_counts`)\n)",
+  "CREATE TABLE _stays (\n    context_id  INTEGER NOT NULL,\n    position    INTEGER NOT NULL,\n    row_id      INTEGER,\n    made_id     INTEGER,\n    from_read   INTEGER NOT NULL,\n    to_read     INTEGER,\n    CHECK ((row_id IS NULL) != (made_id IS NULL))\n)",
+  "CREATE TABLE _made_folded (\n    old         INTEGER PRIMARY KEY,\n    made_id     INTEGER NOT NULL\n) WITHOUT ROWID",
+  "CREATE TABLE _polls (\n    name        TEXT    PRIMARY KEY,    -- the poller's name (then, for one conversation's, its properties)\n    polled_at   REAL    NOT NULL        -- seconds since the epoch\n)",
+  "CREATE TABLE _withdrawn (\n    row_id       INTEGER PRIMARY KEY,  -- the event (an events row)\n    withdrawn_at TEXT    NOT NULL,     -- when (UTC, ISO)\n    read_id      INTEGER               -- the read of the call it came with; NULL = not known\n)",
+  "CREATE TABLE _open (\n    session     TEXT    PRIMARY KEY,   -- the session: its calls' `channel`\n    pid         INTEGER NOT NULL,      -- the harness's process, and when it started\n    pid_started TEXT    NOT NULL,      -- (\"<boot id>:<start ticks>\", as _reads has it)\n    opened_at   TEXT    NOT NULL,\n    opened_by   TEXT,                  -- what claimed it: \"launcher\", \"call\"\n    yields      INTEGER NOT NULL DEFAULT 0   -- 1: idle, and gives way to another process's claim\n)",
+  "CREATE TABLE _migrated (\n    name        TEXT    PRIMARY KEY,\n    at          TEXT    NOT NULL\n)",
+  "CREATE TABLE tasks (\n    channel_key    TEXT    NOT NULL,\n    task_index     INTEGER NOT NULL,\n    name           TEXT    NOT NULL,\n    description    TEXT,\n    first_row      INTEGER NOT NULL,\n    last_row       INTEGER NOT NULL,\n    tokens         INTEGER,\n    retention_json TEXT,\n    PRIMARY KEY (channel_key, task_index)\n)",
+  "CREATE TABLE cleaned_messages (\n    row_id      INTEGER PRIMARY KEY,\n    text        TEXT    NOT NULL,\n    build_id    INTEGER                  -- the build whose summary wrote it\n)",
+  "CREATE TABLE _builds (\n    build_id          INTEGER PRIMARY KEY,\n    channel_key       TEXT NOT NULL,\n    status            TEXT NOT NULL,     -- running / ready / failed / nothing\n    started_at        REAL NOT NULL,\n    finished_at       REAL,\n    through_row       INTEGER,           -- the last row the analysis saw\n    open_from_row     INTEGER,           -- where the running (open) task starts\n    ranking_json      TEXT,              -- earlier tasks, most relevant first: [[channel_key, task_index], ...]\n    parallel_mark     INTEGER,           -- other channels' rows up to here were seen\n    error             TEXT,\n    reason            TEXT               -- why it was started: limit / boundary / request / direct\n)",
+  "CREATE TABLE _boundaries (\n    row_id      INTEGER PRIMARY KEY,     -- the user message (an events row)\n    channel_key TEXT NOT NULL,\n    asked_at    REAL NOT NULL,\n    decided_at  REAL,\n    new_task    INTEGER,                 -- 1 / 0; NULL = not decided yet\n    why         TEXT\n)",
+  "CREATE VIEW _read_items (read_id, position, row_id, made_id) AS SELECT r.read_id, s.position, s.row_id, s.made_id FROM _reads r JOIN _stays s ON s.context_id = r.context_id AND s.from_read <= r.read_id AND (s.to_read IS NULL OR s.to_read >= r.read_id)",
+  "CREATE INDEX events_type ON events (event_type_id)",
+  "CREATE INDEX _stays_open ON _stays (context_id, position) WHERE to_read IS NULL",
+  "CREATE INDEX _stays_from ON _stays (context_id, from_read)",
+  "CREATE INDEX _reads_context ON _reads (context_id, read_id)",
+  "CREATE UNIQUE INDEX _made_items_sha ON _made_items (sha)",
+  "CREATE INDEX _builds_channel ON _builds (channel_key, build_id)",
+  "CREATE UNIQUE INDEX events_id ON events (ifnull(p_channel, ''), event_id)",
+  "CREATE INDEX _reads_properties ON _reads (ifnull(p_channel, ''), ifnull(p_cwd, ''), ifnull(p_poller, ''), ifnull(p_kind, ''), ifnull(p_words, ''), ifnull(p_read_id, ''), ifnull(p_answer_id, ''), read_id)",
+  "CREATE TRIGGER _reads_context AFTER INSERT ON _reads WHEN NEW.context_id IS NULL BEGIN INSERT OR IGNORE INTO _contexts (key) VALUES (json_patch('{}', json_object('answer_id', NEW.p_answer_id, 'channel', NEW.p_channel, 'cwd', NEW.p_cwd, 'kind', NEW.p_kind, 'poller', NEW.p_poller, 'read_id', NEW.p_read_id, 'words', NEW.p_words))); UPDATE _reads SET context_id = (SELECT context_id FROM _contexts WHERE key = json_patch('{}', json_object('answer_id', NEW.p_answer_id, 'channel', NEW.p_channel, 'cwd', NEW.p_cwd, 'kind', NEW.p_kind, 'poller', NEW.p_poller, 'read_id', NEW.p_read_id, 'words', NEW.p_words))) WHERE read_id = NEW.read_id; END",
+  "CREATE TRIGGER _read_items_insert INSTEAD OF INSERT ON _read_items BEGIN SELECT RAISE(ABORT, 'no read with this read_id in _reads') WHERE NOT EXISTS (SELECT 1 FROM _reads WHERE read_id = NEW.read_id AND context_id IS NOT NULL); UPDATE _stays SET to_read = (SELECT max(p.read_id) FROM _reads p WHERE p.context_id = (SELECT context_id FROM _reads WHERE read_id = NEW.read_id) AND p.read_id < NEW.read_id) WHERE NEW.position = 0 AND to_read IS NULL AND context_id = (SELECT context_id FROM _reads WHERE read_id = NEW.read_id); UPDATE _stays SET to_read = NULL WHERE rowid = (SELECT rowid FROM _stays WHERE context_id = (SELECT context_id FROM _reads WHERE read_id = NEW.read_id) AND position = NEW.position AND to_read = (SELECT max(p.read_id) FROM _reads p WHERE p.context_id = (SELECT context_id FROM _reads WHERE read_id = NEW.read_id) AND p.read_id < NEW.read_id) AND row_id IS NEW.row_id AND made_id IS coalesce((SELECT f.made_id FROM _made_folded f WHERE f.old = NEW.made_id), NEW.made_id)) AND (NEW.position = 0 OR EXISTS (SELECT 1 FROM _stays WHERE context_id = (SELECT context_id FROM _reads WHERE read_id = NEW.read_id) AND position = NEW.position - 1 AND to_read IS NULL AND from_read < NEW.read_id)); INSERT INTO _stays (context_id, position, row_id, made_id, from_read) SELECT (SELECT context_id FROM _reads WHERE read_id = NEW.read_id), NEW.position, NEW.row_id, coalesce((SELECT f.made_id FROM _made_folded f WHERE f.old = NEW.made_id), NEW.made_id), NEW.read_id WHERE NOT EXISTS (SELECT 1 FROM _stays WHERE context_id = (SELECT context_id FROM _reads WHERE read_id = NEW.read_id) AND position = NEW.position AND to_read IS NULL); END"
+ ],
+ "sessions": [
+  {
+   "at": 1794097670.6565351,
+   "state": {
+    "harness": "claude",
+    "session": {
+     "ended": 0.0,
+     "queued": [],
+     "sent": [],
+     "started_as": null,
+     "status": "terminal",
+     "stopped_at": null,
+     "terminal": true
+    },
+    "status": "idle"
+   }
+  },
+  {
+   "at": 1794097671.720725,
+   "state": {
+    "harness": "claude",
+    "session": {
+     "ended": 0.0,
+     "queued": [],
+     "sent": [
+      {
+       "at": 1794097671.7161589,
+       "cid": "page:572dabd8-6c14-43c8-bf0d-15bcd0341424",
+       "text": "Write a haiku about autumn leaves."
+      }
+     ],
+     "started_as": null,
+     "status": "terminal",
+     "stopped_at": null,
+     "terminal": true
+    },
+    "status": "idle"
+   }
+  },
+  {
+   "at": 1794097674.761292,
+   "state": {
+    "harness": "claude",
+    "session": {
+     "ended": 0.0,
+     "queued": [],
+     "sent": [
+      {
+       "at": 1794097671.7161589,
+       "cid": "page:572dabd8-6c14-43c8-bf0d-15bcd0341424",
+       "text": "Write a haiku about autumn leaves."
+      },
+      {
+       "at": 1794097674.723642,
+       "cid": "page:24c22674-5bf7-46c3-b9e4-fd7818495726",
+       "text": "Make it rhyme."
+      }
+     ],
+     "started_as": null,
+     "status": "terminal",
+     "stopped_at": null,
+     "terminal": true
+    },
+    "status": "idle"
+   }
+  },
+  {
+   "at": 1794097677.2386591,
+   "state": {
+    "harness": "claude",
+    "session": {
+     "ended": 0.0,
+     "queued": [],
+     "sent": [
+      {
+       "at": 1794097671.7161589,
+       "cid": "page:572dabd8-6c14-43c8-bf0d-15bcd0341424",
+       "text": "Write a haiku about autumn leaves."
+      },
+      {
+       "at": 1794097674.723642,
+       "cid": "page:24c22674-5bf7-46c3-b9e4-fd7818495726",
+       "text": "Make it rhyme."
+      }
+     ],
+     "started_as": null,
+     "status": "terminal",
+     "stopped_at": 1794097677.2269921,
+     "terminal": true
+    },
+    "status": "idle"
+   }
+  },
+  {
+   "at": 1794097678.792507,
+   "state": {
+    "harness": "claude",
+    "session": {
+     "ended": 0.0,
+     "queued": [],
+     "sent": [
+      {
+       "at": 1794097671.7161589,
+       "cid": "page:572dabd8-6c14-43c8-bf0d-15bcd0341424",
+       "text": "Write a haiku about autumn leaves."
+      },
+      {
+       "at": 1794097674.723642,
+       "cid": "page:24c22674-5bf7-46c3-b9e4-fd7818495726",
+       "text": "Make it rhyme."
+      }
+     ],
+     "started_as": null,
+     "status": "terminal",
+     "stopped_at": 1794097677.2269921,
+     "terminal": true
+    },
+    "status": "running"
+   }
+  },
+  {
+   "at": 1794097689.403281,
+   "state": {
+    "harness": "claude",
+    "session": {
+     "ended": 0.0,
+     "queued": [],
+     "sent": [
+      {
+       "at": 1794097671.7161589,
+       "cid": "page:572dabd8-6c14-43c8-bf0d-15bcd0341424",
+       "text": "Write a haiku about autumn leaves."
+      },
+      {
+       "at": 1794097674.723642,
+       "cid": "page:24c22674-5bf7-46c3-b9e4-fd7818495726",
+       "text": "Make it rhyme."
+      }
+     ],
+     "started_as": null,
+     "status": "terminal",
+     "stopped_at": 1794097677.2269921,
+     "terminal": true
+    },
+    "status": "idle"
+   }
+  }
+ ],
+ "streamed": [
+  {
+   "at": 1794097670.711189,
+   "view": {
+    "current": {
+     "asking": null,
+     "doing": null,
+     "failing": null,
+     "state": "idle",
+     "stopped": null,
+     "turn": null
+    },
+    "opening": null,
+    "taken_back": null,
+    "turns": [],
+    "version": [
+     19,
+     0,
+     0,
+     0,
+     0,
+     false
+    ],
+    "waiting": []
+   }
+  },
+  {
+   "at": 1794097671.7561688,
+   "view": {
+    "current": {
+     "asking": null,
+     "doing": null,
+     "failing": null,
+     "state": "opening",
+     "stopped": null,
+     "turn": "opening"
+    },
+    "opening": {
+     "began": 1794097671.7161589,
+     "cid": "page:572dabd8-6c14-43c8-bf0d-15bcd0341424",
+     "seen": false,
+     "text": "Write a haiku about autumn leaves.",
+     "unseen": false
+    },
+    "taken_back": null,
+    "turns": [],
+    "version": [
+     19,
+     0,
+     0,
+     0,
+     1,
+     false
+    ],
+    "waiting": []
+   }
+  },
+  {
+   "at": 1794097671.9967942,
+   "view": {
+    "current": {
+     "asking": null,
+     "doing": null,
+     "failing": null,
+     "state": "opening",
+     "stopped": null,
+     "turn": "opening"
+    },
+    "opening": {
+     "began": 1794097671.7161589,
+     "cid": "page:572dabd8-6c14-43c8-bf0d-15bcd0341424",
+     "seen": false,
+     "text": "Write a haiku about autumn leaves.",
+     "unseen": false
+    },
+    "taken_back": null,
+    "turns": [],
+    "version": [
+     20,
+     0,
+     0,
+     0,
+     1,
+     false
+    ],
+    "waiting": []
+   }
+  },
+  {
+   "at": 1794097674.7681012,
+   "view": {
+    "current": {
+     "asking": null,
+     "doing": null,
+     "failing": null,
+     "state": "opening",
+     "stopped": null,
+     "turn": "opening"
+    },
+    "opening": {
+     "began": 1794097671.7161589,
+     "cid": "page:572dabd8-6c14-43c8-bf0d-15bcd0341424",
+     "seen": false,
+     "text": "Write a haiku about autumn leaves.",
+     "unseen": false
+    },
+    "taken_back": null,
+    "turns": [],
+    "version": [
+     20,
+     0,
+     0,
+     0,
+     2,
+     false
+    ],
+    "waiting": [
+     {
+      "cid": "page:24c22674-5bf7-46c3-b9e4-fd7818495726",
+      "how": "chat",
+      "text": "Make it rhyme."
+     }
+    ]
+   }
+  },
+  {
+   "at": 1794097674.9706151,
+   "view": {
+    "current": {
+     "asking": null,
+     "doing": null,
+     "failing": null,
+     "state": "opening",
+     "stopped": null,
+     "turn": "opening"
+    },
+    "opening": {
+     "began": 1794097671.7161589,
+     "cid": "page:572dabd8-6c14-43c8-bf0d-15bcd0341424",
+     "seen": false,
+     "text": "Write a haiku about autumn leaves.",
+     "unseen": false
+    },
+    "taken_back": null,
+    "turns": [],
+    "version": [
+     21,
+     0,
+     0,
+     0,
+     2,
+     false
+    ],
+    "waiting": [
+     {
+      "cid": "page:24c22674-5bf7-46c3-b9e4-fd7818495726",
+      "how": "chat",
+      "text": "Make it rhyme."
+     }
+    ]
+   }
+  },
+  {
+   "at": 1794097677.3348212,
+   "view": {
+    "current": {
+     "asking": null,
+     "doing": null,
+     "failing": null,
+     "state": "stopped",
+     "stopped": {
+      "at": 1794097677.2269921,
+      "kind": "interrupted",
+      "reason": null,
+      "status": null,
+      "text": null
+     },
+     "turn": "opening"
+    },
+    "opening": {
+     "began": 1794097671.7161589,
+     "cid": "page:572dabd8-6c14-43c8-bf0d-15bcd0341424",
+     "seen": false,
+     "stopped": {
+      "at": 1794097677.2269921,
+      "kind": "interrupted",
+      "reason": null,
+      "status": null,
+      "text": null
+     },
+     "text": "Write a haiku about autumn leaves.",
+     "unseen": false
+    },
+    "taken_back": null,
+    "turns": [],
+    "version": [
+     21,
+     0,
+     0,
+     0,
+     2,
+     false
+    ],
+    "waiting": [
+     {
+      "cid": "page:24c22674-5bf7-46c3-b9e4-fd7818495726",
+      "how": "chat",
+      "text": "Make it rhyme."
+     }
+    ]
+   }
+  },
+  {
+   "at": 1794097677.542846,
+   "view": {
+    "current": {
+     "asking": null,
+     "doing": null,
+     "failing": null,
+     "state": "stopped",
+     "stopped": {
+      "at": 1794097677.2269921,
+      "kind": "interrupted",
+      "reason": null,
+      "status": null,
+      "text": null
+     },
+     "turn": "opening"
+    },
+    "opening": {
+     "began": 1794097671.7161589,
+     "cid": "page:572dabd8-6c14-43c8-bf0d-15bcd0341424",
+     "seen": false,
+     "stopped": {
+      "at": 1794097677.2269921,
+      "kind": "interrupted",
+      "reason": null,
+      "status": null,
+      "text": null
+     },
+     "text": "Write a haiku about autumn leaves.",
+     "unseen": false
+    },
+    "taken_back": null,
+    "turns": [],
+    "version": [
+     22,
+     0,
+     0,
+     0,
+     2,
+     false
+    ],
+    "waiting": [
+     {
+      "cid": "page:24c22674-5bf7-46c3-b9e4-fd7818495726",
+      "how": "chat",
+      "text": "Make it rhyme."
+     }
+    ]
+   }
+  },
+  {
+   "at": 1794097678.8427432,
+   "view": {
+    "current": {
+     "asking": null,
+     "doing": null,
+     "failing": null,
+     "state": "working",
+     "stopped": null,
+     "turn": 1
+    },
+    "opening": null,
+    "taken_back": null,
+    "turns": [
+     {
+      "at": 1794097678.769738,
+      "began": 1794097671.7161589,
+      "calls": 0,
+      "cid": "page:572dabd8-6c14-43c8-bf0d-15bcd0341424",
+      "end": 1794097678.769738,
+      "kind": "user",
+      "last": null,
+      "more": [],
+      "n": 0,
+      "now": null,
+      "replies": [],
+      "row_id": 38,
+      "stopped": null,
+      "text": "Write a haiku about autumn leaves.",
+      "work": {
+       "doing": null,
+       "ended": null,
+       "failed": 0,
+       "helpers": 0,
+       "last": null
+      }
+     },
+     {
+      "at": 1794097678.813506,
+      "began": 1794097678.813506,
+      "calls": 0,
+      "cid": null,
+      "end": 1794097678.816876,
+      "kind": "user",
+      "last": null,
+      "more": [
+       {
+        "at": 1794097678.816876,
+        "cid": "page:24c22674-5bf7-46c3-b9e4-fd7818495726",
+        "kind": "user",
+        "row_id": 45,
+        "text": "Make it rhyme."
+       }
+      ],
+      "n": 1,
+      "now": null,
+      "replies": [],
+      "row_id": 39,
+      "stopped": null,
+      "text": "Write a haiku about autumn leaves.\n",
+      "work": {
+       "doing": null,
+       "ended": null,
+       "failed": 0,
+       "helpers": 0,
+       "last": null
+      }
+     }
+    ],
+    "version": [
+     45,
+     0,
+     0,
+     0,
+     2,
+     false
+    ],
+    "waiting": []
+   }
+  },
+  {
+   "at": 1794097681.24284,
+   "view": {
+    "current": {
+     "asking": null,
+     "doing": null,
+     "failing": null,
+     "state": "working",
+     "stopped": null,
+     "turn": 0
+    },
+    "opening": null,
+    "taken_back": null,
+    "turns": [
+     {
+      "at": 1794097678.813506,
+      "began": 1794097678.813506,
+      "calls": 0,
+      "cid": null,
+      "end": 1794097678.816876,
+      "kind": "user",
+      "last": null,
+      "more": [
+       {
+        "at": 1794097678.816876,
+        "cid": "page:24c22674-5bf7-46c3-b9e4-fd7818495726",
+        "kind": "user",
+        "row_id": 45,
+        "text": "Make it rhyme."
+       }
+      ],
+      "n": 0,
+      "now": null,
+      "replies": [],
+      "row_id": 39,
+      "stopped": null,
+      "text": "Write a haiku about autumn leaves.\n",
+      "work": {
+       "doing": null,
+       "ended": null,
+       "failed": 0,
+       "helpers": 0,
+       "last": null
+      }
+     }
+    ],
+    "version": [
+     46,
+     7,
+     0,
+     0,
+     2,
+     false
+    ],
+    "waiting": []
+   }
+  },
+  {
+   "at": 1794097689.266326,
+   "view": {
+    "current": {
+     "asking": null,
+     "doing": {
+      "kind": "thinking"
+     },
+     "failing": null,
+     "state": "working",
+     "stopped": null,
+     "turn": 0
+    },
+    "opening": null,
+    "taken_back": null,
+    "turns": [
+     {
+      "at": 1794097678.813506,
+      "began": 1794097678.813506,
+      "calls": 0,
+      "cid": null,
+      "end": 1794097689.203035,
+      "kind": "user",
+      "last": null,
+      "more": [
+       {
+        "at": 1794097678.816876,
+        "cid": "page:24c22674-5bf7-46c3-b9e4-fd7818495726",
+        "kind": "user",
+        "row_id": 45,
+        "text": "Make it rhyme."
+       }
+      ],
+      "n": 0,
+      "now": {
+       "kind": "thinking"
+      },
+      "replies": [
+       {
+        "kind": "thinking",
+        "texts": []
+       }
+      ],
+      "row_id": 39,
+      "stopped": null,
+      "text": "Write a haiku about autumn leaves.\n",
+      "work": {
+       "doing": null,
+       "ended": null,
+       "failed": 0,
+       "helpers": 0,
+       "last": null
+      }
+     }
+    ],
+    "version": [
+     47,
+     7,
+     0,
+     0,
+     2,
+     false
+    ],
+    "waiting": []
+   }
+  },
+  {
+   "at": 1794097689.414675,
+   "view": {
+    "current": {
+     "asking": null,
+     "doing": null,
+     "failing": null,
+     "state": "done",
+     "stopped": null,
+     "turn": 0
+    },
+    "opening": null,
+    "taken_back": null,
+    "turns": [
+     {
+      "at": 1794097678.813506,
+      "began": 1794097678.813506,
+      "calls": 0,
+      "cid": null,
+      "end": 1794097689.350318,
+      "kind": "user",
+      "last": null,
+      "more": [
+       {
+        "at": 1794097678.816876,
+        "cid": "page:24c22674-5bf7-46c3-b9e4-fd7818495726",
+        "kind": "user",
+        "row_id": 45,
+        "text": "Make it rhyme."
+       }
+      ],
+      "n": 0,
+      "now": null,
+      "replies": [
+       {
+        "kind": "thinking",
+        "texts": []
+       },
+       {
+        "kind": "text",
+        "text": "Gold leaves twirl and sway,\ndancing on the wind's cold breath,\ndrifting down to stay."
+       }
+      ],
+      "row_id": 39,
+      "stopped": null,
+      "text": "Write a haiku about autumn leaves.\n",
+      "work": {
+       "doing": null,
+       "ended": null,
+       "failed": 0,
+       "helpers": 0,
+       "last": null
+      }
+     }
+    ],
+    "version": [
+     49,
+     7,
+     0,
+     0,
+     2,
+     false
+    ],
+    "waiting": []
+   }
+  }
+ ]
+}

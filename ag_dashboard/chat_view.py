@@ -84,21 +84,23 @@ def _record(conn, channel: str) -> Tuple[List[dict], List[dict]]:
 
 
 def _hang_ups(conn, channel: str) -> List[dict]:
-    """The calls of the channel hung up on (Esc), oldest first: [{read, row, reached, withdrawn, at}] -- the read's newest
-    row (its user's message, for a call that opened a turn), what of the answer had reached the harness and whether the
-    hook had what the call stored withdrawn (the hook's `call_failed`: "text", "tool", "nothing"; True or False; None
-    from a hook before it said), and when the hook stored it."""
+    """The calls of the channel hung up on (Esc), oldest first: [{read, row, reached, withdrawn, at, until}] -- the read's
+    newest row (its user's message, for a call that opened a turn), what of the answer had reached the harness and
+    whether the hook had what the call stored withdrawn (the hook's `call_failed`: "text", "tool", "nothing"; True or
+    False; None from a hook before it said), when the hook stored it, and when ag read the channel's next call (inf:
+    none yet)."""
     if "p_read_id" not in data._columns(conn, "events") or data.CHANNEL not in data._columns(conn, "_reads"):
         return []
     out = []
-    for read, row_id, at, raw in conn.execute(
-            f"SELECT e.p_read_id, r.row_id, e.inserted_at, e.payload_json FROM events e JOIN event_types t ON {data.BY_CHANNEL} "
-            f"JOIN _reads r ON r.read_id = e.p_read_id WHERE ifnull(e.{data.CHANNEL}, '') = ? AND t.name = 'call_failed' "
-            f"ORDER BY e.row_id", (channel,)):
+    for read, row_id, at, raw, until in conn.execute(
+            f"SELECT e.p_read_id, r.row_id, e.inserted_at, e.payload_json, (SELECT min(n.read_at) FROM _reads n WHERE "
+            f"ifnull(n.{data.CHANNEL}, '') = ? AND n.read_id > r.read_id) FROM events e JOIN event_types t ON "
+            f"{data.BY_CHANNEL} JOIN _reads r ON r.read_id = e.p_read_id WHERE ifnull(e.{data.CHANNEL}, '') = ? AND "
+            f"t.name = 'call_failed' ORDER BY e.row_id", (channel, channel)):
         got = data._json(raw) or {}
         if got.get("status") == data.HUNG_UP:
             out.append({"read": read, "row": row_id, "reached": got.get("reached"), "withdrawn": got.get("withdrawn"),
-                        "at": data._seconds(at) or 0.0})
+                        "at": data._seconds(at) or 0.0, "until": data._seconds(until) or float("inf")})
     return out
 
 
@@ -108,6 +110,12 @@ def _read_after(conn, channel: str, read_id: int, row_id: int) -> Optional[float
     r = conn.execute(f"SELECT read_at FROM _reads WHERE ifnull({data.CHANNEL}, '') = ? AND read_id > ? AND row_id = ? "
                      f"ORDER BY read_id LIMIT 1", (channel, read_id, row_id)).fetchone()
     return data._seconds(r[0]) if r else None
+
+
+def _withdrawn(conn, tables: set, row_id: int) -> bool:
+    """Whether the event of row `row_id` is withdrawn: in no read until the harness sends it again as it was."""
+    return "_withdrawn" in tables and conn.execute("SELECT 1 FROM _withdrawn WHERE row_id = ?", (row_id,)).fetchone() \
+        is not None
 
 
 def _words_of(conn, row_id: Optional[int]) -> Optional[str]:
@@ -128,12 +136,14 @@ def _words_of(conn, row_id: Optional[int]) -> Optional[str]:
 
 def _took(b: dict, words: Optional[str], shown: List[tuple], prompts: List[dict], takes_back: bool) -> bool:
     """Whether a hang-up (`_hang_ups`) took its message back -- Esc before any of its answer, the hook withdrawing what
-    it stored -- as its hook says (`withdrawn`). From a hook before it said: its message not shown (withdrawn); or,
+    it stored -- as its hook says (`withdrawn`), unless the harness's record says it kept it (`kept`: data.py's
+    `on_esc` -- interrupted after sending it, or with a message queued). From a hook before it said: its message not
+    shown (withdrawn); or,
     shown -- of a harness that puts the message back in its box (`esc_takes_back`), none of the answer come (`reached`
     "nothing", or not said) -- when the harness sent the same words again after it and no newer message of them is
     stored: ag keeps the old row for the message sent again, at its old time. Not else: a call later in its turn, or a
     side call the harness gave up on, is hung up on before any of its answer too."""
-    if words is None:
+    if words is None or b.get("kept"):
         return False
     if b["withdrawn"] is not None:
         return b["reached"] == "nothing" and bool(b["withdrawn"])
@@ -277,9 +287,14 @@ def view(conn, channel: str, session: Optional[dict] = None, now: Optional[float
     prompts, held = _record(conn, channel)
     h = harness_kit.get(data._harness(conn, channel) or "")
     takes_back = bool(h and h.esc_takes_back)
+    rec = data.record_of(conn, channel)
+    stops, facts = data.interrupts(rec), data._facts(conn, channel, data.ESC_FACTS)
     backs = []
     for b in _hang_ups(conn, channel):                   # each, whether it took its message back (`_took`)
         words = _words_of(conn, b["row"])
+        if words is not None:                            # what the harness's record says of it: kept -- but sent again
+            b["kept"] = any(data.on_esc(facts, stops, words, b["at"], None, b["until"])) and not (   # as a newer row,
+                _withdrawn(conn, tables, b["row"]) and data.sent_again(conn, channel, b["row"], words))   # this one gone
         backs.append(dict(b, words=words, took=_took(b, words, _messages(turns), prompts, takes_back)))
     links, took = _sorted_out(sends, _messages(turns), backs)
     last_back = {b["row"]: b for b in backs if b["took"]}   # each message's latest take-back
@@ -302,7 +317,7 @@ def view(conn, channel: str, session: Optional[dict] = None, now: Optional[float
         turns.pop()                                      # by what the harness's record says nor read: shown once it is
     for t in turns:
         del t["unsent"]
-    back, _ = data.taken_back(conn, channel, tables, data.record_of(conn, channel), now)
+    back, _ = data.taken_back(conn, channel, tables, rec, now)
     if back is not None:                                 # the send it was: the one the newest hang-up took back
         s = next((s for s in reversed(sends) if s["cid"] in took and _said(s["text"]) == _said(back["text"])), None)
         back = {"text": back["text"], "at": back.get("at"), "cid": s["cid"] if s else None, "since": back.get("since")}

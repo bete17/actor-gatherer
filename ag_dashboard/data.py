@@ -84,7 +84,7 @@ import threading
 import time
 import zlib
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from . import home as paths
 from . import seen as looked                    # `seen` names a file's stat here
@@ -914,17 +914,77 @@ def interrupts(rec: "Record") -> List[float]:
             and isinstance(f.get("at"), (int, float))]
 
 
+#: The facts of the harness's record `on_esc` reads, besides its interrupts.
+ESC_FACTS = ("message_sent", "message_queued", "message_withdrawn")
+
+
+def on_esc(facts: List[tuple], stops: List[float], said: str, failed_at: float, after: Optional[float],
+           until: float = float("inf")) -> Tuple[bool, bool]:
+    """What Claude Code's record (`facts`, oldest first, of ESC_FACTS; `stops`: when it says the user interrupted a turn)
+    says of a call hung up on (Esc) whose newest row is the user's message `said`, its hang-up stored at `failed_at`:
+    (kept, queued). From when it sent `said` as a turn's first message (the newest such send by the hang-up; not in its
+    record: from `after`, when ag read the call) --
+    kept: it says the turn was interrupted since, before it sent another and before the next call's read (`until`). It
+      writes that only where it keeps the message: its answer's words had come, or a message was queued (`queued`). It
+      can be before ag has read the call: an Esc as ag still read it.
+    queued: a message was queued since and not taken out of its queue by the hang-up: on Esc Claude Code stops the turn,
+      keeping its message, and sends the queued one at once -- before any of the answer too, where it would otherwise
+      take the message back into its input box."""
+    sends = [(f["at"], f.get("words") or f.get("text") or "") for t, f in facts
+             if t == "message_sent" and f.get("how") == "prompt" and isinstance(f.get("at"), (int, float))]
+    sent = max((at for at, w in sends if _said(w) == _said(said) and at <= failed_at), default=None)
+    start = sent if sent is not None else after
+    if start is None:
+        return False, False
+    end = min([until] + [at for at, _ in sends if at > start])
+    kept = any(start <= s < end for s in stops)
+    waiting = set()
+    for t, f in facts:
+        at = f.get("at")
+        if t == "message_queued" and isinstance(at, (int, float)) and start <= at <= failed_at:
+            waiting.add(f.get("queued"))
+        elif t == "message_withdrawn" and not (isinstance(at, (int, float)) and at > failed_at):
+            waiting.discard(f.get("queued"))
+    return kept, bool(waiting)
+
+
+#: How many of the user's messages after a withdrawn one `sent_again` looks through: the harness sends it again with
+#: its next call, so among the first few.
+AGAIN_READ = 3
+
+
+def sent_again(conn, channel: str, row: int, words: str) -> bool:
+    """Whether the user's message of row `row` (its words `words`) was stored again as a newer row of the channel: the
+    harness sent it again in another form (Claude Code's newline, joining it with the next message: to_events.py's
+    `merged_key`), the old row left withdrawn -- among the next AGAIN_READ user messages."""
+    harness = _harness(conn, channel)
+    cols = _columns(conn, "events")
+    said = "e.p_kind, e.p_words" if {"p_kind", "p_words"} <= cols else "NULL, NULL"
+    for kind, w, text in conn.execute(
+            f"SELECT {said}, e.text FROM events e JOIN event_types t ON {BY_CHANNEL} WHERE ifnull(e.{CHANNEL}, '') = ? "
+            f"AND t.name = 'user_message' AND e.row_id > ? ORDER BY e.row_id LIMIT ?", (channel, row, AGAIN_READ)):
+        k, w = (kind, w) if kind and w is not None else harness_kit.words(text or "", harness)
+        if k == Kind.USER and _said(w) == _said(words):
+            return True
+    return False
+
+
 def withdrawn_reads(conn, channel: str, tables: set, stops: List[float], read_id: Optional[int] = None) -> Dict[int, dict]:
     """The calls hung up on whose events ag withdrew (`_withdrawn`), by their read (only `read_id`'s, if given): {said:
     the user's words of the newest user message among them that opened a turn (else None), said_row: its row, reached:
     what of the answer had reached the harness in words, as the hook server saw it relayed (its `call_failed`'s: "text",
-    "tool", "nothing"; None from a hook before it said), kept: its text had, or Claude Code's record says the turn was
-    interrupted (`stops`: when) once the call had gone to the model (its read done) and before the next call's read,
-    failed: the hook has stored how the call failed (its `call_failed`) -- until then, which it writes just after it
-    withdraws, what it reached is not known, and nothing of it taken back}.
+    "tool", "nothing"; None from a hook before it said), kept: its text had, a message was queued since it sent `said`
+    and waited at the hang-up (`queued`), or Claude Code's record says the turn was interrupted (`stops`: when) before
+    the next call's read -- since it sent `said` (`on_esc`), else once the call had gone to the model (its read done) --,
+    queued: as `on_esc` says, again: the harness sent `said` again as a newer row (`sent_again`), failed: the hook has
+    stored how the call failed (its `call_failed`) -- until then, which it writes just after it withdraws, what it
+    reached is not known, and nothing of it taken back}.
     The hook withdraws a call's events on any Esc, those it stored again (the turns before, sent with it) among them.
-    Claude Code keeps them all -- and records the turn interrupted -- once some of the answer's words had come; before,
-    it takes the user's message back into its input box (`said`; the events after it with it), recording nothing."""
+    Claude Code keeps them all -- and records the turn interrupted -- once some of the answer's words had come, or with a
+    message queued; before, it takes the user's message back into its input box (`said`; the events after it with it),
+    recording nothing. A message it kept is no longer withdrawn once it sends it again as it was; sent again joined with
+    the queued one after it, with the newline it adds (to_events.py's `merged_key`), ag can store it as a new row
+    (`again`), the old one left withdrawn."""
     if "_withdrawn" not in tables:
         return {}
     harness = _harness(conn, channel)
@@ -935,29 +995,39 @@ def withdrawn_reads(conn, channel: str, tables: set, stops: List[float], read_id
             f"JOIN event_types t ON t.event_type_id = e.event_type_id WHERE ifnull(e.{CHANNEL}, '') = ? AND w.read_id "
             f"{'= ?' if read_id is not None else 'IS NOT NULL'} ORDER BY e.row_id",
             (channel, *([read_id] if read_id is not None else []))):
-        r = out.setdefault(read, {"said": None, "said_row": None, "reached": None, "kept": False, "failed": False})
+        r = out.setdefault(read, {"said": None, "said_row": None, "reached": None, "kept": False, "queued": False,
+                                  "again": False, "failed": False})
         if typ == "user_message":
             k, w = (kind, said) if kind and said is not None else harness_kit.words(text or "", harness)
             if k == Kind.USER and w.strip():                 # the newest: the turns before it come first
                 r["said"], r["said_row"] = w.strip(), row
+    failed_at: Dict[int, float] = {}
     if out and "p_read_id" in _columns(conn, "events"):
-        for read, raw in conn.execute(
-                f"SELECT e.p_read_id, e.payload_json FROM events e JOIN event_types t ON {BY_CHANNEL} WHERE "
-                f"ifnull(e.{CHANNEL}, '') = ? AND t.name = 'call_failed' AND e.p_read_id >= ?", (channel, min(out))):
+        for read, raw, at in conn.execute(
+                f"SELECT e.p_read_id, e.payload_json, e.inserted_at FROM events e JOIN event_types t ON {BY_CHANNEL} "
+                f"WHERE ifnull(e.{CHANNEL}, '') = ? AND t.name = 'call_failed' AND e.p_read_id >= ?", (channel, min(out))):
             got = _json(raw) or {}
             if read in out:
                 out[read]["failed"] = True
+                failed_at.setdefault(read, _seconds(at))
             if read in out and got.get("status") == HUNG_UP and got.get("reached"):
                 out[read]["reached"] = got["reached"]
                 out[read]["kept"] = got["reached"] == "text"
-    if out and stops and CHANNEL in _columns(conn, "_reads"):
+    if out and CHANNEL in _columns(conn, "_reads"):
         reads = [(rid, _seconds(at)) for rid, at in conn.execute(
             f"SELECT read_id, read_at FROM _reads WHERE ifnull({CHANNEL}, '') = ? AND read_id >= ? ORDER BY read_id",
             (channel, min(out)))]
+        facts = _facts(conn, channel, ESC_FACTS) if any(r["said"] for r in out.values()) else []
         for read, r in out.items():
             began = next((at for rid, at in reads if rid == read), None)
             until = next((at for rid, at in reads if rid > read), None) or float("inf")
-            r["kept"] = r["kept"] or (began is not None and any(began <= s < until for s in stops))
+            if r["said"]:
+                r["again"] = sent_again(conn, channel, r["said_row"], r["said"])
+                kept, r["queued"] = on_esc(facts, stops, r["said"], failed_at.get(read) or until, began, until)
+                kept = kept or r["queued"]                   # kept, its interrupt in its record a moment later
+            else:
+                kept = began is not None and any(began <= s < until for s in stops)
+            r["kept"] = r["kept"] or kept
     return out
 
 
@@ -969,7 +1039,7 @@ def taken_back(conn, channel: str, tables: set, rec: "Record", now: float) -> tu
     server saw none of the answer's words reach Claude Code (`withdrawn_reads`' `reached`); else -- a tool call begun,
     no text; a hook from before it said -- with nothing in Claude Code's record of the turn being interrupted for
     TAKEN_SECONDS since (`kept`). Until then (None, when to look again). (None, None) for any other call hung up on, one
-    whose text had come, or where its record is not followed (not known)."""
+    whose text had come or with a message queued (`kept`), or where its record is not followed (not known)."""
     last = _newest_reads(conn, channel, 2) or []
     r = last[0] if last else None
     if r is None or r["error_status"] != HUNG_UP:
