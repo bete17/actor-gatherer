@@ -1,18 +1,21 @@
 """Chat's view (ag_dashboard/chat_view.py) where no recorded run reaches: a turn opening that a key typed into the
 terminal stopped before the harness recorded anything of it -- a codex session's first message, stopped before the call
 that makes its thread -- as the terminal's message box shows it after; a session whose process ended (its `ended`),
-before a turn, as it worked, or after it was over; and whether a hang-up took its message back, recorded by a hook
-before it said (`_took`)."""
+before a turn, as it worked, or after it was over; whether a hang-up took its message back, recorded by a hook
+before it said (`_took`), or kept as the harness's record says (data.py's `on_esc`); and Esc before any of the answer
+with a message queued (tests/esc_runs)."""
+import copy
 import json
 import os
 import sys
 import unittest
+from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import chat_replay  # noqa: E402
-from ag_dashboard import chat_view  # noqa: E402
+from ag_dashboard import chat_view, data  # noqa: E402
 
 SENT = {"cid": "p1", "text": "Hello", "at": 100.0}
 
@@ -140,6 +143,106 @@ class TookBackTest(unittest.TestCase):
 
     def test_shown_by_an_older_hook_of_a_harness_that_keeps_it_it_is_not_taken_back(self):
         self.assertFalse(self.took(takes_back=False, prompts=[{"text": "Hello", "sent": 12.0}]))
+
+    def test_not_one_the_harness_s_record_says_it_kept(self):
+        self.assertFalse(self.took(withdrawn=True, kept=True))
+        self.assertTrue(self.took(withdrawn=True, kept=False))
+
+
+class OnEscTest(unittest.TestCase):
+    """data.py's `on_esc`: Claude Code's record of a call hung up on, its message "Hello" sent as a turn's first at 10.0,
+    the hang-up stored at 20.0."""
+
+    def esc(self, facts=(), stops=(), said="Hello", after=None, until=float("inf")):
+        sent = [("message_sent", {"how": "prompt", "at": 10.0, "words": "Hello", "text": "Hello"})]
+        return data.on_esc(sent + list(facts), list(stops), said, 20.0, after, until)
+
+    def test_nothing_in_its_record_since_its_send_it_took_it_back(self):
+        self.assertEqual(self.esc(), (False, False))
+
+    def test_an_interrupt_since_its_send_keeps_it_though_ag_read_the_call_after(self):
+        self.assertEqual(self.esc(stops=[12.0], after=15.0), (True, False))
+        self.assertEqual(self.esc(stops=[9.0]), (False, False))                  # the turn before's
+        self.assertEqual(self.esc(stops=[12.0], until=11.0), (False, False))     # after ag read the next call
+        self.assertEqual(self.esc([("message_sent", {"how": "prompt", "at": 11.0, "words": "Bye"})], stops=[12.0]),
+                         (False, False))                                         # another turn's
+
+    def test_from_its_newest_send_one_taken_back_and_sent_again(self):
+        again = [("message_sent", {"how": "prompt", "at": 15.0, "words": "Hello"})]
+        self.assertEqual(self.esc(again, stops=[12.0]), (False, False))
+        self.assertEqual(self.esc(again, stops=[16.0]), (True, False))
+
+    def test_a_message_queued_since_and_waiting_keeps_it(self):
+        queued = [("message_queued", {"at": 12.0, "queued": "q1"})]
+        self.assertEqual(self.esc(queued), (False, True))
+        self.assertEqual(self.esc(queued + [("message_sent", {"how": "next", "at": 19.0, "queued": "q1"})]),
+                         (False, True))                                          # sent at once on the Esc
+        self.assertEqual(self.esc(queued + [("message_withdrawn", {"at": 13.0, "queued": "q1"})]), (False, False))
+        self.assertEqual(self.esc([("message_queued", {"at": 9.0, "queued": "q0"})]), (False, False))   # before it
+
+    def test_a_send_not_in_its_record_from_ag_s_read(self):
+        self.assertEqual(self.esc(stops=[12.0], said="Other"), (False, False))
+        self.assertEqual(self.esc(stops=[16.0], said="Other", after=15.0), (True, False))
+
+
+ESC_RUNS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "esc_runs")
+
+
+def esc_run(name: str) -> dict:
+    with open(os.path.join(ESC_RUNS, name + ".json")) as fh:
+        return json.load(fh)
+
+
+def sent_unchanged(run: dict) -> dict:
+    """The run as where Claude Code sends the message again unchanged, as it also does (seen live): ag withdraws the
+    hung-up call's events once it has read the call, then restores the message as it stores the call that sends it
+    again -- the same row, no new one."""
+    run = copy.deepcopy(run)
+    types = {t["event_type_id"]: t["name"] for t in run["event_types"]}
+    first, again = [e for e in run["events"] if types[e["event_type_id"]] == "user_message"][:2]
+    assert again["text"] == first["text"] + "\n"           # as recorded: joined with the next, Claude Code's newline
+    run["events"].remove(again)
+    read = next(r["_at"] for r in run["_reads"] if r["row_id"] == first["row_id"])
+    stamp = datetime.fromtimestamp(read + 0.01, timezone.utc).isoformat()
+    rows = [dict(r, withdrawn_at=stamp) for r in run["sampled"]["_withdrawn"][-1]["rows"]]
+    run["sampled"]["_withdrawn"] = [{"at": read - 1.0, "rows": []}, {"at": read + 0.01, "rows": rows},
+                                    {"at": read + 0.02, "rows": [r for r in rows if r["row_id"] != first["row_id"]]}]
+    return run
+
+
+class EscWithQueuedTest(unittest.TestCase):
+    """Esc before any of the answer with a message queued (tests/esc_runs/claude-esc-with-queued.json, recorded live on
+    a scratch home: a session's first message held by ag, a second written meanwhile -- queued --, then Esc). Claude Code
+    stops the turn, keeps its message and sends the queued one at once; the hook still says none of the answer came and
+    withdraws what the call stored. Kept apart from tests/chat_runs: as ag records the hang-up seconds late, behind the
+    next call's read, Chat's view shows the message twice for a while there (ag_dashboard/TODO.md)."""
+
+    def views(self, run: dict):
+        return [(m.at, m.conn, chat_view.view(m.conn, run["channel"], (m.session or {}).get("session"), m.at))
+                for m in chat_replay.moments(run)]
+
+    def check_end(self, run: dict):
+        views = self.views(run)
+        _, conn, v = views[-1]
+        self.assertEqual([(t["text"].strip(), [m["text"] for m in t["more"]]) for t in v["turns"]],
+                         [("Write a haiku about autumn leaves.", ["Make it rhyme."])])
+        self.assertEqual((v["current"]["state"], v["opening"], v["waiting"], v["taken_back"]), ("done", None, [], None))
+        failed = next(e["_at"] for e in run["events"]
+                      if {t["event_type_id"]: t["name"] for t in run["event_types"]}[e["event_type_id"]] == "call_failed")
+        for at, conn, v in views:                           # from the hang-up on: the message never taken back
+            if at >= failed:
+                self.assertIn("Write a haiku about autumn leaves.",
+                              [t["text"].strip() for t in v["turns"]], at)
+                self.assertIsNone(v["taken_back"], at)
+
+    def test_sent_again_unchanged_its_turn_stays_with_the_queued_message(self):
+        self.check_end(sent_unchanged(esc_run("claude-esc-with-queued")))
+
+    def test_sent_again_with_claude_code_s_newline_it_shows_once(self):
+        """As recorded: the message sent again joined with the queued one, with Claude Code's newline -- stored as a new
+        row, the old one left withdrawn (data.py's `sent_again`)."""
+        self.check_end(esc_run("claude-esc-with-queued"))
+
 
 if __name__ == "__main__":
     unittest.main()
