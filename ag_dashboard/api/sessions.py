@@ -95,14 +95,15 @@ def discard(srv: Parts, body: Body) -> Response:
 
 @router.post("/api/answer")
 def answer_ask(srv: Parts, body: Body) -> Response:
-    """{session_id, call, choice}: what its terminal asks (data.py's `asking`, the call `call`), answered with `choice`
-    (answers.py): its keys typed there -> the answer."""
+    """{session_id, id, choice}: what it asks (data.py's `asking`: a question, a plan, a permission -- the one whose id
+    is `id`; `call`, as the page named it before), answered with `choice` (answers.py) -> the answer. The one path for
+    every kind: the dashboard's terminal for the session answered with its dialog's keys (sessions.py's `answer`)."""
     sid = str(body.get("session_id") or "")
     row = next((x for x in srv.sessions.list() if x["session_id"] == sid), None)
     if row is None:
         raise sessions.SessionError(f"no session {sid} started from the dashboard")
     ask = data.asking_of(row["gatherer"], sid, row.get("cwd"))
-    if not ask or ask.get("call") != body.get("call"):
+    if not ask or (ask.get("id") or ask.get("call")) != (body.get("id") or body.get("call")):
         raise sessions.SessionError("it no longer asks that")
     choice = body.get("choice")
     return answer(srv.sessions.answer(sid, ask, choice if isinstance(choice, dict) else {}))

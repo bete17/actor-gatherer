@@ -299,11 +299,11 @@ class StreamTest(HomeBase):
         self.addCleanup(events.close)
         return events
 
-    def test_home_and_the_agent_at_once_then_each_change_as_it_is_stored(self):
+    def test_chat_the_agent_and_home_at_once_then_each_change_as_it_is_stored(self):
         httpd = self.start()
         s = self.open(httpd, "?gatherer=g&channel=c1")
-        first = {s.next()[0], s.next()[0]}
-        self.assertEqual(first, {"home", "agent"})
+        first = [s.next()[0], s.next()[0], s.next()[0]]
+        self.assertEqual(first, ["chat", "agent", "home"])     # Chat first: an actor just picked waits for no other read
         top = store.high_water(self.m._conn("g"))
         self.m._context("g", top, ch("c1"))                    # a read: a new call on the chart
         got = s.until(lambda name, a: name == "agent" and len(a["reads"]) == 4, 2)
@@ -311,6 +311,18 @@ class StreamTest(HomeBase):
         answered(self.m, "g", ch("c1"), [{"type": "agent_message", "payload": {"x": 1}, "text": "Done."}], "a1")
         got = s.until(lambda name, a: name == "agent" and a["pending"], 2)
         self.assertEqual(got[1]["pending"][-1]["text"], "Done.")
+
+    def test_chat_comes_while_the_home_is_still_being_read(self):
+        httpd = self.start()
+        go, real = threading.Event(), httpd.home_view
+        httpd.home_view = lambda *a: go.wait(5) and real(*a)            # a slow read of the home
+        self.addCleanup(go.set)
+        s = self.open(httpd, "?gatherer=g&channel=c1")
+        self.assertEqual(s.next(2)[0], "chat")                          # while the home is still being read
+        self.assertEqual(s.next(2)[0], "agent")
+        self.assertFalse(go.is_set())
+        go.set()
+        self.assertEqual(s.next(2)[0], "home")
 
     def test_chat_s_view_at_once_then_as_a_message_is_stored(self):
         httpd = self.start()

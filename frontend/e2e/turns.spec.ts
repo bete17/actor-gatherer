@@ -285,3 +285,29 @@ test("starts every turn over as the setting has them, once it is picked", async 
   await pick("messages");
   await expect(t).toHaveClass("fl-turn folded");
 });
+
+test("an actor shown before is drawn at once when picked again, while its loads are held up", async ({ page }) => {
+  // once each actor was shown, the loads held up: the actor's files never answered, and what Chat shows of it (the
+  // stream's view) not passed on -- an actor not shown before waits on them ("Loading…"), one shown before is drawn as
+  // it was last loaded
+  let held = false;
+  await page.route("**/api/files?*", (route) => (held ? undefined : route.continue()));
+  await page.routeWebSocket(/\/api\/ws$/, (ws) => {
+    const server = ws.connectToServer();
+    server.onMessage((m) => {
+      if (held && typeof m === "string" && m.split("\n")[1] === "chat") return;
+      ws.send(m);
+    });
+  });
+  const latest = talk(page).locator(".fl-turn.on");
+  await openActor(page, CLAUDE);
+  await expect(latest.locator(".fl-finished .now")).toHaveText("Done");
+  const claude = await latest.textContent();
+  await page.locator("#agents button.agent", { hasText: CODEX }).click();
+  await expect(latest).not.toHaveText(claude!);
+  await expect(page.locator("#main")).not.toContainText("Loading…");
+  held = true;
+  await page.locator("#agents button.agent", { hasText: CLAUDE }).click();
+  await expect(latest).toHaveText(claude!, { timeout: 1000 });
+  await expect(page.locator("#main")).not.toContainText("Loading…");
+});

@@ -7,6 +7,12 @@ session_files.py): what it says that no call carries recorded as it is written. 
 a call's new pieces say of background tasks, are recorded too (`derive`: harness_kit's `derived`), each once, by the
 harness's own ids. What a call is, the harness's rules say (its `harness`, harness_kit's).
 
+The harness's own hooks report to the hook server too, where its launcher pointed them (a POST to HOOK_PATH, under the
+URL's /h/<gatherer>/): a permission it asks in its terminal before a tool runs (harness_kit's `hooked`), recorded as
+`asked` (`reported`) -- the subclass answers the hook {} at once, deciding nothing: the harness's dialog drawn as ever. Its thread calling
+its model again -- the session's turn, or the subagent that asked -- is what says the dialog was answered: neither runs
+on while it waits; recorded `ask_settled` (`moved_on`). A "No" that interrupts the turn, or Esc, its record says.
+
 A subclass gives:
     harness           the harness's rules (harness_kit.Harness)
     ANSWERED, FILES   its keys in the hook server's `request.state`: where a call's (gatherer, channel, cwd) is kept
@@ -22,9 +28,10 @@ background, so the call is not held up for it; `close` waits for what is under w
 
 import asyncio
 import time
-from typing import Callable, List, Optional, Set
+from typing import Callable, Dict, List, Optional, Set, Tuple
 
-from harness_kit import Call, Facts, Harness, Part
+from harness_kit import Call, Fact, Facts, Harness, Part
+from harness_kit.base import HOOK_PATH
 
 from .adaptor import CHANNEL
 from .call_ag import HUNG_UP, read_of, report_measured
@@ -46,6 +53,8 @@ class ProxyHook:
         self.sessions = SessionFiles(ag_clients, log) if sessions is ... else sessions
         self.adaptor = getattr(self, "adaptor", None)
         self.under_way: Set[asyncio.Future] = set()
+        #: (gatherer, channel) -> {an open permission's key: the subagent that asked, None the session itself}
+        self.permissions: Dict[Tuple[str, str], Dict[str, Optional[str]]] = {}
 
     # ---- recording, in the background
 
@@ -115,6 +124,56 @@ class ProxyHook:
         """A name for the session, recorded as `by` gave it."""
         if text and await self.recorded(gatherer, channel, [name(text, by)]) is not None:
             self.log(gatherer, f"[{channel}] name: kept")
+
+    # ---- the harness's own hooks' reports
+
+    @staticmethod
+    def reporting(request) -> bool:
+        """Whether the request is one of the harness's own hooks' reports (a POST to HOOK_PATH), not a model call."""
+        return getattr(request, "method", None) == "POST" and getattr(request, "path", None) == HOOK_PATH
+
+    def reported(self, request, gatherer: Optional[str], channel: Optional[str]) -> None:
+        """A hook's report (`reporting`) of the session `channel`: what it says (harness_kit's `hooked`: a permission
+        asked) recorded in the background, beside the session's reads -- the hook is answered at once. A permission is
+        kept open until its thread calls its model again, or asks again (`moved_on`)."""
+        body = getattr(request, "body", None)
+        if not gatherer or not channel or not isinstance(body, dict):
+            return
+        try:
+            facts = self.harness.hooked(body, time.time())
+        except Exception as exc:  # noqa: BLE001 - a lost record never holds the harness up
+            self.log(gatherer, f"[{channel}] hook report not read: {exc!r}")
+            return
+        events = []
+        for f in facts:
+            if f.type == Facts.ASKED and f.data.get("kind") == "permission":
+                events += self._settled(gatherer, channel, f.data.get("agent"))    # its dialogs come one at a time
+                self.permissions.setdefault((gatherer, channel), {})[f.data["call"]] = f.data.get("agent")
+                self.log(gatherer, f"[{channel}] asks permission: {f.data.get('tool')}, {f.data.get('said')}"
+                                   + (f" (subagent {f.data['agent']})" if f.data.get("agent") else ""))
+            events.append(derived(f))
+        if events:
+            self.keep(record(self.ag_clients.client(gatherer), gatherer, channel, events, self.log, beside=True))
+
+    def moved_on(self, gatherer: str, channel: str, agent: Optional[str] = None) -> None:
+        """The session's turn (`agent` None), or its subagent `agent`, calls its model: the permission it asked is
+        answered -- it does not call again while its dialog waits. Recorded `ask_settled`, in the background."""
+        events = self._settled(gatherer, channel, agent)
+        if events:
+            self.keep(record(self.ag_clients.client(gatherer), gatherer, channel, events, self.log, beside=True))
+
+    def _settled(self, gatherer: str, channel: str, agent: Optional[str]) -> List[dict]:
+        """The permissions `agent` (None: the session itself) asked that are open, closed: their `ask_settled` events --
+        answered, as it calls its model again or asks again (it draws one dialog at a time, the next once the last is
+        answered)."""
+        open_ = self.permissions.get((gatherer, channel))
+        done = [k for k, by in (open_ or {}).items() if by == agent]
+        for k in done:
+            del open_[k]
+        if open_ is not None and not open_:
+            self.permissions.pop((gatherer, channel), None)
+        now = time.time()
+        return [derived(Fact(Facts.ASK_SETTLED, k, now, {"call": k, "how": "answered", "result": None})) for k in done]
 
     # ---- the hook server's reports
 

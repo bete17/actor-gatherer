@@ -950,7 +950,9 @@ function nowLine(a, cls, d) {
   const line = (kind, lbl, text, extra) => el("div", { class: `c-now ${kind}` }, el("span", { class: "lbl", text: lbl }),
     text ? el("span", { class: "tx", text }) : null, extra || null);
   const since = (t) => t ? el("span", { class: "tm", "aria-hidden": "true", "data-ago": t, text: ago(t) }) : null;
-  if (cls === "asking" && a.asking) return line("ask", "Waiting for you:", a.asking.kind === "plan" ? "A plan to approve"
+  if (cls === "asking" && a.asking) return line("ask", "Waiting for you:", a.asking.kind === "permission" ? `Permission to ${permissionVerb(a.asking)}: ${a.asking.said || a.asking.tool}`
+    : a.asking.kind === "dialog" ? `In its terminal: ${[a.asking.title, a.asking.said].filter(Boolean).join(" · ")}`
+    : a.asking.kind === "plan" ? "A plan to approve"
     : (a.asking.questions || []).map((q) => q.question).filter(Boolean).join(" · ") || "A question", since(a.asking.at));
   if (cls === "error" || cls === "failed") return line("err", "Error:", (a.failing && a.failing.error) || (a.stopped && a.stopped.text)
     || (cls === "failed" ? "Its agent failed to start" : "Its turn stopped on an error"), since((a.failing || a.stopped || {}).at));
@@ -1043,9 +1045,15 @@ async function select(g, c) {
   savePanes();
   if (!PANE) { appsSelected(); showActorsApp(g, c); }   // an app's actor: its app's panel above it (19-app-actors.js)
   if (SNAPSHOT || state.paused) { await refresh(true); chatToEnd(); return; }
+  const kept = !isShell(c) && showKept(g, c);        // shown before: drawn at once as it was, dimmed until brought up to date
   connect();
   const main = document.getElementById("main");
   main.classList.add("stale");
+  if (kept) { render(true); chatToEnd(); }
   try { await loadChat(); } finally { main.classList.remove("stale"); }
-  if (state.selected[0] === g && state.selected[1] === c) { render(true); chatToEnd(); }
+  if (state.selected[0] === g && state.selected[1] === c) {
+    const end = !kept || chatAtEnd();                // drawn already: the reader's place kept, should they have moved it
+    render(true);
+    if (end) chatToEnd();
+  }
 }

@@ -124,8 +124,8 @@ class StreamsOverOneSocketTest(HomeBase):
         s = self.page()
         s.say({"open": "1", "url": "/api/stream?gatherer=g&channel=c1"})
         self.assertEqual(s.next(), ("1", "!open", ""))
-        names = {s.next()[1], s.next()[1]}
-        self.assertEqual(names, {"home", "agent"})
+        names = [s.next()[1], s.next()[1], s.next()[1]]
+        self.assertEqual(names, ["chat", "agent", "home"])
         self.assertTrue(until(lambda: len(self.httpd.hub.watches) == 1))
         h = self.httpd.app_host                             # an app's panel's stream: the Editor's (one ag comes with)
         h._write_fn = insert_here

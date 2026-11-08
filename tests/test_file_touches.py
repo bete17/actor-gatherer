@@ -32,6 +32,18 @@ SCRIPT_OUT = [{"type": "input_text", "text": "Script completed\nWall time 0.1 se
 class CommandsTest(unittest.TestCase):
     """A call read from its words and output alone: what was found wrong in real sessions."""
 
+    def test_a_command_is_read_once_each_caller_given_lists_of_its_own(self):
+        from harness_kit import shell
+        command = "cd sub && echo 1 > a.txt; cat <<'EOF' > b.txt\nhi\nEOF"
+        shell._parsed.cache_clear()
+        first = shell._simple_commands(command)
+        first[0][0].append("changed")                                   # the caller's to change
+        second = shell._simple_commands(command)
+        self.assertEqual(second, [(["cd", "sub"], []), (["echo", "1"], [(">", "a.txt")]), (["cat"], [("<<", "hi"), (">", "b.txt")])])
+        self.assertEqual(shell._parsed.cache_info().misses, 1)         # read once
+        self.assertIsNone(shell._simple_commands("echo 'unclosed"))     # what cannot be read: kept as such
+        self.assertIsNone(shell._simple_commands("echo 'unclosed"))
+
     def test_a_line_of_another_command_s_output_is_not_a_search_match(self):
         found, _ = shell_reads("grep -n foo a.py; date", "3:foo\nSat Oct 24 18:12:34 2026", "/r")
         self.assertEqual(found, [("/r/a.py", "hit", 3, "foo")])

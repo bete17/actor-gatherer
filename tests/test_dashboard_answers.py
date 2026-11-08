@@ -283,6 +283,16 @@ class RecordedTest(GathererBase):
                   event("tool_output", {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t2", "content": result}]}, result)])
         self.assertTrue(self.actor(sent2)["answer"]["recorded"])
 
+    def test_the_stored_answer_is_read_once_for_each_session(self):
+        sent = {"call": "t1", "summary": "Which color? → Blue", "expect": ['"Which color?"="Blue"'], "at": time.time()}
+        self.add([("answer_given", {"at": sent["at"], **{k: sent[k] for k in ("call", "summary", "expect")}}, None)])
+        reads = []
+        real = data.answer_of
+        with unittest.mock.patch.object(data, "answer_of", lambda *a: reads.append(a) or real(*a)):
+            for _ in range(3):                                       # each read of the home
+                self.assertEqual(self.actor(None)["answer"]["call"], "t1")
+        self.assertEqual(len(reads), 1)
+
     def test_kept_in_the_gatherer_it_outlasts_the_dashboard_that_typed_it(self):
         sent = {"call": "t1", "summary": "Which color? → Blue", "expect": ['"Which color?"="Blue"'], "at": time.time()}
         self.add([("answer_given", {"at": sent["at"], **{k: sent[k] for k in ("call", "summary", "expect")}}, None)])

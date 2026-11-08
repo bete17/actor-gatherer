@@ -197,7 +197,8 @@ def _events(conn, channel: str, stops: List[dict] = ()):
     harness took back (Esc before any of its answer came), nor what came with it (`_withdrawn`; data.py's
     `withdrawn_reads`): a call hung up on withdraws all it stored -- the turns before it, sent with it, among them, and
     the agent's own (AGENTS_OWN) -- but the harness keeps all that, and all of the call where the answer had begun, its
-    record saying the turn was interrupted after (`stops`). A skill's instructions (its `kind` SKILL) carry in their note
+    record saying the turn was interrupted after (`stops`) -- unless it sent the message again as a newer row (`again`).
+    A skill's instructions (its `kind` SKILL) carry in their note
     part the call that loaded them (`loaded_by`: its `call_id` property), which names the skill where they don't."""
     columns = data._columns(conn, "events")
     said = "e.p_kind, e.p_words" if {"p_kind", "p_words"} <= columns else "NULL AS p_kind, NULL AS p_words"
@@ -206,7 +207,7 @@ def _events(conn, channel: str, stops: List[dict] = ()):
     if "_withdrawn" in tables:
         back = data.withdrawn_reads(conn, channel, tables, [s["at"] for s in stops if s["kind"] == "interrupted"])
         taken = " OR ".join(f"(w.read_id = {int(r)} AND w.row_id >= {int(w['said_row'])})"
-                            for r, w in back.items() if w["said"] and not w["kept"] and w["failed"])
+                            for r, w in back.items() if w["said"] and w["failed"] and (not w["kept"] or w["again"]))
         own = ", ".join(f"'{t}'" for t in AGENTS_OWN)
         kept = (f" AND (t.name IN ({own}) OR e.row_id NOT IN (SELECT w.row_id FROM _withdrawn w WHERE w.read_id IS NULL"
                 + (f" OR {taken}" if taken else "") + "))")

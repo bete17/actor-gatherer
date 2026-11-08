@@ -603,6 +603,58 @@ class Harness(ABC):
         """A reader of the record at `path`, from its start (None by default: no record known)."""
         return None
 
+    # ---- the permission it asks in its terminal before a tool runs, as a hook of its own reports it (to HOOK_PATH)
+
+    def permission_hooks(self, url: str) -> Optional[Dict[str, Any]]:
+        """Its own settings, for one run, that have it POST each permission it asks in its terminal -- before running a
+        tool its rules don't let it run unasked -- to `url` (ag's hook server), as it asks it. None by default: it has
+        no such hook."""
+        return None
+
+    def hooked(self, report: dict, at: float) -> List["Fact"]:
+        """The facts one of its hooks' reports says (`report`, as the hook posted it; `at`, when it came): a permission
+        asked -- an `asked` fact of kind "permission" (Facts). None by default."""
+        return []
+
+    def permission_keys(self, choice: dict, shown: Optional[dict] = None) -> List[str]:
+        """The keys that answer a permission it asks in its terminal (`hooked`'s) with `choice` -- {"allow": bool,
+        "text": why not, on one line, or None} -- each typed on its own into its dialog as its screen shows it now
+        (`shown`: `permission_shown`'s; None: as it first shows). AT_DENY among them: before going on, the dialog's
+        cursor must be on its option that denies. Raises AnswerError where it can't be answered so."""
+        raise AnswerError(f"{self.label or self.name or 'this harness'}'s permissions can't be answered from here")
+
+    def permission_shown(self, screen) -> Optional[dict]:
+        """The permission dialog its terminal's screen (harness_kit.screen's) shows now: {title (its head: "Bash
+        command"), question ("Do you want to proceed?"), lines (what it shows between them), options (their labels, in
+        order), cursor (the place of the option the cursor is on), deny (the place of the option that denies)}; None
+        where it shows none -- or the harness has no rule for it. What a reader goes by where no hook reported it."""
+        return None
+
+
+#: Where ag's launchers point a harness's own hooks (`permission_hooks`' url): its hook server's URL for the run, after
+#: /h/<gatherer>/ (and /c/<folder>/), then this -- a path no model endpoint has (ag's proxy_hook.py's `reported`).
+HOOK_PATH = "/ag/hooked"
+#: Among a permission's keys (`permission_keys`): not a key, but a check -- the dialog's cursor is on its option that
+#: denies, as its screen shows (`permission_shown`) -- the keys after it typed only then.
+AT_DENY = "\x00at-deny"
+
+
+def permission_choice(choice) -> Tuple[bool, Optional[str]]:
+    """(whether a permission's `choice` lets the tool run, the reader's reason when it doesn't, None for none) from
+    {"allow": bool, "text": why not}. Raises AnswerError where it says neither, or the reason is not one line."""
+    if not isinstance(choice, dict) or not isinstance(choice.get("allow"), bool):
+        raise AnswerError('allow it or not: {"allow": true | false}')
+    text = choice.get("text") if isinstance(choice.get("text"), str) and not choice["allow"] else None
+    if text is not None and any(c in text for c in "\r\n\x1b"):
+        raise AnswerError("why not, on one line, please")
+    return choice["allow"], (text.strip() or None) if text is not None else None
+
+
+def permission_summary(choice: dict) -> str:
+    """A permission's answer in a line, for the page: "Allowed", "Denied", "Denied: <why>"."""
+    allow, why = permission_choice(choice)
+    return "Allowed" if allow else f"Denied: {why}" if why else "Denied"
+
 
 class Named(Harness):
     """A harness known here by its name and its look alone: its rules are elsewhere (Pi's and OpenCode's, in the
@@ -630,7 +682,11 @@ class Facts:
         message_withdrawn  queued: taken back before it was sent
         asked              call (its tool call's id, or "plan:<turn>"), kind ("question" or "plan"), questions or
                            plan, async (the turn goes on while it asks), turn: what the harness asks the user in its
-                           terminal -- from its record where no model call says so, else from the answer that asks
+                           terminal -- from its record where no model call says so, else from the answer that asks;
+                           or kind "permission", a tool it asks to run, as its hook reports it (`hooked`): call (the
+                           ask's own key: the hook names no call), tool, said (what the call is for, in a line), input
+                           (what it would run with), view (the call as ToolCall.view shows it), agent (the subagent
+                           that asks; None: the session itself)
         ask_settled        call, how ("answered" or "dismissed"), result (what the harness recorded as its answer;
                            None: none, or not known yet): it no longer waits on it
         turn_stopped       how ("over", "interrupted": Esc; "error": it gave up on a model call), error, status (the

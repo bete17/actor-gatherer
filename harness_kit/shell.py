@@ -14,6 +14,7 @@ this way as each call's result arrives, before it checks what was found against 
 those it did not check the same way. One copy, for both: harness_kit imports nothing of ag."""
 import ast
 import fnmatch
+import functools
 import os
 import re
 import shlex
@@ -341,9 +342,25 @@ def _heredocs(command: str):
     return out, bodies
 
 
+PARSED_KEPT = 4096        # the commands whose reading is kept (`_parsed`): a few MB at most
+
+
 def _simple_commands(command: str):
     """A shell command's simple commands, in order: (words, redirections [(op, target)]), heredoc
-    bodies standing as their text; None when it cannot be read."""
+    bodies standing as their text; None when it cannot be read. Fresh lists each time, the caller's to change."""
+    got = _parsed(command)
+    return None if got is None else [(list(words), list(redirs)) for words, redirs in got]
+
+
+@functools.lru_cache(maxsize=PARSED_KEPT)
+def _parsed(command: str):
+    """`_simple_commands`, as tuples, kept: a command's reading never changes, and a view of an actor reads every
+    command it ran again each time it is made (shlex, the most of that time on a long one)."""
+    cmds = _read_commands(command)
+    return None if cmds is None else tuple((tuple(words), tuple(redirs)) for words, redirs in cmds)
+
+
+def _read_commands(command: str):
     lines, bodies = _heredocs(command)
     words, buf = [], ""
     for line in lines:                                   # a line is a command, unless a quote runs on

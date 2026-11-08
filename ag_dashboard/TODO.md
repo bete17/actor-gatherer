@@ -8,13 +8,44 @@ record of the session has the call's result (`settled`). Where the dashboard run
 note under the chat answers it: the keys are worked out from the tool call (answers.py) and typed into the dialog
 one at a time (sessions.py's `answer`).
 
+Claude Code's permission prompts ("Do you want to proceed?") are detected too: ag's launcher adds Claude Code's
+`PermissionRequest` hook for the run (`--settings`, beside the user's own hooks), which POSTs each prompt to the hook
+server as it is drawn. The hook server records it as `asked` (kind "permission", with the tool's input and its view),
+and settles it once that thread calls its model again or asks again, which also covers a deny with a reason.
+A plain "No" or Esc interrupts the turn, which Claude Code's record says. Chat's card types the dialog's keys:
+"1" allows; Up wraps to "No"; Tab then takes a reason.
+
+Prompts no hook reports are read off the screen of a terminal the dashboard runs (harness_kit's `permission_shown`,
+sessions.py's `_watch_shown`): shown for a second with none recorded, the actor is "Waiting for you" and Chat shows
+the dialog as the screen has it, read-only, to answer in the terminal. That covers Claude Code's asks for a person
+alone (auto mode's "couldn't check this action", its Chrome block, some connector file sends: they skip the hook) and
+Codex's approvals, of which nothing is recorded. Allow and Deny type keys worked out from that same screen, the cursor
+checked to be on No before Enter.
+
+- [ ] **Codex's approvals answered from Chat**, and seen in a terminal outside the dashboard. Today Codex gets only
+  the read-only card, from the screen of a terminal the dashboard runs (`approval_shown`), and only where it asks at
+  all: manual mode. In auto mode (`--approve-for-me`) its reviewer decides. Nothing of an approval is in its rollout,
+  and ag sees no model call for one. The way in is Codex 0.164's own `PermissionRequest` hook (it also has
+  `PreToolUse`, `PostToolUse`, `Stop`, `Interrupt`), with two catches:
+  - it runs a command only (no HTTP type): a small `ag` command reading the hook's JSON on stdin and POSTing it to
+    the run's hook server (HOOK_PATH), the way Claude Code's HTTP hook does;
+  - a hook must be trusted before Codex runs it (`hooks.state.<key>.trusted_hash` in its config). ag would pre-trust
+    its own, inline with `-c`, as it pre-trusts the folder, once the hash is known (from Codex's source).
+    `--dangerously-bypass-hook-trust` would also trust a repo's own hooks, so not that.
+  With the hook in place, Allow and Deny would type the dialog's keys as for Claude Code ("y"; Esc for No). Its
+  app-server's approval requests are the other route, for a Codex run without a terminal.
+  Before building, check how omnigent does it: it answers Claude Code's questions and plan approvals through the
+  `PermissionRequest` hook's own decision rather than keys, and may do the same with Codex's hook.
+- [ ] **Antigravity's approvals**: in its default mode agy ran a delete and a write outside its folder unasked, so
+  none was seen. Its steps have a WAITING status and it has a hooks.json with PreToolUse, if it does ask.
+- [ ] **A permission allowed in the terminal itself**, for a tool that then runs long: it shows as waiting until the
+  tool ends and the next model call settles it. Answered from Chat, the dialog closing on the dashboard's own screen
+  settles it at once (sessions.py's `_closed`); keys typed into the terminal don't.
+- [ ] **A hook server restarted while a permission is asked** forgets it is open: it shows until the turn ends or a
+  new message opens one (`moved_on`).
+
 Not detected yet: the actor shows as Running while Claude Code waits.
 
-- [ ] **Permission prompts** ("Do you want to proceed?"). They never appear in what ag records. Claude Code's
-  `Notification` hook fires with `permission_prompt` when the dialog opens. ag's launcher could add that hook
-  for the run with `--settings`: it runs alongside the user's own hooks without replacing them, and it can POST
-  to the hook server ag already runs. The wait ends at the next model call, when a hook says the tool ran,
-  failed or was denied, or when keys are typed into the dashboard's terminal.
 - [ ] **Other dialogs**, such as an MCP server asking for input (elicitation). The same hook may cover some.
 - [ ] **Codex's approval prompts** ("Would you like to run the following command?"). Codex writes nothing of them to
   its rollout file, and ag records only the model's call asking for `require_escalated`. The dashboard runs codex
@@ -137,6 +168,19 @@ Not covered yet:
   draft, once and only where nothing is written; once it is not there untouched -- sent or changed in the terminal, its
   process gone -- it is taken out of Chat's box again, if still as it was put. Sent from Chat, Claude Code's box is
   emptied first. Codex takes none back (see above).
+- [x] **Esc before any of the answer, with a message queued, keeps the message:** Claude Code stops the turn, writes its
+  interrupt and sends the queued message at once, the stopped one before it -- though the hook says none of the answer
+  came and withdraws what the call stored. data.py's `on_esc` reads Claude Code's record from the message's send, not
+  from ag's read (the Esc can come while ag still reads, as for a new session's first call, which waits for its join
+  build): an interrupt since, or a message queued since and still waiting, keeps it -- in Chat's turns (`_took`), not
+  back in its box (`taken_back`), no Ctrl+C before the next send (`took_back`). Sent again unchanged, ag restores the
+  old row. Joined with the queued one, with Claude Code's newline, ag can store it as a new row and leave the old one
+  withdrawn: the old row is then hidden (`sent_again`). Recorded live: tests/esc_runs.
+- [ ] **Until ag records that hang-up, Chat shows the message twice** (the newline form): ag stores the hang-up and
+  its withdrawal behind the next call's read in the session's lane -- 3-7 s, with a new-task check -- and until then
+  the old row and the new one are both turns; the queued message is listed as waiting twice for a moment too. The
+  replay checks flag both on main as well, so tests/esc_runs is kept apart from tests/chat_runs. Why the Claude
+  adaptor stored the newline form as a new row (its `merged_key` is for that form) is not looked into.
 - [x] **Esc in Chat** interrupts the turn, as in the harness's own terminal: typed into the session's terminal, from the
   message box in any view, or from anywhere else on the page that does not take it, for the actor of the pane in focus,
   in Chat -- the list, a turn or a button clicked included (#176 took it from the box only, and an Esc after such a
@@ -198,6 +242,12 @@ Not covered yet:
   history, 11-15 s on a copy of making_ag, and Esc waited for it. With the index, 1.2 s; and a hang-up (`Read.stopped`)
   stops it between channels -- the read answers with the context it had, the build left ready for the next read.
   Still reading every other channel's whole history to locate its tasks: rows grow with the gatherer.
+- [ ] **A new session's first call waits 6-15 s** on making_ag (2026-11-07): its join build (`join_build`: 4-9.5 s --
+  `other_tasks`, then the ranking call to Sonnet, 3-5 s), then `other_tasks` again in the read that adopts it (1.5-4.7
+  s). Claude Code's terminal shows only its spinner meanwhile. `other_tasks` took 1.2-2.4 s in the join builds before,
+  4.4 s in the two that evening (2.2-3.6 s measured read-only then, with the disk full and memory swapped out).
+  Leads: the read could take the build's candidates rather than find them again; each ranking call writes ~50k
+  tokens to the prompt cache and none has read any back (`cache_read_input_tokens` 0 in logs/llm).
 - [ ] **A user message's read still waits for its task-boundary check** (sync_seconds), by choice: 3.2 s on average
   in making_ag, and 2 of 102 checks found a new task. Lanes keep it to the session.
 - [ ] **A plugin poller holding something tied to the thread that made it** (a sqlite connection opened in its
