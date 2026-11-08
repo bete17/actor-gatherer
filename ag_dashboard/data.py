@@ -84,7 +84,7 @@ import threading
 import time
 import zlib
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from . import home as paths
 from . import seen as looked                    # `seen` names a file's stat here
@@ -1206,16 +1206,29 @@ def answer_of(conn, channel: str) -> Optional[dict]:
     return {k: got[0][1].get(k) for k in ("call", "summary", "expect", "at")} if got else None
 
 
+_ANSWERS_READ: Dict[Tuple[str, str], Optional[dict]] = {}   # (database, channel) -> its stored answer, read once
+
+
 def _answer_given(gatherer: str, channel: str) -> Optional[dict]:
+    """The session's newest stored answer (`answer_of`), read once for each: only this dashboard stores one, and it
+    keeps the answers it gives since it started (sessions.py's `answered`, the session row's `answer`, which the
+    caller takes first) -- so the stored one is only what came before, and it does not change. The home reads
+    every session started here on each change, closed ones included: one connection and query each, read again,
+    was most of a read of the home."""
+    key = (paths.db_path(gatherer), channel)
+    if key in _ANSWERS_READ:
+        return _ANSWERS_READ[key]
     conn = _connect(gatherer)
     if conn is None:
-        return None
+        return None                                  # no database yet: read once there is one
     try:
-        return answer_of(conn, channel) if CHANNEL in _columns(conn, "events") else None
+        got = answer_of(conn, channel) if CHANNEL in _columns(conn, "events") else None
     except sqlite3.Error:
-        return None
+        return None                                  # read again next time
     finally:
         conn.close()
+    _ANSWERS_READ[key] = got
+    return got
 
 
 def typed_at(gatherer: str, channel: str) -> Optional[float]:

@@ -37,8 +37,9 @@ def signature(value) -> str:
 def stream(srv: Parts, gatherer: Optional[str] = None, channel: Optional[str] = None,
            also: Optional[str] = None) -> Response:
     """Server-sent events, until the page goes: `home` (data.home()) and, with `gatherer` and `channel`, `agent`
-    (data.agent(G, C)) and `chat` (what Chat shows of it: chat_view.py's `view`, made from one read) at once, then again
-    each time they change -- `chat` also as time alone changes it (a send not seen for long), checked every KEEPALIVE.
+    (data.agent(G, C)) and `chat` (what Chat shows of it: chat_view.py's `view`, made from one read) at once -- `chat`
+    first, each sent as soon as it is read -- then again each time they change; `chat` also as time alone changes it
+    (a send not seen for long), checked every KEEPALIVE.
 
     Woken by ag's notifications or the fallback check (live.py) -- what the harness's own record of a session says (the
     user writing to it as it works, a question answered in its terminal, Esc) among them, as ag's hook records it --
@@ -61,39 +62,50 @@ def stream(srv: Parts, gatherer: Optional[str] = None, channel: Optional[str] = 
         except Exception as exc:  # noqa: BLE001 - the page shows it; the stream stays up
             return {"error": f"{type(exc).__name__}: {exc}"}
 
-    def next_events() -> list:
-        """What to send next: the changes once woken (or KEEPALIVE passed), as events; a comment if none."""
+    def next_events() -> tuple:
+        """What to send next, once woken (or KEEPALIVE passed): (woken, [(event, what it is kept as, how it is read)]) --
+        the actor's Chat first, then its agent, the home and the other actors: each sent as soon as it is read, so the
+        Chat of an actor just picked waits for no other read (the home's, a pane's)."""
         woken = watch.wake.wait(server.KEEPALIVE)
         if gone.is_set():                        # the page went: nothing more to read for it
-            return []
-        if woken:
+            return woken, []
+        if woken and sent:                       # the stream's first: nothing to wait for
             time.sleep(server.COALESCE)
         home, agent, changed = watch.take()
-        out = []                                 # (event, what it is kept as, value)
-        if home or not woken:                    # unwoken: the time alone may have changed it
-            out.append(("home", "home", srv.home_view(woken)))
-        if agent and gatherer and channel is not None:
-            out.append(("agent", "agent", agent_of(gatherer, channel)))
+        out = []
         if (agent or not woken) and gatherer and channel is not None:
-            out.append(("chat", "chat", chat_of(gatherer, channel)))
+            out.append(("chat", "chat", lambda: chat_of(gatherer, channel)))
+        if agent and gatherer and channel is not None:
+            out.append(("agent", "agent", lambda: agent_of(gatherer, channel)))
+        if home or not woken:                    # unwoken: the time alone may have changed it
+            out.append(("home", "home", lambda: srv.home_view(woken)))
         for i in sorted(changed):
             g, c = others[i]
-            out.append(("actor", ("actor", g, c), {"gatherer": g, "channel": c, "agent": agent_of(g, c),
-                                                   "chat": chat_of(g, c)}))
-        chunks = []
-        for name, kept, value in out:
-            sig = signature(value)
-            if sent.get(kept) != sig:
-                chunks.append(event(name, value))
-                sent[kept] = sig
-        if not chunks and not woken:
-            chunks.append(KEEPALIVE_EVENT)
-        return chunks
+            out.append(("actor", ("actor", g, c), lambda g=g, c=c: {"gatherer": g, "channel": c,
+                                                                     "agent": agent_of(g, c), "chat": chat_of(g, c)}))
+        return woken, out
+
+    def changed(name: str, kept, value) -> Optional[bytes]:
+        """The event to send for a value read: None if it is what was sent last."""
+        sig = signature(value)
+        if sent.get(kept) == sig:
+            return None
+        sent[kept] = sig
+        return event(name, value)
 
     async def events():
         while True:
-            for chunk in await blocking(next_events):
-                yield chunk
+            woken, out = await blocking(next_events)
+            told = False
+            for name, kept, read in out:
+                if gone.is_set():
+                    break
+                chunk = changed(name, kept, await blocking(read))
+                if chunk is not None:
+                    told = True
+                    yield chunk
+            if not told and not woken and not gone.is_set():
+                yield KEEPALIVE_EVENT
 
     def close() -> None:
         """The stream let go: the hub rings it no more, and its wait (in a thread) ends now."""

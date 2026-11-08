@@ -120,7 +120,7 @@ class StreamsTest(HomeBase):
 
     def test_the_home_stream_lets_go_of_its_watch_and_its_thread_once_its_page_goes(self):
         s = self.open("/api/stream?gatherer=g&channel=c1")
-        self.assertEqual({s.event(), s.event()}, {"home", "agent"})
+        self.assertEqual([s.event(), s.event(), s.event()], ["chat", "agent", "home"])
         self.assertTrue(until(lambda: waiting("next_events", "api/stream.py")))   # waits, in a thread, for a change
         self.assertEqual(len(self.httpd.hub.watches), 1)
         s.close()
