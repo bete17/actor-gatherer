@@ -1,0 +1,555 @@
+"""The Slack app (ag_apps/slack/): the user's Slack in a panel, new messages as Slack sends them (Socket Mode), and
+replies agents draft and only the user sends. The cache (store.py) is tested directly; the backend through a Slack of
+the test's (FakeSlack, in client.py's shape) and a host of the test's -- what it tells the panels, what it inserts for
+agents, what it posts."""
+import json
+import os
+import shutil
+import stat
+import sys
+import tempfile
+import time
+import unittest
+from unittest import mock
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import app_kit  # noqa: E402
+from ag_apps.slack import backend as be  # noqa: E402
+from ag_apps.slack.client import thread_of  # noqa: E402
+from ag_apps.slack.mrkdwn import plain  # noqa: E402
+from ag_apps.slack.store import Store  # noqa: E402
+from app_kit import Caller, Instance  # noqa: E402
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+FOLDER = os.path.join(ROOT, "ag_apps", "slack")
+ME, MAYA, LEO = "UME", "UMAYA", "ULEO"
+
+
+def ts_ago(seconds: float) -> str:
+    return f"{time.time() - seconds:.6f}"
+
+
+class FakeSlack:
+    """Slack, as client.Client gives it: a channel and a DM with old messages, and what was posted."""
+
+    made = []
+
+    def __init__(self, user_token, app_token=""):
+        self.user_token, self.app_token = user_token, app_token
+        self.me = ME
+        self.convs = [{"id": "C1", "kind": "channel", "name": "paper-deadline", "user": "", "members": [],
+                       "topic": "Camera-ready Fri"},
+                      {"id": "D1", "kind": "im", "name": "", "user": MAYA, "members": [], "topic": ""}]
+        self.people = [{"id": ME, "name": "sep", "real_name": "Sep", "bot": False},
+                       {"id": MAYA, "name": "maya", "real_name": "Maya Chen", "bot": False},
+                       {"id": LEO, "name": "leo", "real_name": "Leo Park", "bot": False}]
+        old = ts_ago(3600)
+        self.msgs = {"C1": [{"ts": old, "user": LEO, "text": "Added the citations.", "thread_ts": "", "reply_count": 0,
+                             "latest_reply": "", "edited": False, "subtype": ""}], "D1": []}
+        self.threads = {}
+        self.posted = []
+        self.on_event = None
+        self.closed = False
+        self.extra = {}            # conversations.info for ones not listed
+        FakeSlack.made.append(self)
+
+    def who(self):
+        return {"user_id": ME, "user": "sep", "team": "Lab", "team_id": "T1", "url": "https://lab.slack.com/"}
+
+    def conversations(self):
+        return [dict(c) for c in self.convs]
+
+    def conversation(self, cid):
+        return next((dict(c) for c in self.convs if c["id"] == cid), self.extra.get(cid))
+
+    def users(self):
+        return [dict(u) for u in self.people]
+
+    def history(self, cid, latest="", limit=50, oldest=""):
+        got = [m for m in self.msgs.get(cid, []) if (not latest or float(m["ts"]) < float(latest))
+               and (not oldest or float(m["ts"]) > float(oldest))]
+        got.sort(key=lambda m: -float(m["ts"]))
+        return [dict(m) for m in got[:limit]], len(got) > limit
+
+    def replies(self, cid, ts, limit=200):
+        parent = next((m for m in self.msgs.get(cid, []) if m["ts"] == ts), None)
+        return ([dict(parent)] if parent else []) + [dict(m) for m in self.threads.get((cid, ts), [])]
+
+    def post(self, cid, text, thread_ts="", broadcast=False):
+        ts = f"{time.time():.6f}"
+        self.posted.append({"channel": cid, "text": text, "thread_ts": thread_ts, "broadcast": broadcast, "ts": ts})
+        return {"ts": ts, "user": ME, "text": text, "thread_ts": thread_ts, "reply_count": 0, "latest_reply": "",
+                "edited": False, "subtype": "thread_broadcast" if (thread_ts and broadcast) else ""}
+
+    def search(self, query, limit=20):
+        if "citation" in query:
+            return [{"channel": "C1", "channel_name": "paper-deadline", "ts": self.msgs["C1"][0]["ts"], "user": LEO,
+                     "username": "leo", "text": "Added the citations.", "permalink": "", "thread_ts": ""}]
+        if "budget" in query:
+            return [{"channel": "C0OPS7777", "channel_name": "ops", "ts": "300.000003", "user": MAYA, "username": "maya",
+                     "text": "The budget\nis in.", "permalink": "", "thread_ts": "200.000002"}]
+        return []
+
+    def recent(self, after, pages=3):
+        self.recent_after = after
+        return [{"channel": "D1", "ts": ts_ago(600)}, {"channel": "CNOTMINE", "ts": ts_ago(60)}]
+
+    def open_dm(self, user):
+        c = {"id": f"D-{user}", "kind": "im", "name": "", "user": user, "members": [], "topic": ""}
+        self.convs.append(c)
+        return dict(c)
+
+    def listen(self, on_event, on_status):
+        self.on_event = on_event
+        on_status("connected")
+
+    def close(self):
+        self.closed = True
+
+
+class Host(app_kit.Host):
+    def __init__(self, folder):
+        self.data = folder
+        self.told, self.inserted = [], []
+        self.inst = Instance(id="i1", app="slack", gatherer="g", title="Slack")
+        self.agents = ["agent-a"]
+        self.open_panels = 1
+
+    def insert(self, instance, events, channel=None):
+        for e in events:
+            self.inserted.append({**e, "channel": channel, "gatherer": instance.gatherer})
+
+    def read(self, instance, types, after=0, channel=None, limit=500):
+        return []
+
+    def attached(self, instance):
+        return list(self.agents)
+
+    def tell_panel(self, instance, message):
+        self.told.append(json.loads(json.dumps(message)))
+
+    def folder(self):
+        return self.data
+
+    def instances(self):
+        return [self.inst]
+
+    def panels(self, instance):
+        return self.open_panels
+
+
+class ManifestTest(unittest.TestCase):
+    def test_it_loads_as_an_app_that_starts_its_own_agent_and_offers_its_tools_to_attached_ones(self):
+        m = app_kit.load(FOLDER)
+        self.assertEqual((m.name, m.label, m.instances, m.offer), ("slack", "Slack", "one", "attached"))
+        self.assertTrue(m.agent.start)
+        self.assertEqual([t.mcp("slack")["name"] for t in m.tools], ["slack_read", "slack_search", "slack_draft"])
+        self.assertEqual([e.name for e in m.events], ["slack.drafted", "slack.sent", "slack.discarded"])
+        self.assertTrue(m.capabilities.message_agents and m.capabilities.actors)
+        for f in ("panel/index.html", "panel/panel.js", "panel/panel.css", m.mark):
+            self.assertTrue(os.path.isfile(os.path.join(FOLDER, f)), f)
+        self.assertIn("slack_draft", m.instructions)
+        self.assertIn("never send", m.instructions)
+
+    def test_the_slack_app_manifest_asks_for_socket_mode_and_user_scopes_only(self):
+        with open(be.MANIFEST_FILE) as f:
+            sm = json.load(f)
+        self.assertTrue(sm["settings"]["socket_mode_enabled"])
+        self.assertNotIn("bot", sm["oauth_config"]["scopes"])
+        user = set(sm["oauth_config"]["scopes"]["user"])
+        self.assertTrue({"chat:write", "channels:history", "im:history", "search:read", "users:read"} <= user)
+        self.assertTrue({"message.channels", "message.groups", "message.im", "message.mpim"}
+                        <= set(sm["settings"]["event_subscriptions"]["user_events"]))
+
+
+class MrkdwnTest(unittest.TestCase):
+    def test_ids_become_names_links_keep_their_address_and_escapes_are_undone(self):
+        names = {MAYA: "Maya Chen"}.get
+        text = "<@UMAYA> see <#C1|paper-deadline> and <https://x.org/a|the doc> &amp; <!here> &lt;3 <mailto:a@b.c>"
+        self.assertEqual(plain(text, names), "@Maya Chen see #paper-deadline and the doc (https://x.org/a) & @here <3 a@b.c")
+
+
+class StoreTest(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.s = Store(os.path.join(self.dir, "slack.db"))
+
+    def tearDown(self):
+        self.s.close()
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def test_a_conversation_starts_read_up_to_now_and_counts_what_comes_after(self):
+        self.s.put_conversations([{"id": "C1", "kind": "channel", "name": "a"}, {"id": "D1", "kind": "im", "user": MAYA}])
+        self.s.put_messages("C1", [{"ts": ts_ago(60), "user": LEO, "text": "old"}])
+        self.assertEqual(self.s.unread(ME), {})
+        new = ts_ago(-1)
+        self.s.put_messages("C1", [{"ts": new, "user": LEO, "text": f"hi <@{ME}>"},
+                                   {"ts": ts_ago(-2), "user": ME, "text": "mine"},
+                                   {"ts": ts_ago(-3), "user": LEO, "text": "in a thread", "thread_ts": new}])
+        self.s.put_messages("D1", [{"ts": ts_ago(-1), "user": MAYA, "text": "call?"}])
+        self.assertEqual(self.s.unread(ME), {"C1": (1, 1), "D1": (1, 1)})   # not mine, not the thread reply
+        self.s.read("C1", new)
+        self.s.read("C1", ts_ago(100))                                       # never moved back
+        self.assertEqual(self.s.unread(ME), {"D1": (1, 1)})
+
+    def test_history_is_top_level_oldest_first_and_a_thread_is_its_parent_and_replies(self):
+        self.s.put_conversations([{"id": "C1", "kind": "channel", "name": "a"}])
+        a, b, c = "100.000001", "200.000002", "300.000003"
+        self.s.put_messages("C1", [{"ts": c, "user": LEO, "text": "three"}, {"ts": a, "user": LEO, "text": "one"},
+                                   {"ts": b, "user": MAYA, "text": "reply", "thread_ts": a}])
+        self.assertEqual([m["text"] for m in self.s.history("C1")], ["one", "three"])
+        self.assertEqual([m["text"] for m in self.s.history("C1", before=c)], ["one"])
+        self.assertEqual([m["text"] for m in self.s.thread("C1", a)], ["one", "reply"])
+        self.assertEqual(self.s.replied("C1", a, b)["reply_count"], 1)
+        self.assertTrue(self.s.delete("C1", c))
+        self.assertEqual([m["text"] for m in self.s.history("C1")], ["one"])
+        self.assertEqual(self.s.conversation("C1")["latest_ts"], c)
+
+    def test_a_conversation_no_longer_listed_is_gone_but_kept(self):
+        self.s.put_conversations([{"id": "C1", "kind": "channel", "name": "a"}, {"id": "C2", "kind": "channel", "name": "b"}])
+        self.s.put_conversations([{"id": "C1", "kind": "channel", "name": "a2"}])
+        self.assertEqual([(c["id"], c["name"]) for c in self.s.conversations()], [("C1", "a2")])
+        self.assertIsNotNone(self.s.conversation("C2"))
+
+    def test_drafts_wait_until_settled(self):
+        d = self.s.draft("C1", "yes", "1.0", by_channel="agent-a", gatherer="g")
+        self.assertEqual([x["id"] for x in self.s.drafts()], [d["id"]])
+        self.s.set_draft(d["id"], status="sent", sent_ts="2.0")
+        self.assertEqual(self.s.drafts(), [])
+        self.assertEqual(self.s.get_draft(d["id"])["sent_ts"], "2.0")
+
+
+class BackendBase(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.host = Host(self.dir)
+        FakeSlack.made = []
+        self.app = be.SlackApp(make_client=FakeSlack)
+        self.app.start(self.host)
+        self.assertEqual(self.app.status, "off")
+        r = self.post("connect", {"user_token": "xoxp-1", "app_token": "xapp-1", "wait": True})
+        self.assertEqual(r.status, 200, r.body)
+        self.slack = FakeSlack.made[-1]
+        self.host.told.clear()
+
+    def tearDown(self):
+        self.app.stop()
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def post(self, path, body):
+        return self.app.request(self.host.inst, "POST", path, {}, json.dumps(body).encode())
+
+    def get(self, path, **q):
+        r = self.app.request(self.host.inst, "GET", path, q, b"")
+        return json.loads(r.body) if r.status == 200 else (r.status, json.loads(r.body or b"{}"))
+
+    def call(self, tool, args, channel="agent-a"):
+        return self.app.call(self.host.inst, tool, args, Caller(channel=channel, gatherer="g"))
+
+    def live(self, **ev):
+        self.slack.on_event({"type": "message", **ev})
+
+    def kinds(self):
+        return [t["kind"] for t in self.host.told]
+
+    def streams(self):
+        return [e for e in self.host.inserted if e["type"] == "context_stream"]
+
+
+class ConnectTest(BackendBase):
+    def test_connecting_keeps_the_tokens_for_the_user_only_and_reads_who_and_what(self):
+        path = os.path.join(self.dir, be.CREDENTIALS)
+        self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
+        self.assertEqual(self.app.status, "connected")
+        st = self.get("state")
+        self.assertEqual((st["setup"]["me"], st["setup"]["team"], st["setup"]["live"]), (ME, "Lab", True))
+        self.assertEqual({c["id"]: c["label"] for c in st["conversations"]}, {"C1": "#paper-deadline",
+                                                                                "D1": "DM with Maya Chen"})
+        self.assertEqual(st["users"][MAYA]["name"], "Maya Chen")
+        self.assertEqual(st["unread"], {})                   # what was there before connecting is read
+
+    def test_a_restart_connects_again_from_the_kept_tokens(self):
+        self.app.stop()
+        again = be.SlackApp(make_client=FakeSlack)
+        again.start(self.host)
+        deadline = time.time() + 5
+        while again.status != "connected" and time.time() < deadline:
+            time.sleep(0.02)
+        self.assertEqual(again.status, "connected")
+        self.assertEqual(FakeSlack.made[-1].user_token, "xoxp-1")
+        again.stop()
+        other = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, other, True)
+        self.app = be.SlackApp(make_client=FakeSlack)      # (tearDown stops one)
+        self.app.start(Host(other))
+
+    def test_when_each_conversation_was_last_active_comes_from_a_search_of_the_last_two_weeks(self):
+        convs = {c["id"]: c for c in self.get("state")["conversations"]}
+        self.assertGreater(float(convs["D1"]["active_ts"]), time.time() - 700)          # a search hit
+        self.assertEqual(convs["C1"]["active_ts"], "")                                  # none in two weeks
+        self.assertNotIn("CNOTMINE", convs)                                             # not the user's: left out
+        self.assertEqual(self.slack.recent_after, time.strftime("%Y-%m-%d", time.localtime(time.time() - 14 * 86400)))
+        parent = self.slack.msgs["C1"][0]["ts"]
+        reply = ts_ago(-1)
+        self.live(channel="C1", user=MAYA, text="?", ts=reply, thread_ts=parent)       # a thread reply counts too
+        self.assertEqual(self.app.store.conversation("C1")["active_ts"], reply)
+        self.app.store.active("C1", ts_ago(3600))                                       # never moved back
+        self.assertEqual(self.app.store.conversation("C1")["active_ts"], reply)
+
+    def test_tokens_that_are_not_slacks_are_refused(self):
+        r = self.post("connect", {"user_token": "xoxb-1", "app_token": "xapp-1"})
+        self.assertEqual(r.status, 400)
+        self.assertIn("xoxp-", json.loads(r.body)["error"])
+
+    def test_disconnecting_forgets_the_tokens(self):
+        self.post("disconnect", {})
+        self.assertFalse(os.path.exists(os.path.join(self.dir, be.CREDENTIALS)))
+        self.assertTrue(self.slack.closed)
+        self.assertEqual(self.get("state")["setup"]["status"], "off")
+        self.assertTrue(self.call("search", {"query": "x"}).is_error)
+
+
+class LiveTest(BackendBase):
+    def test_a_new_message_is_told_to_the_panels_and_to_the_agents_working_with_slack(self):
+        ts = ts_ago(-1)
+        self.live(channel="C1", user=MAYA, text=f"<@{ME}> is Table 3 the Nov 1 rerun?", ts=ts)
+        told = self.host.told[-1]
+        self.assertEqual((told["kind"], told["conversation"], told["mention"]), ("message", "C1", True))
+        self.assertEqual(told["unread"], {"C1": [1, 1]})
+        (s,) = self.streams()
+        self.assertEqual(s["channel"], "agent-a")
+        self.assertEqual(s["payload"]["stream"], "Slack #paper-deadline")
+        self.assertEqual(s["payload"]["author"], "Maya Chen")
+        self.assertEqual(s["payload"]["text"], f"@Sep is Table 3 the Nov 1 rerun?  [conversation C1, ts {ts}]")
+        self.live(channel="C1", user=MAYA, text="again", ts=ts)               # Slack re-sending it: once
+        self.assertEqual(len(self.streams()), 1)
+
+    def test_only_dms_and_mentions_reach_agents_when_the_user_says_so_and_nothing_with_none(self):
+        self.post("settings", {"tell_agents": "mentions"})
+        self.live(channel="C1", user=LEO, text="lunch?", ts=ts_ago(-1))
+        self.live(channel="D1", user=MAYA, text="call?", ts=ts_ago(-2))
+        self.assertEqual([s["payload"]["stream"] for s in self.streams()], ["Slack DM with Maya Chen"])
+        self.post("settings", {"tell_agents": "none"})
+        self.live(channel="D1", user=MAYA, text="hello?", ts=ts_ago(-3))
+        self.assertEqual(len(self.streams()), 1)
+        self.assertEqual(self.post("settings", {"tell_agents": "loud"}).status, 400)
+
+    def test_the_users_own_message_marks_the_conversation_read(self):
+        self.live(channel="C1", user=LEO, text="one", ts=ts_ago(-1))
+        self.live(channel="C1", user=ME, text="two", ts=ts_ago(-2))
+        self.assertEqual(self.host.told[-1]["unread"], {})
+        self.assertEqual(self.streams()[-1]["payload"]["author"], "the user (Sep)")
+
+    def test_a_message_in_a_conversation_not_known_adds_it_unread(self):
+        self.slack.extra["D9"] = {"id": "D9", "kind": "im", "name": "", "user": LEO, "members": [], "topic": ""}
+        self.live(channel="D9", user=LEO, text="hey", ts=ts_ago(-1), channel_type="im")
+        self.assertIn("conversations", self.kinds())
+        self.assertEqual(self.host.told[-1]["unread"], {"D9": [1, 1]})
+
+    def test_a_thread_reply_moves_its_parents_count_and_edits_and_deletes_follow(self):
+        parent = self.slack.msgs["C1"][0]["ts"]
+        self.app.history("C1")                                               # the panel had it shown
+        reply = ts_ago(-1)
+        self.live(channel="C1", user=MAYA, text="done?", ts=reply, thread_ts=parent)
+        told = self.host.told[-1]
+        self.assertEqual((told["kind"], told["parent"]["reply_count"]), ("reply", 1))
+        self.assertIn("(in a thread)", self.streams()[-1]["payload"]["stream"])
+        self.assertIn(f"thread {parent}", self.streams()[-1]["payload"]["text"])
+        self.live(channel="C1", subtype="message_changed", message={"ts": reply, "user": MAYA, "text": "done now?",
+                                                                    "thread_ts": parent, "edited": {"ts": "1"}})
+        self.assertEqual((self.host.told[-1]["kind"], self.host.told[-1]["message"]["text"]), ("changed", "done now?"))
+        self.live(channel="C1", subtype="message_deleted", deleted_ts=reply)
+        self.assertEqual(self.host.told[-1]["kind"], "deleted")
+        self.assertEqual([m["ts"] for m in self.app.store.thread("C1", parent)], [parent])
+
+    def test_reactions_are_counted_on_the_message(self):
+        ts = self.slack.msgs["C1"][0]["ts"]
+        self.app.history("C1")
+        self.slack.on_event({"type": "reaction_added", "user": ME, "reaction": "eyes", "item": {"channel": "C1", "ts": ts}})
+        self.slack.on_event({"type": "reaction_added", "user": MAYA, "reaction": "eyes", "item": {"channel": "C1", "ts": ts}})
+        self.assertEqual(self.app.store.message("C1", ts)["reactions"], [{"name": "eyes", "count": 2, "mine": True}])
+        self.slack.on_event({"type": "reaction_removed", "user": ME, "reaction": "eyes", "item": {"channel": "C1", "ts": ts}})
+        self.assertEqual(self.app.store.message("C1", ts)["reactions"], [{"name": "eyes", "count": 1, "mine": False}])
+
+
+class ToolsTest(BackendBase):
+    def test_read_lists_conversations_unread_first_then_a_conversations_messages_then_a_thread(self):
+        self.live(channel="D1", user=MAYA, text="call?", ts=ts_ago(-1))
+        out = self.call("read", {}).content[0]["text"]
+        self.assertLess(out.index("DM with Maya Chen (D1) -- 1 unread, 1 for the user"), out.index("#paper-deadline"))
+        out = self.call("read", {"conversation": "#paper-deadline"}).content[0]["text"]
+        self.assertIn("#paper-deadline (C1), topic: Camera-ready Fri", out)
+        self.assertIn("Leo Park: Added the citations.", out)
+        out = self.call("read", {"conversation": "maya"}).content[0]["text"]          # a person: their DM
+        self.assertIn("Maya Chen: call?", out)
+        self.assertTrue(self.call("read", {"conversation": "#nope"}).is_error)
+
+    def test_draft_waits_in_the_panel_and_posts_nothing(self):
+        parent = self.slack.msgs["C1"][0]["ts"]
+        got = self.call("draft", {"conversation": "C1", "text": "Yes, it is.", "thread": parent})
+        self.assertFalse(got.is_error, got.content)
+        self.assertIn("Nothing was sent", got.content[0]["text"])
+        self.assertEqual(self.slack.posted, [])
+        (d,) = self.get("state")["drafts"]
+        self.assertEqual((d["channel"], d["thread_ts"], d["by_channel"], d["label"]), ("C1", parent, "agent-a",
+                                                                                       "#paper-deadline"))
+        self.assertEqual(self.host.told[-1]["kind"], "draft")
+        rec = [e for e in self.host.inserted if e["type"] == "slack.drafted"]
+        self.assertEqual((rec[0]["channel"], rec[0]["payload"]["draft"]), ("agent-a", d["id"]))
+        again = self.call("draft", {"draft": d["id"], "text": "Yes: the Nov 1 rerun."})
+        self.assertFalse(again.is_error)
+        self.assertEqual(self.get("state")["drafts"][0]["text"], "Yes: the Nov 1 rerun.")
+
+    def test_a_draft_answering_a_reply_goes_in_its_thread(self):
+        parent = self.slack.msgs["C1"][0]["ts"]
+        self.app.history("C1")
+        reply = ts_ago(-1)
+        self.live(channel="C1", user=MAYA, text="?", ts=reply, thread_ts=parent)
+        self.call("draft", {"conversation": "C1", "text": "ok", "thread": reply})
+        self.assertEqual(self.get("state")["drafts"][0]["thread_ts"], parent)
+
+    def test_a_draft_to_a_person_without_a_dm_opens_one(self):
+        self.call("draft", {"conversation": "@leo", "text": "hi"})
+        self.assertEqual(self.get("state")["drafts"][0]["channel"], f"D-{LEO}")
+
+    def test_search_goes_to_slack(self):
+        self.assertIn("#paper-deadline", self.call("search", {"query": "citations"}).content[0]["text"])
+        self.assertIn("Nothing", self.call("search", {"query": "zebra"}).content[0]["text"])
+
+
+class OpenTest(BackendBase):
+    """What the panel has open: told by the panel, said by slack_read, and named "open" by agents."""
+
+    def test_slack_read_says_what_is_open_and_open_names_it(self):
+        parent = self.slack.msgs["C1"][0]["ts"]
+        self.assertIn("Open in the user's Slack panel: no conversation.", self.call("read", {}).content[0]["text"])
+        self.post("view", {"conversation": "C1", "thread": ""})
+        out = self.call("read", {}).content[0]["text"]
+        self.assertTrue(out.startswith("Open in the user's Slack panel: #paper-deadline (C1)."), out)
+        self.assertIn("Leo Park: Added the citations.", self.call("read", {"conversation": "open"}).content[0]["text"])
+        self.app.history("C1")
+        self.post("view", {"conversation": "C1", "thread": parent})
+        out = self.call("read", {}).content[0]["text"]
+        self.assertIn(f"the thread of Leo Park's message {parent} (\"Added the citations.\")", out)
+        self.assertTrue(self.call("read", {"conversation": "open"}).content[0]["text"].startswith(f"Thread {parent} in"))
+        self.call("draft", {"conversation": "open", "text": "Thanks!"})           # into the open thread
+        self.assertEqual(self.get("state")["drafts"][0]["thread_ts"], parent)
+
+    def view(self, conversation, thread=""):
+        """The panel opens it; the agents' wait for it to stay open runs out at once."""
+        self.post("view", {"conversation": conversation, "thread": thread})
+        t = self.app._view_timers.get(self.host.inst.id)
+        if t is not None:
+            t.join(2)
+
+    def test_what_the_user_settles_on_is_told_to_the_agents_once(self):
+        with mock.patch.object(be, "VIEW_SETTLE", 0):
+            self.view("C1")
+            (told,) = self.streams()
+            self.assertEqual((told["channel"], told["payload"]["author"]), ("agent-a", "the user"))
+            self.assertEqual(told["payload"]["text"],
+                             "The user opened #paper-deadline (C1) in the Slack panel  [conversation C1]")
+            self.view("C1")                                            # the same again: nothing new
+            self.assertEqual(len(self.streams()), 1)
+            parent = self.slack.msgs["C1"][0]["ts"]
+            self.app.history("C1")
+            self.view("C1", parent)                                    # its thread: told
+            self.assertIn(f"the thread of Leo Park's message {parent}", self.streams()[-1]["payload"]["text"])
+            self.assertTrue(self.streams()[-1]["payload"]["text"].endswith(f"[conversation C1, thread {parent}]"))
+
+    def test_clicking_through_tells_only_where_the_user_stops(self):
+        with mock.patch.object(be, "VIEW_SETTLE", 0.3):
+            self.post("view", {"conversation": "C1", "thread": ""})
+            self.view("D1")
+        (told,) = self.streams()
+        self.assertIn("The user opened DM with Maya Chen (D1)", told["payload"]["text"])
+
+    def test_with_no_panel_open_nothing_is_open(self):
+        self.post("view", {"conversation": "C1", "thread": ""})
+        self.host.open_panels = 0
+        self.assertIn("The user's Slack panel isn't open.", self.call("read", {}).content[0]["text"])
+        got = self.call("read", {"conversation": "open"})
+        self.assertTrue(got.is_error)
+        self.assertIn("isn't open", got.content[0]["text"])
+
+
+class ReachTest(BackendBase):
+    """Search covers all of the user's Slack; a hit names where to read it, in channels they aren't in too."""
+
+    def test_a_reply_found_names_its_thread_and_its_channel_can_be_read(self):
+        out = self.call("search", {"query": "budget"}).content[0]["text"]
+        self.assertIn("#ops (the user isn't in it) [300.000003] maya: The budget is in.  [conversation C0OPS7777, thread 200.000002]", out)
+        self.slack.extra["C0OPS7777"] = {"id": "C0OPS7777", "kind": "channel", "name": "ops", "user": "", "members": [], "topic": ""}
+        self.slack.msgs["C0OPS7777"] = [{"ts": "200.000002", "user": MAYA, "text": "Budget?", "thread_ts": "200.000002",
+                                   "reply_count": 1, "latest_reply": "300.000003", "edited": False, "subtype": ""}]
+        self.slack.threads[("C0OPS7777", "200.000002")] = [{"ts": "300.000003", "user": MAYA, "text": "The budget is in.",
+                                                      "thread_ts": "200.000002", "reply_count": 0, "latest_reply": "",
+                                                      "edited": False, "subtype": ""}]
+        out = self.call("read", {"conversation": "C0OPS7777", "thread": "200.000002"}).content[0]["text"]
+        self.assertIn("in #ops (C0OPS7777) (a channel the user isn't in):", out)
+        self.assertIn("Maya Chen: The budget is in.", out)
+        self.assertNotIn("C0OPS7777", [c["id"] for c in self.get("state")["conversations"]])   # not listed as theirs
+        self.assertTrue(self.call("read", {"conversation": "C0NOPE404"}).is_error)
+
+    def test_a_thread_is_read_from_slacks_link_to_a_message(self):
+        self.assertEqual(thread_of("https://x.slack.com/archives/C1/p300000003?thread_ts=200.000002&cid=C1"), "200.000002")
+        self.assertEqual(thread_of("https://x.slack.com/archives/C1/p300000003"), "")
+        self.assertEqual(thread_of(""), "")
+
+
+class SettleTest(BackendBase):
+    def draft(self, **kw):
+        self.call("draft", {"conversation": "C1", "text": "Yes, it is.", **kw})
+        return self.get("state")["drafts"][0]
+
+    def test_send_posts_the_users_text_and_tells_the_agent(self):
+        parent = self.slack.msgs["C1"][0]["ts"]
+        d = self.draft(thread=parent)
+        r = self.post("draft", {"id": d["id"], "action": "send", "text": "Yes, it's the Nov 1 rerun.", "broadcast": True})
+        self.assertEqual(r.status, 200, r.body)
+        (p,) = self.slack.posted
+        self.assertEqual((p["channel"], p["text"], p["thread_ts"], p["broadcast"]),
+                         ("C1", "Yes, it's the Nov 1 rerun.", parent, True))
+        self.assertEqual(self.get("state")["drafts"], [])
+        told = self.streams()[-1]
+        self.assertEqual((told["channel"], told["payload"]["author"]), ("agent-a", "the user"))
+        self.assertIn(f"sent your draft {d['id']} in #paper-deadline, after editing it", told["payload"]["text"])
+        sent = [e for e in self.host.inserted if e["type"] == "slack.sent"]
+        self.assertEqual(sent[0]["payload"]["draft"], d["id"])
+        self.assertEqual(self.post("draft", {"id": d["id"], "action": "send"}).status, 404)   # once
+
+    def test_discard_posts_nothing_and_tells_the_agent(self):
+        d = self.draft()
+        self.post("draft", {"id": d["id"], "action": "discard"})
+        self.assertEqual(self.slack.posted, [])
+        self.assertIn("discarded your draft", self.streams()[-1]["payload"]["text"])
+        self.assertTrue([e for e in self.host.inserted if e["type"] == "slack.discarded"])
+
+    def test_the_users_own_message_is_posted_and_empty_ones_refused(self):
+        r = self.post("send", {"conversation": "D1", "text": "  indented\nsecond"})
+        self.assertEqual(r.status, 200)
+        self.assertEqual(self.slack.posted[-1]["text"], "  indented\nsecond")         # as typed
+        self.assertEqual(self.post("send", {"conversation": "D1", "text": "  \n"}).status, 400)
+        self.assertEqual(self.host.told[-1]["kind"], "message")
+        (told,) = self.streams()                                                 # the agent hears it, as from Slack
+        self.assertEqual((told["channel"], told["payload"]["author"]), ("agent-a", "the user (Sep)"))
+        self.assertIn("[conversation D1, ts", told["payload"]["text"])
+        ts = self.slack.posted[-1]["ts"]
+        self.live(channel="D1", user=ME, text="  indented\nsecond", ts=ts)         # Slack's own copy: told once
+        self.assertEqual(len(self.streams()), 1)
+
+    def test_a_sent_draft_is_told_to_its_agent_as_its_draft_and_to_the_others_as_a_message(self):
+        self.host.agents = ["agent-a", "agent-b"]
+        d = self.draft()
+        self.post("draft", {"id": d["id"], "action": "send"})
+        a = [x["payload"]["text"] for x in self.streams() if x["channel"] == "agent-a"]
+        b = [x["payload"]["text"] for x in self.streams() if x["channel"] == "agent-b"]
+        self.assertEqual(len(a), 1)
+        self.assertIn(f"The user sent your draft {d['id']}", a[0])
+        self.assertEqual(len(b), 1)
+        self.assertTrue(b[0].startswith("Yes, it is.  [conversation C1, ts"), b[0])
+
+
+if __name__ == "__main__":
+    unittest.main()
