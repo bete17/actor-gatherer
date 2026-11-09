@@ -526,8 +526,9 @@ function addAppPane(app, instance, size = 1, held = false) {
     focus: () => selectAppPane(p),                   // a press on its head: selected
     intent: (kind, data, from) => appIntent(kind, data, from.instance.gatherer),
     selection: () => appsSelection(),
-    agents: (g) => ((state.home && state.home.gatherers.find((x) => x.name === g)) || { agents: [] }).agents
-      .filter((a) => !a.closed).map((a) => ({ channel: a.channel, name: (a.name && a.name.text) || a.last_user_message || a.channel })),
+    agents: (g) => ((state.home && state.home.gatherers.find((x) => x.name === g)) || { agents: [] }).agents     // a gatherer's own
+      .filter((a) => !a.closed && !isCoordinator(a))                                                           // agent: attached to no app
+      .map((a) => ({ channel: a.channel, name: (a.name && a.name.text) || a.last_user_message || a.channel })),
     agentState: appAgentState, send: appSend, answer: appAnswer, interrupt: appInterrupt, focusAgent: appFocusAgent,
     actors: appActors,
   });
@@ -619,15 +620,15 @@ async function showAttached(p) {
   if (c) await show(g, c);
 }
 // The app's instance for gatherer `g` (in `folder`: the one there, for an app with one per folder) in the top row --
-// its panel there already, if it is open -- and the actor it is attached to below it. The actor in focus attached
-// first, if it is `g`'s and `attach`.
-async function openApp(g, name, folder, attach = true) {
+// its panel there already, if it is open -- and the actor it is attached to below it. No agent attached by opening
+// it: attaching puts the two in one task (task_links.py), so the actor in focus would take a new instance into its
+// task, its other apps and agents with it. A task's "+" (05-agent-list.js's addAppToTask) or the panel's agents
+// menu put it with agents.
+async function openApp(g, name, folder) {
   const app = window.agNext.apps.named(name);
   if (!app || PANE || SNAPSHOT) return null;
-  const sel = focusedActor();
-  const channel = attach && sel && sel[0] === g && !isShell(sel[1]) ? sel[1] : null;
   let instance;
-  try { instance = await window.agNext.apps.open(name, g, folder || null, channel); }
+  try { instance = await window.agNext.apps.open(name, g, folder || null); }
   catch (e) { paneNote(`${app.label}: ${e.message}`); return null; }
   const there = panes.apps.find((q) => q.instance.id === instance.id);
   const p = there || addAppPane(app, instance);
@@ -650,7 +651,7 @@ async function appIntent(kind, data, g) {
   const open = app.instances === "many" && panes.apps.find((q) => !q.held && q.app.name === app.name && q.instance.gatherer === into);
   if (open) return open.panel.intent(kind, data || {});
   const folder = data && data.path ? String(data.path).replace(/\/[^/]*$/, "") : null;
-  const p = await openApp(into, app.name, folder, false);
+  const p = await openApp(into, app.name, folder);
   if (!p) throw new Error(`${app.label} could not be opened`);
   p.panel.intent(kind, data || {});
 }

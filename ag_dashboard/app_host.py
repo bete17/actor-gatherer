@@ -95,6 +95,9 @@ class AppHost:
         self.attached: Dict[str, Set[str]] = {}                # an instance's id -> its agents' channels
         self.loaded: Set[str] = set()                          # the gatherers whose records were read
         self.loaded_then: Optional[Callable[[str], None]] = None   # told each gatherer read (task_links.py's on_load)
+        # who may be attached, (gatherer, channel) -> bool: the server's (task_links.py's `attachable`: not a gatherer's
+        # own agent, which reaches every app attached to none); none set, anyone
+        self.attachable: Optional[Callable[[str, str], bool]] = None
         self.subs: List[_Sub] = []
         self.asked: Dict[str, dict] = {}                       # a call its panel answers, by its id: {done, result}
         self.page_wait, self.tool_wait = PAGE_WAIT, TOOL_WAIT
@@ -203,6 +206,12 @@ class AppHost:
         return {"apps": apps, "broken": broken, "instances": insts, "attached": attached}
 
     # -- instances
+
+    def instances_of(self, gatherer: str, app: Optional[str] = None) -> List[Instance]:
+        """The gatherer's open instances (of `app`), as they were opened."""
+        self._load(gatherer)
+        with self.lock:
+            return [i for i in self.instances.values() if i.gatherer == gatherer and (app is None or i.app == app)]
 
     def instance(self, gatherer: str, instance_id: str, app: Optional[str] = None) -> Instance:
         self._load(gatherer)
@@ -333,6 +342,8 @@ class AppHost:
         i = self.instance(gatherer, instance_id)
         if not channel:
             raise AppError("attach: which agent (its channel)?")
+        if self.attachable is not None and not self.attachable(gatherer, channel):
+            raise AppError(f"{channel}: a gatherer's own agent is attached to no app: it reaches every one without", 403)
         with self.lock:
             if channel in self.attached.setdefault(i.id, set()):
                 return
@@ -436,17 +447,18 @@ class AppHost:
     # -- tools and the panel's own requests
 
     def call(self, name: str, instance: Instance, tool: str, args: dict, caller: Caller,
-             from_panel: bool = False) -> ToolResult:
+             from_panel: bool = False, reaches_all: bool = False) -> ToolResult:
         """A call of the app's tool, by an agent attached to the instance (or the user, through the panel:
-        `caller.channel` None), kept as `app_call`: to its backend, or -- a tool its panel answers -- to an open panel
-        of the instance (`ask_panel`). A refusal is an error result, as the agent reads it."""
+        `caller.channel` None; or, `reaches_all`, a gatherer's own agent, attached to none), kept as `app_call`: to its
+        backend, or -- a tool its panel answers -- to an open panel of the instance (`ask_panel`). A refusal is an error
+        result, as the agent reads it."""
         m = self.hosted(name).manifest
         t = m.tool(tool)
         if instance.app != name or t is None:
             return ToolResult.error(f"{tool}: not a tool of {m.label}")
         if t.handled_by == "panel" and from_panel:
             return ToolResult.error(f"{tool}: its panel answers it, not its backend")
-        if caller.channel is not None and caller.channel not in self.agents_of(instance):
+        if caller.channel is not None and not reaches_all and caller.channel not in self.agents_of(instance):
             return ToolResult.error(f"not attached to this {m.label}")
         try:
             got = self.ask_panel(name, instance, tool, dict(args or {}), caller) if t.handled_by == "panel" else \

@@ -211,11 +211,11 @@ async def apps_mcp(srv: Parts, actor: str, request: Request) -> Response:
             row = tool_gateway.row_of(rows, actor)
         except AppError as exc:
             return 404, {"jsonrpc": "2.0", "id": None, "error": {"code": -32001, "message": str(exc)}}
-        channels = tool_gateway.channels_of(row)
-        return mcp.handle(raw, tool_gateway.tools(row["gatherer"], channels),
+        channels, head = tool_gateway.channels_of(row), tool_gateway.lead(row)   # a gatherer agent: every app's
+        return mcp.handle(raw, tool_gateway.tools(row["gatherer"], channels, head),
                           lambda name, args: tool_gateway.call(srv.sessions.list(), actor, name, args),
                           tool_gateway.NAME, tool_gateway.endpoint(actor),
-                          tool_gateway.instructions(row["gatherer"], channels=channels))
+                          tool_gateway.instructions(row["gatherer"], channels=channels, head=head))
     status, got = await anyio.to_thread.run_sync(serve)
     return answer(got, status) if got is not None else Response(status_code=status)
 

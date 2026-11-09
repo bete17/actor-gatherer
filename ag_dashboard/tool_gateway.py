@@ -80,28 +80,43 @@ def attached_apps(gatherer: str, channels: Tuple[str, ...] = ()) -> List["app_ki
     return [m for m in on(gatherer) if m.name in names]
 
 
-def offered(gatherer: str, channels: Tuple[str, ...] = ()) -> List["app_kit.Manifest"]:
+def lead(s: dict) -> bool:
+    """Whether the session `s` is its gatherer's own agent (sessions.py's COORDINATOR): given every app on, attached to
+    none."""
+    from . import sessions                                          # (it imports this module)
+    return s.get("role") == sessions.COORDINATOR
+
+
+def offered(gatherer: str, channels: Tuple[str, ...] = (), head: bool = False) -> List["app_kit.Manifest"]:
     """The apps an agent of `gatherer` (any of `channels`) is given: those on whose `offer` is "always", and the
-    "attached" ones it is attached to an instance of."""
+    "attached" ones it is attached to an instance of. `head`, the gatherer's own agent (`lead`): every one on."""
+    if head:
+        return on(gatherer)
     mine = {m.name for m in attached_apps(gatherer, channels)}
     return [m for m in on(gatherer) if m.offer == "always" or m.name in mine]
 
 
-def tools(gatherer: str, channels: Tuple[str, ...] = ()) -> List[dict]:
+def tools(gatherer: str, channels: Tuple[str, ...] = (), head: bool = False) -> List[dict]:
     """The tools of the apps an agent of `gatherer` is given (`offered`), as MCP lists them."""
-    return [t.mcp(m.name, m.label) for m in offered(gatherer, channels) for t in m.tools]
+    return [t.mcp(m.name, m.label) for m in offered(gatherer, channels, head) for t in m.tools]
 
 
-def instructions(gatherer: str, cli: bool = False, channels: Tuple[str, ...] = ()) -> str:
+LEAD = ("You are attached to none of them, and reach every one: a call goes to the gatherer's open instance of its "
+        "app -- the one you name with `instance`, when several are open (a refusal lists them) -- and, none open, to "
+        "one opened for you.")
+
+
+def instructions(gatherer: str, cli: bool = False, channels: Tuple[str, ...] = (), head: bool = False) -> str:
     """What agents are told of the apps they are given whose `offer` is "always": each one's own words, under its
     name. `cli`: with how to reach them through `ag apps`, for a harness given no MCP server -- and the "attached" ones
-    too, which it reaches the same way."""
-    apps = [m for m in offered(gatherer, channels) if m.offer == "always" or cli]
+    too, which it reaches the same way. `head`, the gatherer's own agent: of every one, and how it reaches them."""
+    apps = [m for m in offered(gatherer, channels, head) if m.offer == "always" or cli or head]
     if not apps:
         return ""
     parts = ["The apps of this gatherer: tools you can call, each on an app the user may also have open beside your "
              "conversation. What you do in one, the user sees there; what the user does there, you are told as a "
-             "message. Each app's tools are named <app>_<tool>." + (" " + CLI if cli else "")]
+             "message. Each app's tools are named <app>_<tool>." + (" " + CLI if cli else "") +
+             (" " + LEAD if head else "")]
     for m in apps:
         about = (m.instructions or m.description).strip()
         parts.append(f"## {m.label} ({m.name})\n{about}" if about else f"## {m.label} ({m.name})")
@@ -110,7 +125,7 @@ def instructions(gatherer: str, cli: bool = False, channels: Tuple[str, ...] = (
 
 def served(s: dict) -> bool:
     """Whether the session `s` is given the apps' MCP server at launch (`launch_args`)."""
-    if HOST is None or not ORIGIN or not s.get("gatherer") or not offered(s["gatherer"], channels_of(s)):
+    if HOST is None or not ORIGIN or not s.get("gatherer") or not offered(s["gatherer"], channels_of(s), lead(s)):
         return False
     h = harness_kit.get(s.get("harness") or harness_kit.DEFAULT)
     return h is not None and h.mcp_args(NAME, f"{ORIGIN}/mcp/{actor_of(s)}") is not None
@@ -125,7 +140,7 @@ def launch_args(s: dict) -> List[str]:
     if HOST is None or not ORIGIN or not s.get("gatherer"):
         return []
     channels = channels_of(s)
-    if not offered(s["gatherer"], channels):
+    if not offered(s["gatherer"], channels, lead(s)):
         return []
     h = harness_kit.get(s.get("harness") or harness_kit.DEFAULT)
     if h is None:
@@ -134,7 +149,7 @@ def launch_args(s: dict) -> List[str]:
     mine = attached_apps(s["gatherer"], channels)
     told = [m.instructions.strip() for m in mine if m.offer == "attached" and m.instructions.strip()]
     if served is None:
-        told.insert(0, instructions(s["gatherer"], cli=True, channels=channels))
+        told.insert(0, instructions(s["gatherer"], cli=True, channels=channels, head=lead(s)))
     out = list(served or [])
     own = bool(s.get("role")) and not str(s.get("role")).startswith("{")   # a gatherer agent's: instructions of its own
     if told and not own:
@@ -158,31 +173,42 @@ def row_of(rows: List[dict], actor: str) -> dict:
 def resolve(row: dict, name: str, args: dict) -> Tuple[str, str, Instance, dict]:
     """(app, tool, instance, the tool's own arguments) of a call by the actor of `row`: the app one on for its
     gatherer; the instance the one it names, or the one it is attached to -- none: one opened for its gatherer and
-    folder, as the app's `instances` says, and the actor attached to it."""
+    folder, as the app's `instances` says, and the actor attached to it; in the actor's task (task_links.py) only if
+    opened for it alone, by this call, and not the gatherer's one of an app it has one of (an instance others use: their
+    task, or none, kept). A gatherer's own agent (`lead`): every app's, attached to none -- the instance the one it
+    names of the gatherer's open ones, else the one open, none: one opened."""
     gatherer, channel = row["gatherer"], row["session_id"]
-    apps = {m.name: m for m in offered(gatherer, channels_of(row))}
+    head = lead(row)
+    apps = {m.name: m for m in offered(gatherer, channels_of(row), head)}
     split = app_kit.split_tool_name(name, apps)
     if split is None or apps[split[0]].tool(split[1]) is None:
         raise AppError(f"{name}: no such tool of this gatherer's apps ({', '.join(sorted(apps)) or 'none on'})", 404)
     app, tool = split
     args = dict(args or {})
     named = args.pop(app_kit.manifest.INSTANCE_ARG, None)
-    mine = [i for c in channels_of(row) for i in HOST.attached_to(gatherer, c) if i.app == app]
+    if head:
+        mine, which = HOST.instances_of(gatherer, app), "open in this gatherer"
+    else:
+        mine, which = [i for c in channels_of(row) for i in HOST.attached_to(gatherer, c) if i.app == app], \
+            "you are attached to"
     if named:
         inst = next((i for i in mine if i.id == named), None)
         if inst is None:
-            raise AppError(f"{named}: not a {apps[app].label} you are attached to "
-                           f"({', '.join(i.id for i in mine) or 'none'})", 403)
+            raise AppError(f"{named}: not a {apps[app].label} {which} ({', '.join(i.id for i in mine) or 'none'})", 403)
     elif len(mine) == 1:
         inst = mine[0]
     elif mine:
-        raise AppError(f"you are attached to {len(mine)} of {apps[app].label}: say which with `instance` "
+        raise AppError(f"{len(mine)} of {apps[app].label} {which}: say which with `instance` "
                        f"({', '.join(f'{i.id} ({i.title or i.folder or i.id})' for i in mine)})")
     else:
+        with HOST.lock:
+            had = set(HOST.instances)
         inst = HOST.open(app, gatherer, row.get("cwd") or None, {}, by=channel)
-        from . import task_links                                         # (it imports this module)
-        task_links.link(gatherer, inst.id, channel)                     # the app, in no task, in the agent's
-        HOST.attach(gatherer, inst.id, channel, by=channel)
+        if not head:
+            if inst.id not in had and apps[app].instances != "one":
+                from . import task_links                                     # (it imports this module)
+                task_links.link(gatherer, inst.id, channel)                 # opened for it: in its task
+            HOST.attach(gatherer, inst.id, channel, by=channel)
     return app, tool, inst, args
 
 
@@ -196,17 +222,20 @@ def call(rows: List[dict], actor: str, name: str, args: dict) -> dict:
         return app_kit.ToolResult.error(str(exc)).to_dict()
     caller = Caller(channel=row["session_id"], gatherer=row["gatherer"], harness=row.get("harness"),
                     folder=row.get("cwd") or None)
-    return HOST.call(app, inst, tool, own, caller).to_dict()
+    return HOST.call(app, inst, tool, own, caller, reaches_all=lead(row)).to_dict()
 
 
 def listed(rows: List[dict], actor: str) -> dict:
     """What `ag apps` shows an actor: its gatherer's apps, each with its tools and instructions, and the instances it
-    is attached to."""
+    is attached to -- a gatherer's own agent, attached to none: the gatherer's open ones (`open`), each its to name."""
     row = row_of(rows, actor)
-    attached = {}
-    for i in HOST.attached_to(row["gatherer"], row["session_id"]):
-        attached.setdefault(i.app, []).append({"id": i.id, "title": i.title, "folder": i.folder})
+    head = lead(row)
+    mine: dict = {}
+    for i in HOST.instances_of(row["gatherer"]) if head else HOST.attached_to(row["gatherer"], row["session_id"]):
+        mine.setdefault(i.app, []).append({"id": i.id, "title": i.title, "folder": i.folder})
     channels = channels_of(row)
-    return {"gatherer": row["gatherer"], "instructions": instructions(row["gatherer"], cli=True, channels=channels),
+    return {"gatherer": row["gatherer"],
+            "instructions": instructions(row["gatherer"], cli=True, channels=channels, head=head),
             "apps": [{"name": m.name, "label": m.label, "tools": [t.mcp(m.name) for t in m.tools],
-                      "attached": attached.get(m.name, [])} for m in offered(row["gatherer"], channels)]}
+                      ("open" if head else "attached"): mine.get(m.name, [])}
+                     for m in offered(row["gatherer"], channels, head)]}

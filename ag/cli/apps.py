@@ -83,8 +83,9 @@ def listed(got: dict) -> str:
         return f"No app is on in gatherer {got.get('gatherer')}."
     out = [got.get("instructions", "").strip(), ""]
     for a in got["apps"]:
-        mine = ", ".join(f"{i['id']} ({i.get('title') or i.get('folder') or i['id']})" for i in a.get("attached") or [])
-        out.append(f"{a['label']} ({a['name']})" + (f" -- attached: {mine}" if mine else ""))
+        said = "open" if "open" in a else "attached"         # a gatherer agent's: the open ones, attached to none
+        mine = ", ".join(f"{i['id']} ({i.get('title') or i.get('folder') or i['id']})" for i in a.get(said) or [])
+        out.append(f"{a['label']} ({a['name']})" + (f" -- {said}: {mine}" if mine else ""))
         for t in a.get("tools") or []:
             props = (t.get("inputSchema") or {}).get("properties") or {}
             need = set((t.get("inputSchema") or {}).get("required") or [])

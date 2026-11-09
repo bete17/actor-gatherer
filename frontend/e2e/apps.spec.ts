@@ -23,11 +23,16 @@ async function openNotepad(page: Page): Promise<{ pane: Locator; panel: FrameLoc
   return { pane, panel, instance: new URL(src).searchParams.get("instance") || "" };
 }
 
+/** An agent attached to the panel's instance from its head's agents menu: the two put in one task. */
+async function attach(pane: Locator, name: string, count: RegExp) {
+  await pane.locator(".app-agents").click();
+  await pane.locator(".app-menu-item", { hasText: name }).click();
+  await expect(pane.locator(".app-agents")).toHaveText(count);
+}
+
 const notepadFrame = (page: Page) => page.frames().find((f) => /^http:\/\/notepad\.localhost:\d+\//.test(f.url()))!;
 
-test("an app opens above the panes, attached to the actor in focus, its panel on an origin of its own", async ({
-  page,
-}) => {
+test("an app opens above the panes, with no agent attached, its panel on an origin of its own", async ({ page }) => {
   await openActor(page, CLAUDE);
   const { pane, panel } = await openNotepad(page);
   await expect(page.locator("#panes > .pane")).toHaveCount(1); // the actor's pane alone, below it
@@ -36,7 +41,11 @@ test("an app opens above the panes, attached to the actor in focus, its panel on
   expect(above.y + above.height).toBeLessThanOrEqual(below.y);
   await expect(pane.locator(".app-head")).toContainText("Notepad"); // the test home's actors name no folder: its one
   expect(await pane.locator("iframe").getAttribute("src")).toMatch(/^http:\/\/notepad\.localhost:\d+\/\?/);
-  await expect(panel.locator("#agents")).toContainText(CLAUDE_CHANNEL); // the actor in focus, attached
+  // the actor in focus not attached: attaching puts the two in one task (task_links.py), and opening an app from the
+  // gatherer's menu puts it in none
+  await expect(pane.locator(".app-agents")).toHaveText("No agent");
+  await expect(panel.locator("#agents")).toHaveText("none");
+  await expect(page.locator("#agents button.agent.task")).toHaveCount(0);
   await expect(panel.locator("#focus")).toHaveText(CLAUDE_CHANNEL);
   await expect(panel.locator("#theme")).toHaveText(/^(light|dark)$/);
   // the panel can't reach the dashboard's page or its routes: another origin
@@ -58,7 +67,8 @@ test("a note the user adds in the panel is stored, comes back as an event, and i
   request,
 }) => {
   await openActor(page, CLAUDE);
-  const { panel, instance } = await openNotepad(page);
+  const { pane, panel, instance } = await openNotepad(page);
+  await attach(pane, CLAUDE, /1 agent/);
   await panel.locator("#text").fill("buy milk");
   await panel.locator("#add button").click();
   await expect(panel.locator("#notes li", { hasText: "buy milk" })).toContainText("you");
@@ -123,10 +133,8 @@ test("the panel follows the actor in focus, and the agents attached from its hea
   await page.locator("#agents button.agent", { hasText: CODEX }).click({ modifiers: [beside] });
   await expect(page.locator("#panes > .pane")).toHaveCount(2);
   await expect(panel.locator("#focus")).toHaveText(CODEX_CHANNEL); // the actor's pane in focus now
-  await pane.locator(".app-agents").click();
-  await pane.locator(".app-menu-item", { hasText: CODEX }).click();
+  await attach(pane, CODEX, /1 agent/);
   await expect(panel.locator("#agents")).toContainText(CODEX_CHANNEL);
-  await expect(pane.locator(".app-agents")).toHaveText(/2 agents/);
   await pane.locator(".app-agents").click();
   await pane.locator(".app-menu-item", { hasText: CODEX }).click(); // detached again: as the other tests expect
   await expect(panel.locator("#agents")).not.toContainText(CODEX_CHANNEL);
@@ -144,7 +152,8 @@ test("an app's panel is kept in this browser", async ({ page }) => {
 
 test("an app opened shows the actor it is attached to below it", async ({ page }) => {
   await openActor(page, CLAUDE);
-  await openNotepad(page);
+  const { pane } = await openNotepad(page);
+  await attach(pane, CLAUDE, /1 agent/); // in Claude's task
   type Notes = { notes: { intents: { open: (k: string, d: object) => Promise<unknown> } } };
   const raise = () =>
     notepadFrame(page).evaluate(() =>

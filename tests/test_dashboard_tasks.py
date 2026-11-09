@@ -167,6 +167,17 @@ class TaskLinksTest(TasksTest):
         task_links.closed("g", "b1")
         self.assertEqual(set(tasks.of("g")["tasked"]), {"a", "b"})
 
+    def test_on_load_drops_the_gatherer_agent_s_attachments(self):
+        lead = unittest.mock.Mock(list=lambda: [{"session_id": "lead", "role": "coordinator"}])
+        with unittest.mock.patch.object(task_links, "SESSIONS", lead):
+            self.assertFalse(task_links.attachable("g", "lead"))
+            self.assertTrue(task_links.attachable("g", "a"))
+            self.host.attached["n1"] = {"a", "lead"}
+            task_links.on_load("g")
+            self.assertEqual(self.host.attached["n1"], {"a"})
+            self.assertIn(("detach", "n1", "lead"), self.host.log)
+            self.assertIsNone(tasks.task_of("g", "lead"))
+
     def test_on_load_groups_what_shares_an_app_once(self):
         self.host.attached["b1"] = {"a", "b"}
         task_links.on_load("g")

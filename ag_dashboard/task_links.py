@@ -14,11 +14,13 @@ What else puts an app and an agent together, here too:
     unlink(g, instance, channel)       an agent detached from an app by the reader: in its task, taken out of it (and so
                                        detached from every app of it), else only detached
     closed(g, instance)                an app's instance closed: out of its task
-    on_load(g)                         the host's records of a gatherer read (app_host.py's `loaded_then`): once, the
+    on_load(g)                         the host's records of a gatherer read (app_host.py's `loaded_then`): a gatherer
+                                       agent's attachments dropped (kept before it was attached to none); and once, the
                                        items sharing an app made one task (tasks.py's `group`), what was kept before
                                        apps were items
 
-A gatherer's own agent (sessions.py's COORDINATOR) is in no task: put in none here."""
+A gatherer's own agent (sessions.py's COORDINATOR) is in no task, and attached to no app (`attachable`, the host's
+check): it reaches every app without (tool_gateway.py)."""
 
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -44,6 +46,11 @@ def coordinator(channel: str) -> bool:
         return False
     return any(r.get("role") == sessions.COORDINATOR for r in SESSIONS.list()
                if channel in (r.get("session_id"), r.get("started_as")))
+
+
+def attachable(gatherer: str, channel: str) -> bool:
+    """Whether the agent `channel` may be attached to an app (app_host.py's `attachable`): any but a gatherer's own."""
+    return not coordinator(channel)
 
 
 def sync(gatherer: str, before: Dict[str, int], after: Dict[str, int]) -> Dict[str, List[str]]:
@@ -124,9 +131,20 @@ def closed(gatherer: str, instance: str) -> None:
 
 
 def on_load(gatherer: str) -> None:
-    """Once for a gatherer, the items sharing an app made one task (module doc)."""
+    """A gatherer's records read: its own agent's attachments dropped; once, the items sharing an app made one task
+    (module doc)."""
     host = _host()
-    if host is None or tasks.grouped(gatherer):
+    if host is None:
+        return
+    with host.lock:
+        lead = [(i, c) for i, inst in host.instances.items() if inst.gatherer == gatherer
+                for c in sorted(host.attached.get(i, ())) if coordinator(c)]
+    for i, c in lead:
+        try:
+            host.detach(gatherer, i, c, by="dashboard")
+        except AppError:
+            continue
+    if tasks.grouped(gatherer):
         return
     with host.lock:
         held = [(i, sorted(host.attached.get(i, ()))) for i, inst in host.instances.items() if inst.gatherer == gatherer]
