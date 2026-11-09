@@ -1,6 +1,9 @@
 """The test app's backend (app.toml): `add` keeps a note as an event and tells the open panels; an agent attached is
-told what the notepad holds."""
-from app_kit import App, Instance, Response, ToolResult, context_stream
+told what the notepad holds; its panel's `remind` notifies the user a few seconds later (the panel closed meanwhile,
+or the page left: what a notification is for)."""
+import threading
+
+from app_kit import App, AppError, Instance, Response, ToolResult, context_stream
 
 
 class NotesApp(App):
@@ -25,4 +28,16 @@ class NotesApp(App):
     def request(self, instance, method, path, query, body):
         if path == "count" and instance is not None:
             return Response.json({"notes": len(self.host.read(instance, ["notepad.added"]))})
+        if path == "remind" and method == "POST" and instance is not None:
+            after = min(max(float(query.get("after") or 5), 0.0), 60.0)
+            text = str(query.get("text") or "").strip()
+
+            def ring():
+                try:
+                    self.host.notify(instance, "A reminder from your notepad", text or "You asked to be reminded.",
+                                     show=["ag", "system"], where={"note": text})
+                except AppError:                              # its instance closed meanwhile
+                    pass
+            threading.Timer(after, ring).start()
+            return Response.json({"in": after})
         return Response(404, b"not found")

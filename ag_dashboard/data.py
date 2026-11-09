@@ -255,12 +255,13 @@ def home(started: Optional[List[dict]] = None, kept: Optional["Kept"] = None) ->
             agents = kept.agents(conn, name, now) if kept is not None else _agents(conn, now)
             if {s["session_id"] for s in started if s["gatherer"] == name} - {a["channel"] for a in agents}:
                 named[name] = _names(conn, _tables(conn))
+            apps = app_notices(conn)
         except sqlite3.Error as exc:
             gatherers.append({"name": name, "policy": _policy(name), "error": str(exc), "agents": [], "last": None})
             continue
         finally:
             conn.close()
-        gatherers.append({"name": name, "policy": _policy(name), "agents": agents,
+        gatherers.append({"name": name, "policy": _policy(name), "agents": agents, "apps": apps,
                           "last": max((a["last"] or 0 for a in agents), default=0) or None})
     _with_started(gatherers, started, now, named)
     wakes = {}                           # the actors whose status changes at a time of their own, with nothing written
@@ -629,6 +630,25 @@ def _agents(conn, now: float, only: Optional[set] = None) -> List[dict]:
         a["running"] = a["building"] or a["status"] == RUNNING
         a["background"] = a.pop("record_background", [])
     return sorted(out.values(), key=lambda a: a["created"] or 0, reverse=True)   # in place: newest created first
+
+
+def app_notices(conn) -> Dict[str, dict]:
+    """The gatherer's apps' ITEMS' status, as `_status` reads an agent's from its facts: each instance with
+    notifications open -- sent by its app (the host's `app_notified` records: app_kit's notices.py), not settled since,
+    its instance not closed -- {instance: {app, notices: [{id, key, title, text, show, where, at}, oldest first],
+    last}}; `last` when the newest came, which the page compares with when the reader last looked at the instance
+    (seen.py, its item "app:<id>"): newer, it shows NOTIFIED, as an agent done since is FINISHED. Read by type (its
+    index): few rows."""
+    if CHANNEL not in _columns(conn, "events") or not {"p_app", "p_instance"} <= _columns(conn, "events"):
+        return {}
+    kinds = (*app_kit.NOTICE_TYPES, "app_closed")
+    rows = conn.execute(f"SELECT t.name, e.p_app, e.p_instance, e.payload_json FROM events e JOIN event_types t "
+                        f"ON t.event_type_id = e.event_type_id WHERE t.name IN ({', '.join('?' * len(kinds))}) "
+                        "ORDER BY e.row_id", kinds).fetchall()
+    app_of = {inst: app for _, app, inst, _ in rows if inst}
+    found = app_kit.notices.still_open((kind, inst, _json(raw) or {}) for kind, _, inst, raw in rows)
+    return {inst: {"app": app_of.get(inst), "notices": ns, "last": app_kit.notices.newest(ns)}
+            for inst, ns in found.items()}
 
 
 def _status(conn, ch: str, a: dict, tables: set, now: float) -> None:

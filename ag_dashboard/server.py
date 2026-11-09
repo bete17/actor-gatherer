@@ -182,6 +182,7 @@ class Server:
         task_links.RING, task_links.SESSIONS = self.hub.ring, self.sessions   # a task's agents attached to its apps
         self.app_host.loaded_then = task_links.on_load
         self.app_host.attachable = task_links.attachable              # a gatherer's own agent: attached to no app
+        self.app_host.told = lambda g: self.hub.ring(g, what="list")  # an app's notifications: the home read again
         if live_updates:                                              # an app's actors from before it was an app,
             threading.Thread(target=app_agents.adopt_all, args=(self.sessions, self.app_host),   # attached to it
                              name="ag-apps-adopt", daemon=True).start()

@@ -9,7 +9,7 @@ import { stream, type Stream } from "../../core/api/stream";
 import "./apps.css";
 import { desktop, nativePanes, nativeSoon, type NativePlace } from "./native";
 
-type Capability = "message_agents" | "transcript" | "edit_guard" | "native_view" | "docs" | "actors";
+type Capability = "message_agents" | "transcript" | "edit_guard" | "native_view" | "docs" | "actors" | "notify";
 export interface AppInfo {
   name: string;
   label: string;
@@ -445,6 +445,13 @@ export class AppPane {
         const p = new URLSearchParams({ gatherer: w.gatherer, channel: this.mine(m.channel) });
         if (Number(m.after) > 0) p.set("after", String(Number(m.after)));
         return get(`/api/transcript?${p}`);
+      }
+      case "notices.send":
+      case "notices.clear": {
+        if (!this.app.capabilities?.notify) throw new Error(`${this.app.label} may not send notifications`);
+        if (m.op === "notices.clear") return post("/api/apps/notices/settle", { ...w, which: m.which, by: "app" });
+        const n = { title: m.title, text: m.text, key: m.key, show: m.show, where: m.where };
+        return (await post<{ id: string }>("/api/apps/notify", { ...w, ...n })).id;
       }
       case "intent":
         return this.hooks.intent(String(m.kind), (m.data || {}) as Record<string, unknown>, this);

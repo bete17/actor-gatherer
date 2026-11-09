@@ -26,6 +26,7 @@ const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0
 contextBridge.exposeInMainWorld("agApp", {
   native: true,
   focusDashboard: () => ipcRenderer.send("ag:focus"), // the keys back to the dashboard from a native page
+  raise: () => ipcRenderer.send("ag:raise"), // the window brought to the front (a notification of the page's clicked)
   place: (stages: unknown) => {
     const list: Stage[] = (Array.isArray(stages) ? stages : []).filter((s) => s && typeof s === "object").map((s) => ({
       x: num(s.x), y: num(s.y), w: num(s.w), h: num(s.h), target: String(s.target || ""), covered: !!s.covered,

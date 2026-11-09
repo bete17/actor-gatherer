@@ -181,7 +181,9 @@ function railTotals(shown) {
     else if (group === "Background") t.background++; else if (group === "Finished") t.finished++; else if (group === "Idle") t.idle++;
   }
   const chip = (k, cls, what) => k ? el("span", { class: `count ${cls}`, title: `${k} ${what}` }, el("i", { "aria-hidden": "true" }), String(k)) : null;
+  const told = shown.reduce((n, g) => n + appsNotified(g), 0);
   const chips = [chip(t.asking, "asking", "waiting for you"), chip(t.error, "error", "stopped on an error"),
+    chip(told, "notified", told === 1 ? "app with a notification you haven't seen" : "apps with a notification you haven't seen"),
     chip(t.running + t.background, "running", t.background ? `running (${t.background} in the background)` : "running"),
     chip(t.finished, "finished", "finished, not yet seen"), chip(t.idle, "idle", "idle")].filter(Boolean);
   return chips.length ? el("div", { class: "r-totals", role: "group", "aria-label": `Every gatherer's actors: ${chips.map((c) => c.title).join(", ")}` },
@@ -428,7 +430,7 @@ function railAppsIn(g, id) {
 function railTask(g, t) {
   const all = taskMembers(g, t.id), apps = taskApps(g, t.id), lead = taskLead(g, t.id), open = taskActors(g, t.id);
   const faces = [...(open.length ? open : all).map(plainFace), ...(all.length ? [] : apps.map(appFace))].slice(0, 4);
-  const [cls, label] = lead ? statusOf(lead) : apps.length ? ["idle", "Apps"] : ["closed", "Closed"], name = taskName(g, t);
+  const [cls, label] = taskStatus(g, t.id), name = taskName(g, t);
   const current = selectedTask() === `${g.name}\u0000t${t.id}`;
   const inPane = !current && (all.some((a) => openActors().some((s) => isAt(s, g.name, a.channel)))
     || apps.some((o) => panes.apps.some((p) => !p.held && p.instance.id === o.id)));
@@ -439,17 +441,20 @@ function railTask(g, t) {
     ...(HOVERS.matches ? {} : { title: `${name}\n${what} · ${label} · ${titleOf(g)}` }),
     onclick: (ev) => { cardHide(ev); openTask(g.name, t.id, null, ev); } },
   el("span", { class: "r-pic" }, el("span", { class: `logo r-group n${faces.length}` }, ...faces),
-    lead ? el("i", { class: `rd ${cls}`, "aria-hidden": "true", style: `--spin-at: -${Date.now() % 1200}ms` }) : null, all.length ? railApps(apps) : null),
+    lead || cls === "notified" ? el("i", { class: `rd ${cls}`, "aria-hidden": "true", style: `--spin-at: -${Date.now() % 1200}ms` }) : null,
+    all.length ? railApps(apps) : null),
   el("span", { class: "r-name", "aria-hidden": "true", text: name }));
   return first ? dropOnItem(dragItems(tile, g, () => taskItems(g, t.id)), g, first) : tile;   // dragged: all in it
 }
 // An app in no task, in the rail: its mark where an actor's face is, what it shows under it -- pressed, selected
 function railApp(g, o) {
   const chosen = appSelected() === o.id, shown = !chosen && panes.apps.some((p) => !p.held && p.instance.id === o.id), k = appItem(o.id);
+  const told = appStatusOf(g.name, o.id);
   const tile = el("button", { class: "r-actor r-app", type: "button", "aria-current": chosen ? "true" : "false", "data-key": `${g.name}/${k}`,
-    ...(shown ? { "data-open": "true" } : {}), "aria-label": `${appTitle(o)}, an app, in ${titleOf(g)}`,
-    title: `${appTitle(o)} · ${titleOf(g)}`, onclick: (ev) => { cardHide(ev); selectApp(g.name, o, ev); } },
-  el("span", { class: "r-pic" }, appFace(o)),
+    ...(shown ? { "data-open": "true" } : {}), "data-card": appKey(g.name, o.id),
+    "aria-label": `${appTitle(o)}, an app, in ${titleOf(g)}${told ? `: ${told[1]}` : ""}`,
+    ...(HOVERS.matches ? {} : { title: `${appTitle(o)} · ${titleOf(g)}` }), onclick: (ev) => { cardHide(ev); selectApp(g.name, o, ev); } },
+  el("span", { class: "r-pic" }, appFace(o), told ? el("i", { class: `rd ${told[0]}`, "aria-hidden": "true" }) : null),
   el("span", { class: "r-name", "aria-hidden": "true", text: o.title || o.app.label }));
   return dropOnItem(dragItems(tile, g, () => [k]), g, k);
 }
@@ -529,8 +534,9 @@ function cardDraw() {
   const g = state.home && state.home.gatherers.find((x) => x.name === gname), a = g && g.agents.find((x) => x.channel === channel);
   const f = g && !a && /^folder:\d+$/.test(channel || "") ? folderById(g.name, Number(channel.slice(7))) : null;
   const t = g && !a && /^task:\d+$/.test(channel || "") ? taskById(g.name, Number(channel.slice(5))) : null;
+  const o = g && !a && isAppItem(channel) ? appInfo(g.name, channel.slice(APP_ITEM.length)) : null;
   const top = !!g && !a && channel === "gatherer:";
-  if (!at || !(a || f || t || top) || !HOVER_FROM[hover.from]()) { cardHide(); return; }
+  if (!at || !(a || f || t || o || top) || !HOVER_FROM[hover.from]()) { cardHide(); return; }
   if (!hover.node) {
     hover.node = el("div", { class: "actor-card", id: "actor-card", role: "tooltip" });
     hover.node.addEventListener("pointerenter", () => clearTimeout(hover.timer));
@@ -540,14 +546,14 @@ function cardDraw() {
   // a task's: in the list too -- but one shown by the keys (a row in focus) only read, the pointer passing through it: its
   // buttons are the pointer's, and one put over the panels (focus given back to the row, Esc closing a menu) would take
   // the next click meant for what is under it
-  const card = hover.node, live = !SNAPSHOT && !hover.keys && (!!t || (hover.from === "rail" && (!!f || top)));
+  const card = hover.node, live = !SNAPSHOT && !hover.keys && (!!t || !!o || (hover.from === "rail" && (!!f || top)));
   card.classList.toggle("live", live);
   card.setAttribute("role", live ? "group" : "tooltip");
-  if (live) card.setAttribute("aria-label", t ? `The task ${taskName(g, t)}` : f ? `The folder ${f.name}` : `The gatherer ${titleOf(g)}`);
+  if (live) card.setAttribute("aria-label", t ? `The task ${taskName(g, t)}` : o ? `The app ${appTitle(o)}` : f ? `The folder ${f.name}` : `The gatherer ${titleOf(g)}`);
   else card.removeAttribute("aria-label");
   const typing = cardInput && document.activeElement === cardInput && [cardInput.selectionStart, cardInput.selectionEnd];
   cardMoving = true;                                 // its name box taken out and put back: not a blur that ends it
-  card.replaceChildren(...(t ? taskCard(g, t) : f ? folderCard(g, f, live) : top ? gathererCard(g)
+  card.replaceChildren(...(t ? taskCard(g, t) : o ? appCard(g, o) : f ? folderCard(g, f, live) : top ? gathererCard(g)
     : actorCard(g, a, hover.from === "agents" && isAt(focusedActor(), g.name, a.channel))));
   cardMoving = false;
   if (typing && cardInput && cardInput.isConnected) { cardInput.focus({ preventScroll: true }); cardInput.setSelectionRange(...typing); }
@@ -619,8 +625,39 @@ function taskCard(g, t) {
       appMarkOf(o), el("span", { class: "nm", text: o.app.label }), el("span", { class: "st", text: o.title || "" })),
       el("button", { class: "act take-out", type: "button", title: `Take it out of the task: an app on its own again, the task's agents detached from it`,
         "aria-label": `Take ${o.app.label} out of the task`, onclick: (ev) => { ev.stopPropagation(); takeOut(g.name, appItem(o.id)); } }, closeIcon())))),
+    ...apps.map((o) => noticeList(g, o, apps.length > 1)),
     el("div", { class: "c-hint", text: "Click the task to open it: its apps above, its actors side by side · drag an actor or an app onto it to put it in" }),
   ].filter(Boolean);
+}
+// An app's card (an app in no task: its row, its tile in the rail), live: what it is and shows, its notifications
+function appCard(g, o) {
+  return [
+    el("div", { class: "c-who" }, appFace(o),
+      el("div", { class: "tx" }, el("div", { class: "c-nm", text: o.title || o.app.label }),
+        el("div", { class: "c-sub", text: [titleOf(g), o.app.label, o.folder].filter(Boolean).join(" · ") }))),
+    noticeList(g, o) || el("div", { class: "c-st", text: "No notifications" }),
+    el("div", { class: "c-hint", text: "Click to show its panel · drag it onto an actor or a task to put it there" }),
+  ];
+}
+// AN APP'S NOTIFICATIONS in a card: the newest first (NOTICES_SHOWN), each opening the app where it says (openNotice:
+// 07-notices.js) by a click, dismissed by its × -- those the reader has not seen marked; none, nothing. `named`: the app's
+// name over them (a task's card, with apps of more than one)
+const NOTICES_SHOWN = 5;
+function noticeList(g, o, named = false) {
+  const list = appNotices(g.name, o.id);
+  if (!list.length) return null;
+  const since = seen.at[appKey(g.name, o.id)] || 0;
+  return el("div", { class: "c-notices", role: "list", "aria-label": `${o.app.label}'s notifications` },
+    named ? el("div", { class: "c-nhead", text: o.title ? `${o.app.label} · ${o.title}` : o.app.label }) : null,
+    ...list.slice(0, NOTICES_SHOWN).map((n) => el("div", { class: "c-notice" + ((n.at || 0) > since ? " new" : ""), role: "listitem" },
+      el("button", { class: "c-row", type: "button", title: `Open ${o.app.label} there`,
+        onclick: (ev) => { cardHide(ev); openNotice(g.name, o.id, n); } },
+      el("span", { class: "status notified" }, el("i", { "aria-hidden": "true" })),
+      el("span", { class: "nm" }, el("b", { text: n.title }), n.text ? el("span", { class: "nt", text: n.text }) : null),
+      el("span", { class: "st", text: n.at ? ago(n.at) : "" })),
+      el("button", { class: "act take-out", type: "button", title: "Dismiss it", "aria-label": `Dismiss ${n.title}`,
+        onclick: (ev) => { ev.stopPropagation(); dismissNotice(g.name, o.id, n); } }, closeIcon()))),
+    list.length > NOTICES_SHOWN ? el("div", { class: "c-st", text: `and ${list.length - NOTICES_SHOWN} more` }) : null);
 }
 // A folder's card: its name and where it is, then what is in it as a tree, its first level shown (cardTree). Live (in
 // the rail): its buttons first, as its line's in the list -- "+ actor", "+ ⋯", a new folder in it, rename, delete, close

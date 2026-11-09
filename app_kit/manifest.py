@@ -53,11 +53,26 @@ HOST_PROPERTY_NAMES = tuple(p.name for p in HOST_PROPERTIES)
 #: advice), so no policy changes for an app. An app's pollers output these only, as ag requires of any poller.
 CONTEXT_TYPES = ("context_stream", "environment_update")
 #: The records the host keeps of each app: an instance opened or closed, an agent attached or detached, a tool call it
-#: passed to the app. Records like the harness's: no policy groups them. An app reads its own; no app inserts them.
+#: passed to the app, and a notification it sent the user and its end (`notify` capability: NOTICE_TYPES). Records like
+#: the harness's: no policy groups them, and no agent is shown them. An app reads its own; no app inserts them.
 HOST_TYPES = (EventType("app_opened", HOST_PROPERTIES), EventType("app_closed", HOST_PROPERTIES),
               EventType("app_attached", HOST_PROPERTIES), EventType("app_detached", HOST_PROPERTIES),
-              EventType("app_call", HOST_PROPERTIES))
+              EventType("app_call", HOST_PROPERTIES), EventType("app_notified", HOST_PROPERTIES),
+              EventType("app_notice_settled", HOST_PROPERTIES))
 HOST_RECORDS = tuple(t.name for t in HOST_TYPES)
+#: A NOTIFICATION an app sends the user, as an agent's `asked` is: open until settled, as `ask_settled` settles that.
+#:     app_notified        {id, key, title, text, show, where}: where it is shown (SHOWS: "ag", a pop-up in the
+#:                         dashboard; "system", the computer's notification too) and where in the app a click on it
+#:                         takes the user (`where`, the app's own JSON, handed back to its panel); a newer one of the
+#:                         same `key` takes an open one's place
+#:     app_notice_settled  {id or key, how}: it no longer asks for the user -- "cleared" by the app, "dismissed" by the
+#:                         user -- every open one of that key, with a key
+#: Its instance closed settles all of its. Whether the user has seen it is the reader's, as an agent's FINISHED is
+#: (the dashboard's seen.py, the item "app:<instance id>").
+NOTICE_TYPES = ("app_notified", "app_notice_settled")
+SHOWS = ("ag", "system")
+NOTICE_TITLE_CHARS, NOTICE_TEXT_CHARS, NOTICE_KEY_CHARS = 120, 400, 120
+NOTICE_WHERE_BYTES = 4000       # the most JSON an app keeps with one for where a click takes the user
 #: The intents the host routes, and what each one carries.
 INTENTS = {
     "open-file": "path, line?, row_id?: a file to show",
@@ -81,6 +96,7 @@ CAPABILITIES = {
             "each), the actors' branches merged into them, and an actor's changes to a file (app_kit.docs)",
     "actors": "seeing the gatherer's actors as its list shows them: their names, avatars, folders and what they are "
               "doing",
+    "notify": "sending you notifications: in the dashboard's list and as pop-ups, and on this computer if you allow it",
 }
 
 
@@ -160,6 +176,7 @@ class Capabilities:
     edit_guard: bool = False
     docs: bool = False
     actors: bool = False
+    notify: bool = False
 
     def asked(self) -> List[str]:
         """What it asks for, as the user is shown it before granting it."""
@@ -170,7 +187,7 @@ class Capabilities:
             said.append(f"reading these events of the gatherer: {', '.join(self.reads)}")
         if self.files:
             said.append(CAPABILITIES["files"])
-        for k in ("commands", "message_agents", "transcript", "edit_guard", "docs", "actors"):
+        for k in ("commands", "message_agents", "transcript", "edit_guard", "docs", "actors", "notify"):
             if getattr(self, k):
                 said.append(CAPABILITIES[k])
         return said
@@ -264,7 +281,8 @@ class Manifest:
                              "message_agents": self.capabilities.message_agents,
                              "transcript": self.capabilities.transcript,
                              "edit_guard": self.capabilities.edit_guard,
-                             "docs": self.capabilities.docs, "actors": self.capabilities.actors},
+                             "docs": self.capabilities.docs, "actors": self.capabilities.actors,
+                             "notify": self.capabilities.notify},
         }
 
 
@@ -560,4 +578,5 @@ def _capabilities(r: _Reader, d: Any) -> Capabilities:
                         message_agents=r.flag(d, "message_agents", "capabilities."),
                         transcript=r.flag(d, "transcript", "capabilities."),
                         edit_guard=r.flag(d, "edit_guard", "capabilities."),
-                        docs=r.flag(d, "docs", "capabilities."), actors=r.flag(d, "actors", "capabilities."))
+                        docs=r.flag(d, "docs", "capabilities."), actors=r.flag(d, "actors", "capabilities."),
+                        notify=r.flag(d, "notify", "capabilities."))

@@ -116,6 +116,7 @@ intent = "open-url"
 
 [capabilities]                        # shown to the user before they are granted
 native_view = true                    # desktop: a native web view over its panel
+notify = true                         # notifications to the user (5b)
 reads = ["tool_call", "tool_output"]  # other event types it may read, besides its own and the context types
 ```
 
@@ -144,6 +145,8 @@ class Host(ABC):                                                # what an app is
     def tell_panel(self, instance, message: dict) -> None: ...  # to its open panels
     def folder(self) -> str: ...                                # its own files: <home>/apps/<name>/data
     def instances(self) -> List[Instance]: ...
+    def notify(self, instance, title, text="", key=None, show=("ag",), where=None) -> str: ...   # to the user
+    def clear_notice(self, instance, which: str) -> None: ...   # one of its own (an id), or every one of a key
 ```
 
 An app in its own process gets the same calls over HTTP (`app_kit/remote.py`). The host starts the manifest's
@@ -269,6 +272,28 @@ for apps. An app's event types are ag `EventType`s with ag `Property`s (`Manifes
 - **What two apps share is a library, not a call into the other.** The Preview borrows DocWriter's pdf.js and SyncTeX
   today, and the Editor borrows Chat's change renderer. Those move into a library both apps import (in `app_kit/js/`,
   or a package of its own), or into an app of their own: a PDF viewer that handles `open-file` for PDFs.
+
+### 5b. Notifications: an app wanting the user
+
+An app whose manifest asks `notify` (capability) sends the user a NOTIFICATION -- from its backend (`Host.notify`,
+`Host.clear_notice`) or its panel (the SDK's `ag.notices.send`, `.clear`, `.onOpen`). It works as an actor's status
+does, so the two are one abstraction:
+
+- **Facts, recorded as events.** The host records it in the instance's gatherer: `app_notified` {id, key, title, text,
+  show, where}, open until `app_notice_settled` {id or key, how} -- the app cleared it, or the user dismissed it -- as
+  an agent's `asked` is open until its `ask_settled`. Its instance closed settles all of its. Records, as the host's
+  others: no policy groups them, and no agent is ever shown one (`app_kit/notices.py` checks what one may say).
+- **Status, worked out on every read.** The dashboard's home read works out each instance's open ones next to its
+  agents' status (data.py's `app_notices`: a gatherer's `apps`), the page told as each is written.
+- **Seen, the reader's.** One newer than the reader's last look at the instance -- its panel shown, the page in front
+  (seen.py, the item `app:<id>`) -- is NOTIFIED, as an agent done since is FINISHED. The list shows it as a state of
+  its own: the app's row's dot, its task's (where it ranks first: after Waiting for you and Error, before Running), the
+  counts on gatherer, folder and rail, the rail's tile; and lists them in the app's card, each opening the app where
+  it says (`where`, handed to its panel) or dismissed.
+- **Said as it happens.** What comes to want the reader -- an app's notification, an actor that comes to wait for them
+  or stops on an error -- pops up in the page's corner, unless they have it in front of them; and, the page not in
+  front, on the computer too (the browser's Notification, the desktop app's), for an app's only where it asked
+  (`show` "system"). The reader turns actors' pop-ups and the computer's off in the settings.
 
 ### 6. What moves out of the agent views
 
