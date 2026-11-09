@@ -1,0 +1,70 @@
+# The user's Slack, beside their agents: their conversations in a panel, new messages as they are sent (Socket Mode),
+# and replies that agents draft and only the user sends (backend.py). One line to Slack -- the user's own Slack app's
+# tokens, kept in the app's data folder -- serves every gatherer; each gatherer has one instance, and its agents are
+# told of new messages only when they work with it (offer "attached").
+name = "slack"
+label = "Slack"
+version = "1"
+description = "your Slack: new messages as they come, replies agents draft and you send"
+instances = "one"
+offer = "attached"
+mark = "mark.svg"
+instructions = """Slack here is the user's own Slack, shown in the dashboard's Slack panel. New messages reach you as
+stream messages ("Message in Slack #design from Maya Chen ...") that end with [conversation <id>, ts <ts>]. Read with
+slack_read -- no `conversation`: what the user has open in the panel, their conversations (unread first) and the drafts
+waiting for them; with one (its id, #name, a person's @name or name, or "open": what the user has open, its thread if
+one is): its latest messages; with `thread` (a message's ts): that thread. slack_search searches all of the user's
+Slack, channels they aren't in too; each hit names its conversation (and thread) for slack_read.
+
+When the user opens a conversation or thread in the panel, you're told ("The user opened DM with Maya Chen in the Slack
+panel [conversation <id>]"). The latest of these is what they're looking at: when they say "this", "here", "she", "that
+message" or otherwise leave out where, they mean it -- read it (conversation "open") before guessing from earlier in
+your conversation.
+
+You never send anything to Slack. To reply or write for the user, call slack_draft with the conversation, your `text`
+(Slack's mrkdwn: *bold*, _italic_, `code`, <https://url|label>), and `thread` (the ts of the message you answer) to
+reply in its thread. The draft waits in the Slack panel, where the user sends it, edits it or discards it; you are told
+which. To change a draft still waiting, call slack_draft with its `draft` id and the new text. Write as the user would:
+it is posted as them. If you also have other Slack tools (a Slack connector), don't use them to post: replies go
+through slack_draft."""
+
+[agent]
+start = true
+name = "Slack"
+
+[backend]
+python = "backend:SlackApp"
+
+[panel]
+entry = "panel/index.html"
+
+[capabilities]
+message_agents = true
+actors = true
+
+[[tools]]
+name = "read"
+description = "The user's Slack: with no `conversation`, what they have open in the Slack panel, their conversations (unread first) and the drafts waiting for them; with one, its latest messages, oldest first, each [ts] author: text; with `thread` (a message's ts), that thread."
+input_schema = { type = "object", properties = { conversation = { type = "string", description = "a conversation's id (any channel's, from a search hit), #name, a person's @name or name (their DM), or \"open\": what the user has open in the panel (its thread, if one is open)" }, thread = { type = "string", description = "a message's ts: its thread" }, limit = { type = "integer", description = "how many messages (default 20, at most 100)" } } }
+
+[[tools]]
+name = "search"
+description = "Search all of the user's Slack, channels they aren't in too (Slack's own search: words, from:@name, in:#channel, before:/after:YYYY-MM-DD, has:link), newest first; each hit names its conversation and, for a thread reply, its thread, to read with slack_read."
+input_schema = { type = "object", properties = { query = { type = "string" }, limit = { type = "integer", description = "how many (default 20)" } }, required = ["query"] }
+
+[[tools]]
+name = "draft"
+description = "Draft a Slack message for the user to send: it waits in the Slack panel, where they send, edit or discard it (you are told which). Nothing is posted by this tool. With `draft` (a waiting draft's id): that draft's text replaced."
+input_schema = { type = "object", properties = { conversation = { type = "string", description = "where: a conversation's id, #name, a person's @name or name, or \"open\": what the user has open (in its thread, if one is open)" }, text = { type = "string", description = "the message, in Slack's mrkdwn" }, thread = { type = "string", description = "the ts of the message this answers: posted in its thread" }, broadcast = { type = "boolean", description = "a thread reply also shown in the conversation" }, draft = { type = "string", description = "a waiting draft's id, to change its text" } }, required = ["text"] }
+
+[[events]]
+name = "slack.drafted"
+description = "An agent drafted a Slack message for the user: {conversation, draft, text, thread}."
+
+[[events]]
+name = "slack.sent"
+description = "The user sent a Slack message from the panel: {conversation, ts, draft (the draft it was, or null), text}."
+
+[[events]]
+name = "slack.discarded"
+description = "The user discarded an agent's draft: {conversation, draft}."
