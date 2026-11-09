@@ -23,10 +23,19 @@ The ops (each a dict, `op` its kind):
     page.delete   {page}            into the trash, with its subpages
     page.restore  {page}            out of it, with what went in with it
     page.purge    {page}            gone for good, with its subpages (a page in the trash only)
-    block.put     {page, block: {id, type?, text?, checked?, indent?}, after?}   a new block (after the block `after`;
-                                    "": first; none: last), or what is given of one there changed
+    block.put     {page, block: {id, type?, text?, checked?, indent?, to?, sent?, extra?}, after?}   a new block
+                                    (after the block `after`; "": first; none: last), or what is given of one there
+                                    changed
     block.move    {page, block, after}
-    block.delete  {page, block}
+    block.delete  {page, block}      (its thread with it)
+    thread.add    {page, block, line: {id, by, text, at?, done?}}   a line of the block's thread, at its end
+
+A block sent to an agent (the panel sends it, as the user's message: an actor of the gatherer, or its gatherer agent)
+says so: `to`, the actor's channel, `sent`, when, and `extra`, what the user added to it when they sent it (their
+instructions beyond the line's words), if anything. What is said about it after -- the user's replies, sent to that
+agent too, and the agent's reports (the Notes app's notes_report) -- is the block's `thread`: lines, each `by` "user" or
+"agent:<its channel>", in the order written. An `agents` block holds no text: the panel draws the gatherer's actors
+there, as they are now.
 
 An op naming a page or block that is not there (another window deleted it) is skipped, not refused: the panel and the
 agents change the notebook at once, and the one later never undoes the other. Standard library only."""
@@ -41,13 +50,21 @@ import time
 from html.parser import HTMLParser
 from typing import Any, Dict, List, Optional, Tuple
 
-TYPES = ("text", "h1", "h2", "h3", "todo", "bullet", "number", "quote", "code", "divider")
+TYPES = ("text", "h1", "h2", "h3", "todo", "bullet", "number", "quote", "code", "divider", "agents")
 #: the blocks that may be set in (the rest are always at the left edge)
 INDENTED = ("text", "todo", "bullet", "number", "quote")
 MAX_INDENT = 6
 MAX_TEXT = 20_000
 MAX_TITLE = 300
 ID = re.compile(r"^[a-z0-9]{6,24}$")
+#: an actor's channel, as a block sent to one names it (a session's id, a codex thread's)
+CHANNEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$")
+#: who wrote a thread's line: the user, or an agent (its channel)
+BY = re.compile(r"^(user|agent:[A-Za-z0-9][A-Za-z0-9._:-]{0,99})$")
+#: the blocks that are sent to no one (nothing in them to send)
+UNSENT = ("divider", "agents")
+MAX_THREAD = 200                  # a block's thread keeps its last lines
+MAX_LINE = 4_000
 _ID_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789"
 
 
@@ -281,6 +298,9 @@ def markdown_lines(blocks: List[dict], ids: bool = True) -> List[str]:
             lines.extend((b.get("text") or "").split("\n"))
             lines.append("```")
             continue
+        if t == "agents":
+            lines.append(f"{tag}(a table of the gatherer's actors, as they are now: the user sees it in Notes)")
+            continue
         head = {"text": "", "h1": "# ", "h2": "## ", "h3": "### ", "bullet": "- ", "quote": "> ", "divider": "---",
                 "todo": "- [x] " if b.get("checked") else "- [ ] ", "number": f"{n}. "}[t]
         lines.append(f"{tag}{pad}{head}{words}".rstrip() if t == "divider" else f"{tag}{pad}{head}{words}")
@@ -371,7 +391,9 @@ class Notebook:
                 lines.append(binned)
             return "\n".join(lines)
 
-    def markdown(self, page: dict) -> str:
+    def markdown(self, page: dict, me: Optional[str] = None) -> str:
+        """The page as an agent reads it: its blocks, each line its id first; then the blocks sent to agents, each with
+        who it went to and its thread (`me`: the reading agent's channel, said as "you")."""
         with self.lock:
             parent = self._get(page.get("parent"))
             head = f"# {(page.get('icon') + ' ') if page.get('icon') else ''}{page.get('title') or 'Untitled'}"
@@ -380,10 +402,36 @@ class Notebook:
             lines = [f"{head}   ({where})", ""]
             body = markdown_lines(page.get("blocks", []))
             lines.extend(body or ["(no blocks yet)"])
+            sent = [b for b in page.get("blocks", []) if b.get("to") or b.get("thread")]
+            if sent:
+                who = lambda by: ("the user" if by == "user"                       # noqa: E731
+                                  else f"actor {by[6:]}{' (you)' if me and by[6:] == me else ''}")
+                lines += ["", "Blocks the user sent to agents (each: who it went to, then what was said about it):"]
+                for b in sent:
+                    to = b.get("to")
+                    lines.append(f"- [{b['id']}] " + (f"sent to actor {to}{' (you)' if me and to == me else ''}"
+                                                      if to else "sent to no one now")
+                                 + (f", with: {' / '.join(inline_markdown(b['extra']).splitlines())}"
+                                    if b.get("extra") else ""))
+                    for line in b.get("thread") or []:
+                        lines.append(f"    {who(line['by'])}: {' / '.join(inline_markdown(line['text']).splitlines())}")
             subs = self.children(page["id"])
             if subs:
                 lines += ["", "Subpages: " + ", ".join(f"{p.get('title') or 'Untitled'} ({p['id']})" for p in subs)]
             return "\n".join(lines)
+
+    def block(self, bid: Any) -> Optional[Tuple[dict, dict]]:
+        """The block with that id, on a page not in the trash, and its page; None if there is none."""
+        if not isinstance(bid, str):
+            return None
+        with self.lock:
+            for p in self.pages:
+                if p.get("deleted"):
+                    continue
+                b = next((x for x in p.get("blocks", []) if x["id"] == bid), None)
+                if b is not None:
+                    return p, b
+            return None
 
     # -- changing
 
@@ -424,7 +472,7 @@ class Notebook:
             return self._page_new(op)
         page = self._get(op.get("page"))
         if kind in ("page.set", "page.delete", "page.restore", "page.purge", "block.put", "block.move",
-                    "block.delete"):
+                    "block.delete", "thread.add"):
             if not isinstance(op.get("page"), str):
                 raise NotebookError(f"{kind}: which page (`page`, its id)")
             if page is None:
@@ -461,6 +509,8 @@ class Notebook:
             return {"op": kind, "page": page["id"], "pages": sorted(gone)}
         if kind == "block.put":
             return self._block_put(page, op)
+        if kind == "thread.add":
+            return self._thread_add(page, op)
         blocks = page.setdefault("blocks", [])
         bid = op.get("block")
         i = next((n for n, b in enumerate(blocks) if b["id"] == bid), None)
@@ -526,6 +576,19 @@ class Notebook:
         page["updated"] = _now()
         return out
 
+    def _thread_add(self, page: dict, op: dict) -> Optional[dict]:
+        b = next((x for x in page.get("blocks", []) if x["id"] == op.get("block")), None)
+        if b is None:
+            return None
+        line = _line(op.get("line"), "thread.add")
+        thread = b.setdefault("thread", [])
+        if any(x["id"] == line["id"] for x in thread):
+            return None                                       # sent again: there already
+        thread.append(line)
+        del thread[:-MAX_THREAD]
+        page["updated"] = _now()
+        return {"op": "thread.add", "page": page["id"], "block": b["id"], "line": line}
+
     def _block_put(self, page: dict, op: dict) -> Optional[dict]:
         given = op.get("block")
         if not isinstance(given, dict) or not ID.match(str(given.get("id") or "")):
@@ -576,5 +639,42 @@ def _block(b: Any, was: Optional[dict], kind: str) -> dict:
         indent = max(0, min(MAX_INDENT, int(b.get("indent") or 0))) if t in INDENTED else 0
     except (TypeError, ValueError):
         raise NotebookError(f"{kind}: a block's `indent` is a whole number") from None
-    return {"id": b["id"], "type": t, "text": text, "checked": bool(b.get("checked")) and t == "todo",
-            "indent": indent}
+    out = {"id": b["id"], "type": t, "text": text, "checked": bool(b.get("checked")) and t == "todo", "indent": indent}
+    to = b.get("to") or ""
+    if to and t not in UNSENT:
+        if not isinstance(to, str) or not CHANNEL.match(to):
+            raise NotebookError(f"{kind}: a block's `to` is the channel of the actor it was sent to")
+        out["to"], out["sent"] = to, _when(b.get("sent"), kind)
+        extra = b.get("extra")
+        if extra is not None and not isinstance(extra, str):
+            raise NotebookError(f"{kind}: a block's `extra` is what the user added to it, a string")
+        if extra and clean_html(extra[:MAX_LINE]):
+            out["extra"] = clean_html(extra[:MAX_LINE])
+    thread = b.get("thread")
+    if thread:
+        if not isinstance(thread, list):
+            raise NotebookError(f"{kind}: a block's `thread` is a list of lines")
+        out["thread"] = [_line(x, kind) for x in thread][-MAX_THREAD:]
+    return out
+
+
+def _when(at: Any, kind: str) -> float:
+    if at is None:
+        return _now()
+    if isinstance(at, bool) or not isinstance(at, (int, float)) or at < 0:
+        raise NotebookError(f"{kind}: a time is seconds since 1970")
+    return round(float(at), 3)
+
+
+def _line(x: Any, kind: str) -> dict:
+    """A thread's line as kept: {id, by, text (clean, as a block's), at, done?}."""
+    if not isinstance(x, dict) or not ID.match(str(x.get("id") or "")):
+        raise NotebookError(f"{kind}: a thread's line is {{id, by, text, at?, done?}}, its id 6-24 of a-z and 0-9")
+    if not isinstance(x.get("by"), str) or not BY.match(x["by"]):
+        raise NotebookError(f"{kind}: a line's `by` is \"user\", or \"agent:\" and the agent's channel")
+    if not isinstance(x.get("text"), str) or not x["text"].strip():
+        raise NotebookError(f"{kind}: a line's `text` says something")
+    out = {"id": x["id"], "by": x["by"], "text": clean_html(x["text"][:MAX_LINE]), "at": _when(x.get("at"), kind)}
+    if x.get("done"):
+        out["done"] = True
+    return out

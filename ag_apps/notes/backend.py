@@ -8,7 +8,9 @@ The panel's routes (its own origin, /api/...):
     POST parse  {markdown}      blocks made from pasted markdown, with new ids (nothing changed)
 
 The tools (notes_read, notes_add, notes_change) read and write it as markdown; what an agent changes is told to the
-panels with its channel, so the panel shows who changed what."""
+panels with its channel, so the panel shows who changed what. notes_report is an agent's report on a block the user sent
+it (a line of the block's thread, by it; the to-do ticked, if it is done). A line of a thread a panel adds is the
+user's, whatever it says."""
 import json
 import os
 import threading
@@ -67,7 +69,7 @@ class NotesApp(App):
                     blocks = nb.blocks_from_markdown(str(ask.get("markdown") or ""))
                     return Response.json({"blocks": [{**b, "id": nb.new_id()} for b in blocks]})
                 by = str(ask.get("by") or "user")[:40]
-                return Response.json({"version": self.change(instance, ask.get("ops"), by)})
+                return Response.json({"version": self.change(instance, _users(ask.get("ops")), by)})
         except nb.NotebookError as exc:
             return Response.json({"error": str(exc)}, 400)
         except ValueError:
@@ -82,11 +84,13 @@ class NotesApp(App):
             if tool == "read":
                 if not args.get("page"):
                     return ToolResult.text(book.outline())
-                return ToolResult.text(book.markdown(self._page(book, args.get("page"))))
+                return ToolResult.text(book.markdown(self._page(book, args.get("page")), caller.channel))
             if tool == "add":
                 return self._add(instance, book, args, caller)
             if tool == "change":
                 return self._change(instance, book, args, caller)
+            if tool == "report":
+                return self._report(instance, book, args, caller)
         except nb.NotebookError as exc:
             return ToolResult.error(str(exc))
         raise AppError(f"{tool}: not a tool of Notes")
@@ -181,3 +185,44 @@ class NotesApp(App):
                                    "ticked or not), or `delete`")
         self.change(instance, ops, by, caller.channel)
         return ToolResult.text(book.markdown(book.page(page["id"])))
+
+    def _report(self, instance, book, args, caller) -> ToolResult:
+        """An agent's report on a block the user sent it: a line of the block's thread, by the agent; a to-do ticked
+        when `done`."""
+        found = book.block(args.get("block"))
+        if found is None:
+            raise nb.NotebookError(f"notes_report: no block {args.get('block')!r} in the notebook: `block` is the id "
+                                   f"the message from the user's Notes named")
+        page, block = found
+        text = args.get("text")
+        if not isinstance(text, str) or not text.strip():
+            raise nb.NotebookError("notes_report: `text`, your report: one to three lines")
+        if len(text) > REPORT_CHARS:
+            raise nb.NotebookError(f"notes_report: {len(text)} characters is too long for a report: say in one to "
+                                   f"three lines what you did and where it is; the rest stays in your answer")
+        lines = [ln.strip() for ln in text.strip().splitlines() if ln.strip()]
+        line = {"id": nb.new_id(), "by": self._by(caller), "text": "<br>".join(nb.inline_html(ln) for ln in lines),
+                "done": bool(args.get("done"))}
+        ops = [{"op": "thread.add", "page": page["id"], "block": block["id"], "line": line}]
+        tick = bool(args.get("done")) and block["type"] == "todo" and not block.get("checked")
+        if tick:
+            ops.append({"op": "block.put", "page": page["id"], "block": {"id": block["id"], "checked": True}})
+        self.change(instance, ops, self._by(caller), caller.channel)
+        return ToolResult.text(f"Reported under the block on “{page.get('title') or 'Untitled'}”"
+                               f"{', and ticked it' if tick else ''}: the user sees it there.")
+
+
+#: How long a report may be: a few lines, not an answer.
+REPORT_CHARS = 1_200
+
+
+def _users(ops):
+    """A panel's ops, any thread line in them the user's (`by` "user"), written now: a panel writes as the user."""
+    if not isinstance(ops, list):
+        return ops
+    out = []
+    for op in ops:
+        if isinstance(op, dict) and op.get("op") == "thread.add" and isinstance(op.get("line"), dict):
+            op = {**op, "line": {**op["line"], "by": "user", "at": None}}
+        out.append(op)
+    return out

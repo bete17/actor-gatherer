@@ -1,7 +1,14 @@
 /* The Notes panel: the gatherer's pages in a sidebar, and the page open, its blocks edited in place (a minimal
 Notion). Every change is an op (notebook.py has their list): applied here at once, then sent to the backend, one batch
 after another, in order. The backend tells every open panel each batch it applied, in order, numbered (`version`): a
-panel skips its own, and applies another window's or an agent's -- never into the block the reader is typing in. */
+panel skips its own, and applies another window's or an agent's -- never into the block the reader is typing in.
+
+A block can be sent to an agent of the gatherer (`@` in it, or its Send button): its words go as the user's message
+(ag.actors, as Chat sends one), ending with a note saying where they are from and asking for a report back. The block
+then says who it went to (`to`), and under it, in one line, how that actor stands now and its latest report. Its
+conversation -- the user's messages to it (sent to it too), its reports (the backend's notes_report), what it asks,
+answered there -- is in a panel beside the page, opened from that line: never on the page itself. The Agents page, and an `agents` block,
+show every actor of the gatherer: how it stands, what it was sent from the notes, and its last report. */
 (async function () {
   "use strict";
   const ag = await AgApp.connect();
@@ -26,6 +33,7 @@ panel skips its own, and applies another window's or an agent's -- never into th
     { type: "quote", label: "Quote", note: "Words set apart", glyph: "❝", words: "quote blockquote" },
     { type: "code", label: "Code", note: "Code, as it is typed", glyph: "</>", words: "code snippet pre" },
     { type: "divider", label: "Divider", note: "A line between parts", glyph: "—", words: "divider line rule hr separator" },
+    { type: "agents", label: "Agents", note: "Your actors, as they are now", glyph: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><circle cx="6" cy="5.5" r="2.2"/><circle cx="11.5" cy="6.2" r="1.7"/><path d="M2 13c.5-2.3 2-3.4 4-3.4s3.5 1.1 4 3.4M10 9.9c.5-.3 1-.4 1.5-.4 1.5 0 2.5.9 2.9 2.6"/></svg>', words: "agents actors status table team" },
   ];
   const ICONS = ["📄", "📝", "✅", "📌", "📚", "💡", "🎯", "🚀", "🛒", "🏠", "💼", "🧪", "🐛", "🔧", "📅", "⭐", "❤️", "🔥", "🌱", "🎨",
     "🎵", "✈️", "🍳", "💰", "📈", "🧠", "☕", "🗂️", "🔖", "🧩", "🏃", "📖", "🎓", "🧾", "📦", "⚙️", "🗒️", "🌟", "🍀", "🐣"];
@@ -40,6 +48,10 @@ panel skips its own, and applies another window's or an agent's -- never into th
     restore: '<svg width="14" height="14" viewBox="0 0 16 16"><path d="M3.5 6.5A5 5 0 1 1 4 11M3.2 3v3.7h3.7" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>',
     x: '<svg width="12" height="12" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
     check: '<svg width="11" height="11" viewBox="0 0 12 12"><path d="M2.5 6.2l2.4 2.4 4.6-5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    people: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><circle cx="6" cy="5.5" r="2.2"/><circle cx="11.5" cy="6.2" r="1.7"/><path d="M2 13c.5-2.3 2-3.4 4-3.4s3.5 1.1 4 3.4M10 9.9c.5-.3 1-.4 1.5-.4 1.5 0 2.5.9 2.9 2.6"/></svg>',
+    at: '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="2.4"/><path d="M10.4 8v1.1a1.7 1.7 0 0 0 3.4 0V8A5.8 5.8 0 1 0 11.5 12.6"/></svg>',
+    bubble: '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M2.5 3h11v7.5H6.5L3 13.5v-3H2.5z"/></svg>',
+    send: '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 8l11-5.5-4 11-1.6-4.4z"/></svg>',
     book: '<svg width="44" height="44" viewBox="0 0 44 44"><rect x="9" y="6" width="26" height="32" rx="4" fill="none" stroke="currentColor" stroke-width="2"/><rect x="14" y="13" width="5" height="5" rx="1.3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M15.2 15.6l1 1 1.7-2M22 15.5h8M14 23.5h16M14 29.5h11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   };
   function rid() {
@@ -70,6 +82,14 @@ panel skips its own, and applies another window's or an agent's -- never into th
   const plainOf = (h) => { const t = document.createElement("template"); t.innerHTML = (h || "").replace(/<br>/g, "\n"); return t.content.textContent; };
   const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
   const now = () => Date.now() / 1000;
+  const DASH = new URLSearchParams(location.search).get("host") || "";   // the dashboard's origin: its avatars
+  const AGENTS = "@agents";                              // the Agents page (no page of the notebook: never an id)
+  const UNSENT = ["divider", "agents"];                  // blocks with nothing in them to send
+  const short = (ch) => String(ch || "").slice(0, 8);
+  const since = (t) => { const d = Math.max(0, now() - (t || now())); return d < 60 ? "just now" : d < 3600 ? `${Math.round(d / 60)}m`
+    : d < 86400 ? `${Math.round(d / 3600)}h` : `${Math.round(d / 86400)}d`; };
+  const clock = (t) => new Date(t * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const oneLine = (h, n = 120) => { const t = plainOf(h).replace(/\s+/g, " ").trim(); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
 
   // ---------------------------------------------------------------- the notebook, as this panel has it
   let book = { version: 0, pages: [] };
@@ -128,6 +148,13 @@ panel skips its own, and applies another window's or an agent's -- never into th
         return;
       }
       case "block.delete": if (p) p.blocks = p.blocks.filter((x) => x.id !== op.block); return;
+      case "thread.add": {
+        const b = p && p.blocks.find((x) => x.id === op.block);
+        if (!b) return;
+        b.thread = b.thread || [];
+        if (!b.thread.some((l) => l.id === op.line.id)) b.thread.push({ at: now(), ...op.line });
+        return;
+      }
     }
   }
 
@@ -214,7 +241,7 @@ panel skips its own, and applies another window's or an agent's -- never into th
         apply(op);
         touched.add(typeof op.page === "string" ? op.page : op.page && op.page.id);
         if (op.op === "block.put") blocks.add(op.block.id);
-        if (op.op === "block.move") blocks.add(op.block);
+        if (op.op === "block.move" || op.op === "thread.add") blocks.add(op.block);
       }
       if (current && !pages.has(current)) current = null;
       drawSide(m.agent ? touched : null);
@@ -226,8 +253,8 @@ panel skips its own, and applies another window's or an agent's -- never into th
   }
   let whoTimer = 0;
   function told(channel, changed) {
-    const st = ag.agents.state(channel);
-    const name = (st && st.name) || "An agent";
+    const st = ag.agents.state(channel), a = actorOf(channel);
+    const name = a ? nameOf(a, channel) : (st && st.name) || "An agent";
     const what = changed.length === 1 ? `“${changed[0].title || "Untitled"}”` : changed.length ? `${changed.length} pages` : "the notes";
     const w = $("who");
     w.textContent = `${name} changed ${what}`;
@@ -278,6 +305,7 @@ panel skips its own, and applies another window's or an agent's -- never into th
       tree.append(r);
       if (open) for (const k of kids) row(k, depth + 1);
     };
+    if (!q) tree.append(agentsEntry());
     if (q) {
       const hits = live().filter((p) => (p.title || "").toLowerCase().includes(q) || p.blocks.some((b) => plainOf(b.text).toLowerCase().includes(q)));
       for (const p of hits) row(p, 0, true);
@@ -364,6 +392,7 @@ panel skips its own, and applies another window's or an agent's -- never into th
   function openPage(id) {
     flushTyped();
     pump();
+    if (convo && convo.page !== id) convo = null;         // a line's conversation: on its own page only
     current = id;
     store.set("page", id);
     for (let p = pages.get(id); p && p.parent; p = pages.get(p.parent)) opened.add(p.parent);
@@ -373,13 +402,21 @@ panel skips its own, and applies another window's or an agent's -- never into th
     $("scroll").scrollTop = 0;
   }
   function drawPage(flash = null) {
+    const onAgents = current === AGENTS;
+    $("agents-page").hidden = !onAgents;
+    if (onAgents) {
+      for (const id of ["empty", "page", "banner"]) $(id).hidden = true;
+      $("crumbs").replaceChildren(el("button", { type: "button", text: "Agents" }));
+      drawAgentsPage();
+      return drawConvo();
+    }
     const p = current && pages.get(current);
     const none = !live().length && !p;
     $("empty").hidden = !none;
     $("page").hidden = !p;
     $("banner").hidden = !(p && p.deleted);
     drawCrumbs(p);
-    if (!p) { $("blocks").replaceChildren(); return; }
+    if (!p) { $("blocks").replaceChildren(); return drawConvo(); }
     const ro = !!p.deleted;
     $("page").classList.toggle("ro", ro);
     if (ro) $("banner").replaceChildren(el("span", { text: "This page is in the trash." }),
@@ -392,6 +429,7 @@ panel skips its own, and applies another window's or an agent's -- never into th
     $("icon").textContent = p.icon || "";
     $("add-icon").hidden = !!p.icon || ro;
     drawBlocks(p, flash, ro);
+    drawConvo();
   }
   function drawCrumbs(p) {
     const trail = [];
@@ -413,15 +451,23 @@ panel skips its own, and applies another window's or an agent's -- never into th
       el("button", { class: "grip", type: "button", tabindex: "-1", title: "Drag to move, click for more", "aria-label": "Move, or more", html: SVG.grip }));
     const n = el("div", { class: "blk", "data-id": b.id }, gut);
     if (b.type === "divider") n.append(el("div", { class: "hr", tabindex: "0", role: "separator" }));
-    else n.append(el("div", { class: "mk" }), el("div", { class: "tx", spellcheck: "true" }));
+    else if (b.type === "agents") n.append(el("div", { class: "agt", tabindex: "0", role: "group", "aria-label": "The gatherer's actors" }));
+    else n.append(el("div", { class: "mk" }), el("div", { class: "tx", spellcheck: "true" }),
+      el("button", { class: "to-btn", type: "button", tabindex: "-1", title: "Send it to an agent (or type @)", html: SVG.at }));
     return n;
   }
   function updateRow(n, b, ro) {
     n.dataset.type = b.type;
     n.style.setProperty("--ind", b.indent || 0);
     n.classList.toggle("done", b.type === "todo" && !!b.checked);
+    n.classList.toggle("is-sent", !!b.to || outgoing.has(b.id));
+    n.classList.toggle("ro", !!ro);
+    if (b.type === "agents") return drawAgentsBlock(n);
     const tx = n.querySelector(".tx");
     if (!tx) return;
+    const to = n.querySelector(".to-btn");                 // its words drawn by the style: not the block's text
+    if (to) { to.dataset.label = b.type === "todo" ? "Assign" : "Ask"; to.setAttribute("aria-label", `${to.dataset.label}: send it to an agent`); }
+    sentPart(n, b, ro);
     tx.setAttribute("contenteditable", ro ? "false" : b.type === "code" ? "plaintext-only" : "true");
     tx.dataset.ph = PH[b.type] || "";
     if (tx !== document.activeElement && !dirty.has(b.id)) {
@@ -447,9 +493,10 @@ panel skips its own, and applies another window's or an agent's -- never into th
     const at = focus && focus.classList.contains("tx") ? caretIn(focus) : null;
     for (const [id, n] of have) if (!want.has(id)) n.remove();
     let prev = null;
+    const shape = (t) => (t === "divider" || t === "agents" ? t : "tx");
     for (const b of p.blocks) {
       let n = have.get(b.id);
-      if (n && (n.dataset.type === "divider") !== (b.type === "divider")) { n.remove(); n = null; }
+      if (n && shape(n.dataset.type) !== shape(b.type)) { n.remove(); n = null; }
       if (!n) n = makeRow(b);
       updateRow(n, b, ro);
       const there = prev ? prev.nextSibling : box.firstChild;
@@ -526,14 +573,14 @@ panel skips its own, and applies another window's or an agent's -- never into th
     const n = rowOf(id);
     if (!n) return;
     const tx = n.querySelector(".tx");
-    if (!tx) return n.querySelector(".hr").focus();
+    if (!tx) return n.querySelector(".hr, .agt").focus();
     tx.focus();
     const len = tx.textContent.length;
     setCaret(tx, where === "end" ? len : where === "start" ? 0 : Math.min(where, len));
   }
   const empty = (tx) => tx.textContent === "" && !tx.querySelector("br");
   const textOf = (n, b) => (b.type === "code" ? n.querySelector(".tx").textContent : clean(n.querySelector(".tx").innerHTML));
-  const editable = (b) => b.type !== "divider";
+  const editable = (b) => !UNSENT.includes(b.type);
 
   // ---------------------------------------------------------------- typing
   box.addEventListener("input", (ev) => {
@@ -546,11 +593,13 @@ panel skips its own, and applies another window's or an agent's -- never into th
     b.text = textOf(n, b);
     typed(current, b.id, b.text);
     slashInput(n, tx, b, ev);
+    atInput(n, tx, b, ev);
   });
   box.addEventListener("focusout", (ev) => {
     const n = ev.target.closest && ev.target.closest(".blk");
     if (n && dirty.has(n.dataset.id)) sendTyped(n.dataset.id);
-    if (menu && menu.kind === "slash" && ev.target === menu.tx) closePop();
+    if (menu && (menu.kind === "slash" || menu.kind === "at") && ev.target === menu.tx
+      && !(ev.relatedTarget && menu.el.contains(ev.relatedTarget))) closePop();   // (into the picker's box: kept)
   });
   // Markdown at the start of a block, as it is typed: "# " a heading, "- " a list, "[] " a to-do, "> " a quote, "```" code,
   // "---" a divider.
@@ -604,14 +653,15 @@ panel skips its own, and applies another window's or an agent's -- never into th
 
   box.addEventListener("keydown", (ev) => {
     if (ev.isComposing) return;
-    const hr = ev.target.closest && ev.target.closest(".hr");
-    if (hr) return dividerKey(ev, hr.closest(".blk"));
+    const hr = ev.target.closest && ev.target.closest(".hr, .agt");
+    if (hr && ev.target === hr) return dividerKey(ev, hr.closest(".blk"));
     const tx = ev.target.closest && ev.target.closest(".tx");
     if (!tx) return;
     const n = tx.closest(".blk"), p = page(), i = p ? p.blocks.findIndex((b) => b.id === n.dataset.id) : -1;
     if (i < 0 || p.deleted) return;
     const b = p.blocks[i];
     if (menu && menu.kind === "slash" && slashKey(ev)) return;
+    if (menu && menu.kind === "at" && atKey(ev)) return;
     const mod = ev.metaKey || ev.ctrlKey, k = ev.key;
     if (mod && !ev.altKey) {
       const low = k.toLowerCase();
@@ -857,8 +907,14 @@ panel skips its own, and applies another window's or an agent's -- never into th
     return b;
   }
   document.addEventListener("mousedown", (ev) => { if (menu && !menu.el.contains(ev.target)) closePop(); }, true);
-  document.addEventListener("keydown", (ev) => { if (menu && ev.key === "Escape" && menu.kind !== "slash") { ev.preventDefault(); closePop(); } });
-  $("scroll").addEventListener("scroll", () => { if (menu && menu.kind !== "slash") closePop(); });
+  document.addEventListener("keydown", (ev) => {
+    if (menu && menu.kind === "at" && !menu.tx && atKey(ev)) return;          // the picker opened by a block's button
+    if (menu && ev.key === "Escape" && menu.kind !== "slash" && menu.kind !== "at") { ev.preventDefault(); closePop(); }
+  });
+  $("convo").addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape" && !menu && !ev.target.closest(".reply")) { ev.preventDefault(); closeConvo(); }
+  });
+  $("scroll").addEventListener("scroll", () => { if (menu && menu.kind !== "slash" && !(menu.kind === "at" && menu.tx)) closePop(); });
 
   function slashInput(n, tx, b, ev) {
     if (menu && menu.kind === "slash") {
@@ -924,13 +980,13 @@ panel skips its own, and applies another window's or an agent's -- never into th
     b.text = textOf(n, b);
     tx.focus();
     setCaret(tx, m.from);
-    if (type === "divider") {
+    if (UNSENT.includes(type)) {
       forget(b.id);
       const next = { id: rid(), type: "text", text: "", checked: false, indent: 0 };
-      if (empty(tx)) change([{ op: "block.put", page: current, block: { id: b.id, type: "divider", text: "", indent: 0 } },
+      if (empty(tx)) change([{ op: "block.put", page: current, block: { id: b.id, type, text: "", indent: 0 } },
         { op: "block.put", page: current, block: next, after: b.id }]);
       else {
-        const line = { id: rid(), type: "divider", text: "", checked: false, indent: 0 };
+        const line = { id: rid(), type, text: "", checked: false, indent: 0 };
         change([{ op: "block.put", page: current, block: { id: b.id, text: b.text } },
           { op: "block.put", page: current, block: line, after: b.id },
           { op: "block.put", page: current, block: next, after: line.id }]);
@@ -946,6 +1002,12 @@ panel skips its own, and applies another window's or an agent's -- never into th
 
   // ---------------------------------------------------------------- the gutter: + and the grip (drag, or its menu)
   box.addEventListener("click", (ev) => {
+    const to = ev.target.closest(".to-btn");
+    if (to) {
+      const b = blockOf(to.closest(".blk").dataset.id);
+      if (b && !page().deleted) openPicker(b.id, to.getBoundingClientRect());
+      return;
+    }
     const add = ev.target.closest(".gut .add");
     if (add) {
       const b = blockOf(add.closest(".blk").dataset.id);
@@ -963,7 +1025,7 @@ panel skips its own, and applies another window's or an agent's -- never into th
     const a = ev.target.closest(".tx a");
     if (a && (ev.metaKey || ev.ctrlKey || page().deleted)) { ev.preventDefault(); window.open(a.href, "_blank", "noopener"); }
   });
-  box.addEventListener("mousedown", (ev) => { if (ev.target.closest(".chk, .gut .add")) ev.preventDefault(); });
+  box.addEventListener("mousedown", (ev) => { if (ev.target.closest(".chk, .gut .add, .to-btn")) ev.preventDefault(); });
   let drag = null;
   box.addEventListener("pointerdown", (ev) => {
     const grip = ev.target.closest(".gut .grip");
@@ -1011,11 +1073,16 @@ panel skips its own, and applies another window's or an agent's -- never into th
     n.classList.add("menu-open");
     popUp(n.querySelector(".grip").getBoundingClientRect(), (pop) => {
       pop.append(el("div", { class: "hd", text: "Turn into" }));
-      for (const k of KINDS) if (k.type !== "divider" || b.type === "divider")
+      for (const k of KINDS) if (!UNSENT.includes(k.type) || b.type === k.type)
         pop.append(item({ ...k, note: "", sm: true, cur: k.type === b.type }, () => { if (k.type !== b.type) { retype(b, k.type); focusBlock(b.id); } }));
       pop.append(el("div", { class: "sep" }),
+        ...(UNSENT.includes(b.type) ? [] : b.to ? [
+          item({ glyph: SVG.at, sm: true, label: "Open its Chat" }, () => ag.actors.show(b.to).catch((e) => say(e.message, true))),
+          item({ glyph: SVG.x, sm: true, label: "Forget who it went to" }, () => { change([{ op: "block.put", page: current, block: { id: b.id, to: "" } }]); drawPage(); }),
+        ] : [item({ glyph: SVG.at, sm: true, label: "Send to an agent…" }, () => openPicker(b.id, n.getBoundingClientRect()))]),
         item({ glyph: "⧉", sm: true, label: "Duplicate" }, () => {
-          const copy = { ...b, id: rid() };
+          const { to: _to, sent: _sent, thread: _thread, ...rest } = b;
+          const copy = { ...rest, id: rid() };
           change([{ op: "block.put", page: current, block: copy, after: b.id }]);
           drawPage();
           focusBlock(copy.id);
@@ -1110,6 +1177,545 @@ panel skips its own, and applies another window's or an agent's -- never into th
     focusBlock(after, "end");
   });
 
+  // ---------------------------------------------------------------- the gatherer's actors (ag.actors), to send blocks to
+  let crew = { agents: [], harnesses: [], start: "", home: "" };
+  let crewSig = "";
+  function takeActors(all) {
+    const g = all && (all.gatherers || []).find((x) => x.name === ag.gatherer);
+    crew = { agents: (g && g.agents) || [], harnesses: (all && all.harnesses) || [],
+      start: (g && g.start_cwd) || (all && all.cwd) || "", home: (all && all.home_dir) || "" };
+    const sig = JSON.stringify([crew.harnesses, crew.start, crew.agents.map((a) => [a.channel, a.started_as, a.name, a.avatar,
+      a.status, a.role, a.saved, a.asking && a.asking.id, a.answerable, a.recap && a.recap.at])]);
+    if (sig === crewSig) return;
+    crewSig = sig;
+    if (!ready) return;
+    drawSide();
+    if (current === AGENTS) drawAgentsPage(); else drawSent();
+    if (menu && menu.kind === "at") drawAt(menu.q || "");
+  }
+  const isLead = (a) => !!a && a.role === "coordinator";
+  // the actor a block went to (a codex actor's thread, the channel it became), or a thread's line is by
+  const actorOf = (ch) => (ch === "gatherer" ? crew.agents.find(isLead)
+    : crew.agents.find((a) => a.channel === ch || a.started_as === ch)) || null;
+  const byOf = (a, by) => !!a && (by === `agent:${a.channel}` || (!!a.started_as && by === `agent:${a.started_as}`));
+  const nameOf = (a, ch) => isLead(a) || ch === "gatherer" ? "Gatherer agent"
+    : (a && a.name && a.name.text) || `Actor ${short(ch || (a && a.channel))}`;
+  const tilde = (path) => (crew.home && path && path.startsWith(crew.home) ? `~${path.slice(crew.home.length)}` : path || "");
+  function face(a, size = 18, lead = false) {
+    const name = (a && a.avatar) || (lead || isLead(a) ? "roles/manager" : null);
+    if (!name) return el("span", { class: "face none", style: `width:${size}px;height:${size}px`, "aria-hidden": "true" });
+    return el("img", { class: `face${lead || isLead(a) ? " lead" : ""}`, src: `${DASH}/avatars/${name.split("/").map(encodeURIComponent).join("/")}.svg`,
+      alt: "", width: String(size), height: String(size), draggable: "false" });
+  }
+  // How an actor stands, in a word, as the dashboard's list says it: [class, words]
+  const WORDS = { running: ["work", "Working"], building: ["work", "Starting"], background: ["work", "In the background"],
+    asking: ["ask", "Needs you"], error: ["bad", "Error"], failed: ["bad", "Failed"], finished: ["done", "Done"],
+    closed: ["idle", "Closed"], idle: ["idle", "Idle"] };
+  function stands(a) {
+    if (!a) return ["gone", "Not here now"];
+    const k = (a.status && a.status[0]) || "idle";
+    if (a.saved && (k === "idle" || k === "closed")) return ["idle", "Saved"];
+    return WORDS[k] || ["idle", (a.status && a.status[1]) || "Idle"];
+  }
+  // The line an actor is on now: the one its latest message is about (ag.actors' `asked_of`, a line of this notebook's),
+  // or none -- its latest message came from elsewhere (Chat, another app).
+  const lineOn = (a) => (a && a.asked_of && a.asked_of.app === ag.app ? a.asked_of.item : null);
+  // when a line last went to its actor: sent, or the user's latest message about it
+  const lastSent = (b) => Math.max(b.sent || 0, ...(b.thread || []).filter((l) => l.by === "user").map((l) => l.at || 0));
+  // How a line stands with the actor it went to -- its own state, not the actor's alone: the line the actor is on now,
+  // as the actor stands (working since it was last sent, needs you, error); done once the actor reported on it since
+  // the user last wrote about it (or it is ticked) -- the line itself the actor may tick or strike through with its
+  // tools; another line sent to a busy actor after the one it is on, waiting; else only sent.
+  function standsOn(a, b) {
+    const [cls, word] = stands(a);
+    if (cls === "gone") return [cls, word];
+    const busy = cls === "work" || cls === "ask" || cls === "bad";
+    if (busy && lineOn(a) === b.id) return [cls, cls === "work" ? `${word} · ${since(lastSent(b))}` : word];
+    const last = [...(b.thread || [])].reverse().find((l) => byOf(a, l.by));
+    if ((last && (last.at || 0) >= lastSent(b)) || (b.type === "todo" && b.checked)) return ["done", "Done"];
+    if (busy && waiting(a, b)) return ["wait", "Waiting"];
+    return ["idle", "Sent"];
+  }
+  // a line sent to a busy actor after the one it is on (or while it is on something else): not taken up yet
+  function waiting(a, b) {
+    const on = lineOn(a), found = on ? findLine(on) : null;
+    return !found || lastSent(b) >= lastSent(found.b);       // (sent with it, or after: not taken up yet)
+  }
+  function findLine(id) {
+    for (const p of live()) { const b = p.blocks.find((x) => x.id === id); if (b) return { p, b }; }
+    return null;
+  }
+  // what an actor asks, if it asks it about this line (the line it is on now)
+  const askedOn = (a, b) => (a && a.asking && stands(a)[0] === "ask" && lineOn(a) === b.id ? a.asking : null);
+  let sayTimer = 0;
+  function say(text, bad = false) {
+    const w = $("who");
+    w.textContent = text;
+    w.classList.toggle("bad", bad);
+    w.style.opacity = "1";
+    clearTimeout(sayTimer);
+    sayTimer = setTimeout(() => { w.style.opacity = "0"; }, 7000);
+  }
+
+  // ---------------------------------------------------------------- a block sent to an actor
+  const outgoing = new Set();                              // blocks being sent now
+  // A block's words sent to an actor, as the user's message: an actor there (`channel`; "gatherer", its gatherer agent),
+  // or a new one (`harness`, `folder`), with what the user added (`extra`: instructions beyond the line). The block then
+  // says who it went to, and with what. The note at its start says where it is from (the Notes app's [asked] reads it
+  // back: first, so a message the list cuts short keeps it) and asks for a report on it, if the reader wants one.
+  async function sendBlock(id, who, extra = "") {
+    flushTyped();
+    pump();
+    const p = page(), b = blockOf(id);
+    if (!p || !b) return;
+    const words = plainOf(b.type === "code" ? esc(b.text) : b.text).trim();
+    if (!words) return say("Write what to ask first, then send it.", true);
+    const report = store.get("report", true);
+    extra = extra.trim();
+    const text = `(From my Notes, page ${JSON.stringify(p.title || "Untitled")}, block ${b.id}.`
+      + `${report ? " When you're done, report back with notes_report, in one to three lines." : ""})`
+      + `\n\n${words}${extra ? `\n\n${extra}` : ""}`;
+    outgoing.add(id);
+    drawPage();
+    try {
+      const got = who.harness ? await ag.actors.start({ harness: who.harness, folder: who.folder, text })
+        : await ag.actors.send(who.channel, text);
+      change([{ op: "block.put", page: p.id, block: { id, to: got.channel, sent: now(), extra: esc(extra).replace(/\n/g, "<br>") } }]);
+      say(`Sent to ${nameOf(actorOf(got.channel), who.channel || got.channel)}${who.harness ? ", a new actor" : ""}`);
+    } catch (e) {
+      say(`Not sent: ${e.message}`, true);
+    } finally {
+      outgoing.delete(id);
+      drawPage();
+    }
+  }
+  // A reply on a block sent to an actor: sent to that actor, then a line of the block's thread.
+  async function reply(id, words) {
+    const p = page(), b = blockOf(id);
+    words = words.trim();
+    if (!p || !b || !b.to || !words) return false;
+    const text = `(A reply in my Notes, page ${JSON.stringify(p.title || "Untitled")}, block ${b.id}.`
+      + ` Report back with notes_report when you're done.)\n\n${words}`;
+    try {
+      await ag.actors.send(b.to, text);
+    } catch (e) {
+      say(`Not sent: ${e.message}`, true);
+      return false;
+    }
+    change([{ op: "thread.add", page: p.id, block: id, line: { id: rid(), by: "user", text: esc(words).replace(/\n/g, "<br>"), at: now() } }]);
+    drawPage();
+    return true;
+  }
+  // What a block sent to an actor shows under its words, at the line's end: who it went to (its avatar) and how the
+  // line stands (its chip -- the actor's name and its latest report, or what it asks, on hover), and a button that opens
+  // the conversation about it beside the page -- "Answer" while it asks the user. Neither the conversation nor a
+  // preview of it is on the page.
+  function sentPart(n, b, ro) {
+    let part = n.querySelector(":scope > .sent");
+    const has = b.to || (b.thread && b.thread.length) || outgoing.has(b.id);
+    const open = !!convo && convo.block === b.id;
+    n.classList.toggle("convo-on", !!has && open);
+    if (!has) { if (part) part.remove(); return; }
+    if (!part) { part = el("div", { class: "sent" }); n.append(part); }
+    const a = b.to ? actorOf(b.to) : null;
+    const sendingNow = outgoing.has(b.id) && !b.to;
+    const [cls, word] = sendingNow ? ["work", "Sending…"] : b.to ? standsOn(a, b) : ["idle", "Sent to no one now"];
+    const name = b.to ? nameOf(a, b.to) : "";
+    const asks = !!askedOn(a, b);
+    const latest = lastReport(b), on = cls === "wait" ? findLine(lineOn(a)) : null;
+    const said = asks ? `Asks: ${askLine(a.asking)}` : cls === "wait" ? (on ? `After “${oneLine(on.b.text, 60)}”` : "After what it is on now")
+      : latest ? oneLine(latest.text, 240) : "";
+    const count = 1 + (b.thread || []).length;
+    const sig = JSON.stringify([cls, word, name, a && a.avatar, said, count, asks, open, ro]);
+    if (part.dataset.sig === sig) return;
+    part.dataset.sig = sig;
+    const talk = () => toggleConvo(b.id);
+    const told = `${name}: ${word}${said ? `\n${said}` : ""}`;      // its name and latest word: on hover, not on the page
+    part.replaceChildren(
+      b.to ? el("button", { type: "button", class: `chip ${cls}`, title: `${told}\n(${open ? "close" : "open"} the conversation)`,
+        "aria-label": told, onclick: talk }, face(a, 16), el("span", { text: word }))
+        : el("span", { class: `chip ${cls}` }, el("span", { text: word })),
+      sendingNow ? null : asks && !open ? el("button", { type: "button", class: "talk answer", text: "Answer", onclick: () => openConvo(b.id) })
+        : el("button", { type: "button", class: `talk${open ? " on" : ""}`, title: open ? "Close the conversation" : "Open the conversation",
+          "aria-label": `${open ? "Close" : "Open"} the conversation: ${count} message${count === 1 ? "" : "s"}`, onclick: talk },
+          el("span", { html: SVG.bubble }), el("span", { text: String(count) })));
+  }
+  // its newest line by an agent: what the page shows of the conversation
+  const lastReport = (b) => [...(b.thread || [])].reverse().find((l) => l.by !== "user") || null;
+  // what an actor asks, in a line
+  function askLine(ask) {
+    const q = ask.questions && ask.questions[0];
+    return ask.kind === "permission" ? `to ${ask.said || `use ${ask.tool || "a tool"}`}`
+      : ask.kind === "plan" ? "approve its plan" : ask.kind === "dialog" ? ask.said || "a question in its terminal"
+      : q ? q.question || "a question" : "a question";
+  }
+
+  // ---------------------------------------------------------------- the conversation about a line, beside the page
+  // Opened from a sent line's status: the line as it was sent, then its thread -- the user's messages (each sent to the
+  // actor too) and the actor's reports -- as bubbles; what it asks, answered there; a box to message it. One at a time,
+  // on the page shown; another line's status shows that one's instead. Three parts, each drawn again only when it
+  // changed: the message typed is never drawn over.
+  let convo = null;                                       // {page, block}: the line whose conversation is open
+  function openConvo(id) {
+    convo = { page: current, block: id };
+    drawPage();
+    const input = $("convo").querySelector(".reply input");
+    if (input && !input.disabled) input.focus();
+  }
+  function closeConvo() {
+    if (!convo) return;
+    convo = null;
+    drawPage();
+  }
+  const toggleConvo = (id) => (convo && convo.block === id ? closeConvo() : openConvo(id));
+  function drawConvo() {
+    const box = $("convo");
+    const p = convo && current === convo.page ? pages.get(convo.page) : null;
+    const b = p && p.blocks.find((x) => x.id === convo.block);
+    if (!b || !(b.to || (b.thread && b.thread.length))) {
+      convo = null;
+      box.hidden = true;
+      box.replaceChildren();
+      delete box.dataset.block;
+      app.classList.remove("convo-open");
+      return;
+    }
+    app.classList.add("convo-open");
+    box.hidden = false;
+    if (box.dataset.block !== b.id) {
+      box.dataset.block = b.id;
+      box.replaceChildren(el("div", { class: "cv-head" }), el("div", { class: "cv-list", role: "log", "aria-live": "polite" }), el("div", { class: "cv-foot" }));
+    }
+    const a = b.to ? actorOf(b.to) : null, name = b.to ? nameOf(a, b.to) : "", ro = !!p.deleted;
+    const [cls, word] = b.to ? standsOn(a, b) : ["idle", "Sent to no one now"];
+    const head = box.querySelector(".cv-head");
+    const headSig = JSON.stringify([cls, word, name, a && a.avatar, b.text, !!a]);
+    if (head.dataset.sig !== headSig) {
+      head.dataset.sig = headSig;
+      head.replaceChildren(
+        el("div", { class: "cv-who" }, b.to ? face(a, 22) : null, el("b", { text: name || "No one" }), el("span", { class: `pill ${cls}`, text: word }),
+          el("button", { type: "button", class: "cv-x", title: "Close", "aria-label": "Close the conversation", html: SVG.x, onclick: () => closeConvo() })),
+        el("button", { type: "button", class: "cv-about", title: `${oneLine(b.type === "code" ? esc(b.text) : b.text, 400)}\n(show it on the page)`, onclick: () => {
+          const r = rowOf(b.id);
+          if (r) { r.scrollIntoView({ block: "center", behavior: "smooth" }); r.classList.remove("flash"); void r.offsetWidth; r.classList.add("flash"); }
+        } }, el("span", { class: "dim", text: "About: " }), oneLine(b.type === "code" ? esc(b.text) : b.text, 160) || "(empty)"),
+        a ? el("button", { type: "button", class: "cv-chat", text: "Open its Chat", onclick: () => ag.actors.show(b.to).catch((e) => say(e.message, true)) }) : null);
+    }
+    const list = box.querySelector(".cv-list");
+    const lines = b.thread || [];
+    const ask = askedOn(a, b);
+    const listSig = JSON.stringify([b.text, b.sent, b.extra, lines.map((l) => [l.id, l.by === "user" ? "" : (actorOf(l.by.slice(6)) || {}).avatar || ""]),
+      ask && ask.id, a && a.answerable, ro]);
+    if (list.dataset.sig !== listSig) {
+      const fresh = list.dataset.sig === undefined, atEnd = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
+      list.dataset.sig = listSig;
+      list.replaceChildren(
+        ...(b.sent ? [bubble({ by: "user", at: b.sent,                  // the line as sent, with what the user added
+          text: (b.type === "code" ? esc(b.text) : b.text) + (b.extra ? `<br><br>${b.extra}` : "") })] : []),
+        ...lines.map(bubble),
+        ...(ask ? [askCard(a, ask, b, ro)] : []));
+      if (fresh || atEnd) requestAnimationFrame(() => { list.scrollTop = list.scrollHeight; });   // once laid out
+    }
+    const foot = box.querySelector(".cv-foot");
+    let r = foot.querySelector(".reply");
+    if (b.to && !ro) {
+      if (!r) { r = replyBox(b.id); foot.replaceChildren(r); }
+      r.querySelector("input").placeholder = `Message ${name}`;
+    } else if (r || !foot.firstChild) {
+      foot.replaceChildren(el("div", { class: "cv-none", text: ro ? "This page is in the trash."
+        : "Sent to no one now: send the line to an agent again to talk about it." }));
+    }
+  }
+  function bubble(l) {
+    const mine = l.by === "user", ch = mine ? "" : l.by.slice(6), a = mine ? null : actorOf(ch);
+    return el("div", { class: `msg${mine ? " you" : ""}` },
+      mine ? null : face(a, 20),
+      el("div", { class: "mb" },
+        el("div", { class: "bub", html: clean(l.text) }),
+        el("div", { class: "mm", text: mine ? `You · ${clock(l.at)}` : `${nameOf(a, ch)} reported${l.done ? ": done" : ""} · ${clock(l.at)}` })));
+  }
+  function replyBox(id) {
+    const input = el("input", { type: "text", "aria-label": "Reply", autocomplete: "off" });
+    const go = async () => {
+      if (!input.value.trim() || input.disabled) return;
+      input.disabled = true;
+      if (await reply(id, input.value)) input.value = "";
+      input.disabled = false;
+      input.focus();
+    };
+    input.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" && !ev.isComposing) { ev.preventDefault(); go(); }
+      else if (ev.key === "Escape") { ev.preventDefault(); if (input.value) input.blur(); else closeConvo(); }
+    });
+    return el("div", { class: "reply" }, input,
+      el("button", { type: "button", title: "Send", "aria-label": "Send the message", html: SVG.send, onclick: go }));
+  }
+  // What an actor asks, in the conversation about the block it was sent: answered here, as Chat answers it, where the
+  // dashboard's terminal
+  // has the question and nothing was typed there since (`answerable`) -- a permission (allow, deny), or one question
+  // picked from its options; anything else in its Chat.
+  function askCard(a, ask, b, ro) {
+    const qs = ask.questions || [], one = qs.length === 1 && !qs[0].multiSelect ? qs[0] : null;
+    const card = el("div", { class: "ask-card" }, el("div", { class: "ask-hd" }, face(a, 14), el("span", { text: `${nameOf(a, b.to)} asks` })));
+    const answer = async (choice, btns) => {
+      for (const x of btns) x.disabled = true;
+      try { await ag.actors.answer(a.channel, ask.id, choice); say("Answered"); }
+      catch (e) { say(`Not answered: ${e.message}`, true); for (const x of btns) x.disabled = false; }
+    };
+    const can = a.answerable && !ro;
+    const acts = el("div", { class: "ask-acts" });
+    const btn = (label, choice) => el("button", { type: "button", text: label, onclick: () => answer(choice, acts.querySelectorAll("button")) });
+    if (ask.kind === "permission") {
+      card.append(el("div", { class: "ask-q", text: `To ${ask.said || `use ${ask.tool || "a tool"}`}` }));
+      if (can) acts.append(btn("Allow", { allow: true }), btn("Deny", { allow: false, text: null }));
+    } else if (ask.kind !== "plan" && ask.kind !== "dialog" && one) {
+      card.append(el("div", { class: "ask-q", text: one.question || "" }));
+      if (can) acts.append(...(one.options || []).map((o, j) => btn(o.label || `Option ${j + 1}`, { answers: [{ options: [j] }] })));
+    } else {
+      card.append(el("div", { class: "ask-q", text: ask.kind === "plan" ? "It has a plan for you to approve."
+        : ask.kind === "dialog" ? ask.said || "It asks in its terminal." : `${qs.length} questions` }));
+    }
+    acts.append(el("button", { type: "button", class: "link", text: ask.kind === "dialog" || !a.answerable ? "Answer in its terminal" : "Answer in Chat",
+      onclick: () => ag.actors.show(a.channel).catch((e) => say(e.message, true)) }));
+    card.append(acts);
+    return card;
+  }
+  // Every block of the page shown that was sent to an actor drawn again (how its actor stands changed; time passed).
+  function drawSent() {
+    const p = page();
+    if (!p) return;
+    for (const b of p.blocks) {
+      const n = rowOf(b.id);
+      if (!n) continue;
+      if (b.type === "agents") drawAgentsBlock(n);
+      else if (b.to || (b.thread && b.thread.length)) sentPart(n, b, !!p.deleted);
+    }
+    drawConvo();
+  }
+
+  // ---------------------------------------------------------------- the picker: who a block goes to, and with what
+  // `@` typed at a word's start in a block (as `/` opens the block menu), or its Assign / Ask button: the gatherer agent,
+  // the actors (not closed ones, but saved ones), a new actor on each harness the dashboard runs here -- and, above
+  // them, a box for what to add to the line (instructions it doesn't say yet), sent with it. What is typed after the @
+  // narrows the agents, Tab goes into the box; ↑↓ pick, ↵ sends (⇧↵ a new line in the box), Esc closes. Opened by the
+  // button, the box has the keys at once.
+  function atInput(n, tx, b, ev) {
+    if (menu && menu.kind === "at" && menu.tx) {
+      const c = caretIn(tx);
+      if (menu.tx !== tx || !c || c.start <= menu.from || tx.textContent[menu.from] !== "@") return closePop();
+      const q = tx.textContent.slice(menu.from + 1, c.start);
+      if (q.length > 30 || /\s\s/.test(q)) return closePop();
+      return drawAt(q);
+    }
+    if (ev.inputType !== "insertText" || ev.data !== "@" || UNSENT.includes(b.type) || b.type === "code") return;
+    const c = caretIn(tx);
+    if (!c) return;
+    const before = tx.textContent.slice(0, c.start - 1);
+    if (before && !/\s$/.test(before)) return;           // an address's @ (a@b.c): not
+    const r = getSelection().getRangeAt(0).getBoundingClientRect();
+    atPop(r.width || r.height ? r : tx.getBoundingClientRect(), { tx, from: c.start - 1, block: b.id });
+  }
+  function openPicker(id, rect) {
+    atPop(rect, { tx: null, block: id });
+    if (menu && menu.extra) menu.extra.focus();          // at once: keys typed next are its, however busy the page is
+  }
+  // the picker's frame: its head, the box for what to add (kept as the agents are drawn again), the agents, its foot
+  function atPop(rect, m) {
+    popUp(rect, (pop) => {
+      const extra = el("textarea", { class: "at-extra", rows: "1", "aria-label": "Instructions to send with the line",
+        placeholder: m.tx ? "Add instructions (optional): Tab to type here" : "Add instructions (optional)" });
+      extra.addEventListener("input", () => { extra.style.height = "auto"; extra.style.height = `${Math.min(extra.scrollHeight, 140)}px`; });
+      extra.addEventListener("keydown", (ev) => extraKey(ev, extra));
+      pop.append(el("div", { class: "hd lead", text: "Send it to an agent, as your message" }), extra,
+        el("div", { class: "at-list", role: "group", "aria-label": "Agents" }), el("div", { class: "at-end" }));
+      menu.extra = extra;
+    }, null, "at", "at-pop");
+    Object.assign(menu, { rect, q: "", ...m });
+    drawAt("");
+  }
+  function atItems(q) {
+    const words = q.trim().toLowerCase();
+    const hit = (...xs) => !words || xs.some((x) => String(x || "").toLowerCase().includes(words));
+    const out = [];
+    const lead = crew.agents.find(isLead);
+    if (hit("gatherer agent", "coordinator", "manager"))
+      out.push({ kind: "lead", group: "Coordinator", channel: lead ? lead.channel : "gatherer", a: lead, label: "Gatherer agent",
+        note: "hands it to an actor, now or once another is done" });
+    const shown = crew.agents.filter((a) => !isLead(a) && ((a.status || [])[0] !== "closed" || a.saved))
+      .sort((x, y) => (y.last || 0) - (x.last || 0));
+    for (const a of shown) if (hit(nameOf(a), a.last_user_message, a.channel))
+      out.push({ kind: "actor", group: "Actors", channel: a.channel, a, label: nameOf(a), note: oneLine(a.last_user_message || "", 60) });
+    for (const h of crew.harnesses) if (hit(`new ${h.label} actor`))
+      out.push({ kind: "new", group: "Start a new actor on it", harness: h.name, label: `New ${h.label} actor`, note: `in ${tilde(crew.start) || "a folder you name"}` });
+    if (crew.harnesses.length && hit("new actor in another folder"))
+      out.push({ kind: "where", group: "Start a new actor on it", label: "In another folder…", note: "" });
+    return out;
+  }
+  function drawAt(q) {
+    const items = atItems(q);
+    Object.assign(menu, { items, q, on: Math.min(menu.on || 0, Math.max(0, items.length - 1)) });
+    if (menu.tx) menu.qEnd = menu.from + 1 + q.length;   // where the "@..." typed ends, should the caret leave the block
+    const pop = menu.el, list = pop.querySelector(".at-list"), report = store.get("report", true);
+    list.replaceChildren();
+    if (!items.length) list.append(el("div", { class: "none", text: crew.agents.length || crew.harnesses.length ? "No agent like that" : "No agents here yet" }));
+    let group = null;
+    items.forEach((it, j) => {
+      if (it.group !== group) { group = it.group; list.append(el("div", { class: "hd", text: group })); }
+      const [cls, word] = it.a ? stands(it.a) : it.kind === "lead" ? ["idle", "Starts on it"] : [null, null];
+      const row = el("button", { class: `it${j === menu.on ? " on" : ""}`, type: "button", role: "menuitem",
+        onmousedown: (ev) => ev.preventDefault(), onclick: () => atPick(it) },
+        it.kind === "new" || it.kind === "where" ? el("span", { class: "gl sm", html: SVG.plus }) : face(it.a, 24, it.kind === "lead"),
+        el("span", { class: "tt" }, el("span", { text: it.label }), it.note ? el("small", { text: it.note }) : null),
+        word ? el("span", { class: `pill ${cls}`, text: word }) : null);
+      row.addEventListener("mousemove", () => { if (menu && menu.on !== j) { menu.on = j; drawAt(q); } });
+      list.append(row);
+    });
+    pop.querySelector(".at-end").replaceChildren(el("div", { class: "sep" }), el("button", { type: "button", class: "at-foot", role: "checkbox",
+      "aria-checked": String(report), onmousedown: (ev) => ev.preventDefault(), onclick: () => { store.set("report", !report); drawAt(q); } },
+      el("span", { class: "box", html: report ? SVG.check : "" }), el("span", { text: "Ask it to report back here" }),
+      el("small", { text: "↑↓ ↵" })));
+    place(pop, menu.rect);
+    const on = list.querySelector(".it.on");
+    if (on) on.scrollIntoView({ block: "nearest" });
+  }
+  function atKey(ev) {
+    const n = menu.items ? menu.items.length : 0;
+    if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+      ev.preventDefault();
+      if (n) { menu.on = (menu.on + (ev.key === "ArrowDown" ? 1 : n - 1)) % n; drawAt(menu.q || ""); }
+      return true;
+    }
+    if (ev.key === "Tab" && menu.extra) { ev.preventDefault(); menu.extra.focus(); return true; }
+    if (ev.key === "Enter" && n) { ev.preventDefault(); atPick(menu.items[menu.on]); return true; }
+    if (ev.key === "Escape") { ev.preventDefault(); closePop(); return true; }
+    return false;
+  }
+  // the box's own keys, kept from the page's: ↵ sends to the agent picked, ⇧↵ a new line; ↑↓ pick while it is one line;
+  // Esc closes (back into the block the @ was typed in)
+  function extraKey(ev, box) {
+    ev.stopPropagation();
+    if (ev.isComposing || !menu) return;
+    const n = menu.items ? menu.items.length : 0;
+    if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); if (n) atPick(menu.items[menu.on]); return; }
+    if ((ev.key === "ArrowDown" || ev.key === "ArrowUp") && !box.value.includes("\n")) {
+      ev.preventDefault();
+      if (n) { menu.on = (menu.on + (ev.key === "ArrowDown" ? 1 : n - 1)) % n; drawAt(menu.q || ""); }
+      return;
+    }
+    if (ev.key === "Escape") {
+      ev.preventDefault();
+      const tx = menu.tx;
+      closePop();
+      if (tx && tx.isConnected) tx.focus();
+    }
+  }
+  // Who was picked: the "@..." typed taken out of the block, and the block sent with what was added -- or, for another
+  // folder, that asked first.
+  function atPick(it) {
+    const m = menu, extra = m && m.extra ? m.extra.value : "";
+    closePop();
+    if (!m) return;
+    const b = blockOf(m.block);
+    if (!b) return;
+    if (m.tx && m.tx.isConnected) {
+      const tx = m.tx, n = tx.closest(".blk"), c = caretIn(tx);
+      const end = c && c.start > m.from ? c.start : m.qEnd || m.from + 1;
+      const r = document.createRange(), a = pointAt(tx, m.from), z = pointAt(tx, Math.max(end, m.from + 1));
+      r.setStart(a.node, a.offset);
+      r.setEnd(z.node, z.offset);
+      r.deleteContents();
+      if (tx.innerHTML === "<br>") tx.innerHTML = "";
+      b.text = textOf(n, b);
+      forget(b.id);
+      change([{ op: "block.put", page: current, block: { id: b.id, text: b.text } }]);
+    }
+    if (it.kind === "where") return folderAsk(b.id, m.rect, extra);
+    sendBlock(b.id, it.kind === "new" ? { harness: it.harness, folder: crew.start } : { channel: it.channel }, extra);
+  }
+  // A new actor's folder, asked: typed, and a harness picked.
+  function folderAsk(id, rect, extra) {
+    popUp(rect, (pop) => {
+      const input = el("input", { type: "text", value: tilde(crew.start), "aria-label": "The folder it works in", placeholder: "~/a/folder" });
+      const go = (h) => {
+        const v = input.value.trim().replace(/^~(?=\/|$)/, crew.home);
+        if (!v) return input.focus();
+        closePop();
+        sendBlock(id, { harness: h, folder: v }, extra);
+      };
+      input.addEventListener("keydown", (e) => { if (e.key === "Enter" && crew.harnesses[0]) { e.preventDefault(); go(crew.harnesses[0].name); } });
+      pop.append(el("div", { class: "hd", text: "A new actor, working in" }), el("div", { class: "row" }, input),
+        el("div", { class: "row" }, ...crew.harnesses.map((h) => el("button", { type: "button", text: h.label, onclick: () => go(h.name) }))));
+      setTimeout(() => input.focus(), 0);
+    }, null, "menu", "at-pop");
+  }
+
+  // ---------------------------------------------------------------- the Agents page, and an agents block
+  // Every actor of the gatherer: how it stands, the blocks sent to it (newest first), and its last report -- else its
+  // recap. Needing the user first, then at work, then by when last active. Saved and closed ones as the reader picks.
+  function agentsTable(showSaved, showClosed) {
+    const sent = new Map(), last = new Map();
+    for (const p of live()) for (const b of p.blocks) {
+      const a = b.to ? actorOf(b.to) : null;
+      if (a) { if (!sent.has(a.channel)) sent.set(a.channel, []); sent.get(a.channel).push({ p, b }); }
+      for (const l of b.thread || []) {
+        if (l.by === "user") continue;
+        const who = actorOf(l.by.slice(6));
+        if (who && (!last.has(who.channel) || last.get(who.channel).at <= l.at)) last.set(who.channel, l);
+      }
+    }
+    const rank = (a) => ({ ask: 0, work: 1, bad: 2 })[stands(a)[0]] ?? 3;
+    const rows = crew.agents.filter((a) => isLead(a) || (a.saved ? showSaved : (a.status || [])[0] === "closed" ? showClosed : true))
+      .sort((x, y) => rank(x) - rank(y) || (y.last || 0) - (x.last || 0));
+    if (!rows.length) return el("div", { class: "agt-none", text: crew.agents.length ? "No actor to show: tick Saved or Closed to see those"
+      : "No actors in this gatherer yet. Type @ in a line to send it to a new one." });
+    const go = (p, b) => { openPage(p.id); requestAnimationFrame(() => { const r = rowOf(b.id); if (r) { r.scrollIntoView({ block: "center" }); r.classList.add("flash"); } }); };
+    const tr = (a) => {
+      const [cls, word] = stands(a);
+      const mine = (sent.get(a.channel) || []).sort((x, y) => (y.b.sent || 0) - (x.b.sent || 0));
+      const l = last.get(a.channel);
+      return el("tr", { class: cls === "ask" ? "asks" : null },
+        el("td", {}, el("button", { type: "button", class: "who-btn", title: `Open ${nameOf(a)}'s Chat`,
+          onclick: () => ag.actors.show(a.channel).catch((e) => say(e.message, true)) }, face(a, 20), el("b", { text: nameOf(a) }))),
+        el("td", {}, el("span", { class: `pill ${cls}`, text: word })),
+        el("td", { class: "from" }, ...(mine.length ? mine.slice(0, 2).map(({ p, b }) => el("button", { type: "button", class: `blk-link${b.checked ? " done" : ""}`,
+          title: `On “${p.title || "Untitled"}”`, onclick: () => go(p, b), text: oneLine(b.text, 70) || "(empty)" })) : [el("span", { class: "dim", text: "—" })]),
+          mine.length > 2 ? el("span", { class: "dim", text: `+${mine.length - 2} more` }) : null),
+        el("td", { class: "said" }, l ? el("span", {}, oneLine(l.text, 160), el("span", { class: "dim", text: ` · ${clock(l.at)}` }))
+          : cls === "ask" && a.asking ? el("span", {}, `Asks: ${(a.asking.questions && a.asking.questions[0] && a.asking.questions[0].question) || a.asking.said || "something"}`)
+          : a.recap ? el("span", { class: "dim" }, `Recap: ${a.recap.text}`) : el("span", { class: "dim", text: "—" })));
+    };
+    return el("div", { class: "tbl-wrap" }, el("table", { class: "agt-tbl" },
+      el("thead", {}, el("tr", {}, ...["Agent", "Status", "From your notes", "Last report"].map((t) => el("th", { scope: "col", text: t })))),
+      el("tbody", {}, ...rows.map(tr))));
+  }
+  function shows() {
+    const box = (k, label) => el("label", {}, el("input", { type: "checkbox", checked: store.get(k, k === "saved") ? true : null,
+      onchange: (ev) => { store.set(k, ev.target.checked); if (current === AGENTS) drawAgentsPage(); else drawSent(); } }), label);
+    return el("div", { class: "agt-show" }, el("span", { text: "Show:" }), box("saved", "Saved"), box("closed", "Closed"));
+  }
+  function drawAgentsPage() {
+    const needs = crew.agents.filter((a) => stands(a)[0] === "ask").length;
+    $("agents-page").replaceChildren(
+      el("h1", { class: "pg-title", text: "Agents" }),
+      el("p", { class: "agt-sub", text: `Every actor of ${ag.gatherer}, what you sent it from your notes, and what it last reported${needs ? `. ${needs} need${needs === 1 ? "s" : ""} you.` : "."}` }),
+      agentsTable(store.get("saved", true), store.get("closed", false)), shows(),
+      el("p", { class: "agt-sub dim", text: "Type /agents on any page to put this table there." }));
+  }
+  function drawAgentsBlock(n) {
+    const box = n.querySelector(".agt");
+    if (!box) return;
+    box.replaceChildren(el("div", { class: "agt-hd" }, el("span", { html: SVG.people }), el("span", { text: "Agents" })),
+      agentsTable(store.get("saved", true), store.get("closed", false)));
+  }
+  function agentsEntry() {
+    const needs = crew.agents.filter((a) => stands(a)[0] === "ask").length;
+    return el("div", { class: `pg-row agents-row${current === AGENTS ? " on" : ""}`, role: "treeitem", "aria-selected": String(current === AGENTS),
+      onclick: () => openPage(AGENTS) },
+      el("span", { class: "caret none" }), el("span", { class: "ic", html: SVG.people }), el("span", { class: "nm", text: "Agents" }),
+      needs ? el("span", { class: "needs", title: `${needs} waiting for you`, text: `${needs} need${needs === 1 ? "s" : ""} you` }) : null);
+  }
+
+
   // ---------------------------------------------------------------- start
   try { book = await (await ag.api("state")).json(); } catch { book = { version: 0, pages: [] }; }
   if (!book || !Array.isArray(book.pages)) book = { version: 0, pages: [] };
@@ -1117,7 +1723,10 @@ panel skips its own, and applies another window's or an agent's -- never into th
   ready = true;
   for (const m of early.splice(0)) heard(m);
   const kept = store.get("page", null);
-  current = kept && pages.has(kept) && !pages.get(kept).deleted ? kept : (kidsOf(null)[0] || {}).id || null;
+  current = kept === AGENTS ? AGENTS : kept && pages.has(kept) && !pages.get(kept).deleted ? kept : (kidsOf(null)[0] || {}).id || null;
+  takeActors(ag.actors.current);
+  ag.actors.on(takeActors);
+  setInterval(() => { if (!document.hidden) drawSent(); }, 30_000);   // "Working · 4m": kept current
   for (let p = pages.get(current); p && p.parent; p = pages.get(p.parent)) opened.add(p.parent);
   if (narrow()) app.classList.remove("side-on");
   drawSide();

@@ -581,6 +581,37 @@ Agents get `notes_read`, `notes_add` and `notes_change` (offer `always`), and re
 each block's id. The test app it took the name of is now Notepad (`tests/apps/notepad/`). An app's mark now shows
 on its "+ ⋯" menu entry too.
 
+**Notes and the actors** (2026-11-08): the user works with the gatherer's actors from the notebook.
+- **Sending a line:** `@` typed in a block (or its Assign / Ask button) picks an actor, the gatherer agent, or a new
+  actor on a harness the dashboard runs; a box in the picker takes instructions to add to the line. The message is the
+  user's own, as Chat sends one: a note first, "(From my Notes, page "…", block <id>. …)" -- first, so what the list
+  keeps of a message (cut at 600 characters) still names the line -- then the line's words and what was added. The
+  block keeps who it went to and with what (`to`, `sent`, `extra`).
+- **Each line's own status:** the line an actor is on now is the one its latest message names (`asked_of`); only it
+  shows the actor working, or its question. A line the actor reported on since the user last wrote about it (or a
+  ticked to-do) is Done, whatever the actor does next; another line sent to a busy actor waits ("After …"), else it
+  shows Sent. Whether the line itself is ticked or struck through is the agent's to do, with its tools. A message sent mid-turn becomes the
+  latest one, so with two lines in one turn, the line it is on is the last one given it.
+- **The block after:** one status line under it: how that actor stands now (working, needs you, done), its latest
+  report (or what it asks), and a button that opens the conversation. The conversation is never on the page (the user,
+  2026-11-08: "the notes itself should only have notes/status updates, not the conversation"). It is a panel beside
+  the page, one line's at a time: the line as sent, the user's messages (each sent to the actor too) and the actor's
+  reports as bubbles, its question answered there where the dashboard can (one question picked from options, or a
+  permission), and a box to message it. Reports come from the new `notes_report` tool, one to three lines, which
+  ticks a to-do the actor says is done. The block keeps them all as its `thread`.
+- **The Agents page and the `/agents` block:** every actor with its state, what it was sent from the notes, and its
+  last report.
+- **What the contract gained, each general:**
+  - capability `message_actors`: the SDK's `ag.actors.send` / `answer` / `start` / `show`, for any actor of the
+    panel's gatherer ("gatherer": its gatherer agent, started if it has none), as Chat does them. `message_agents`
+    stays limited to the agents attached to the instance; attaching an agent would have put it in the notebook's task.
+  - `ag.actors` gives each actor's question (`asking`) and whether the page can answer it, whether it is saved, its
+    role and recap, and the harnesses a new actor can start on.
+  - `[asked]`'s pattern may have a second group, where in the app a message came from. Chat then shows "From
+    <app> · <that>" above the user's words, and the list shows the words alone, for every actor, not only one the
+    app started. A third group names the item the message is about; panels are told it as the actor's `asked_of`.
+    The words may be read by a lookahead, so the note can come first (Python and JavaScript share no named groups).
+
 Steps 6–8 change what the user sees the most. Each gets its Playwright tests before it moves and keeps them after,
 as the move to React did.
 

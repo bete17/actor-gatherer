@@ -8,8 +8,9 @@ import { get, post } from "../../core/api/client";
 import { stream, type Stream } from "../../core/api/stream";
 import "./apps.css";
 import { desktop, nativePanes, nativeSoon, type NativePlace } from "./native";
+import { toActors } from "./actors";
 
-type Capability = "message_agents" | "transcript" | "edit_guard" | "native_view" | "docs" | "actors";
+type Capability = "message_agents" | "transcript" | "edit_guard" | "native_view" | "docs" | "actors" | "message_actors";
 export interface AppInfo {
   name: string;
   label: string;
@@ -59,6 +60,12 @@ export interface PaneHooks {
   /** The actors as the list shows them (an app asking `actors`): by gatherer, each one's name, avatar, folder and
    * status; and the dashboard's own folder and the home folder. */
   actors?: () => Actors;
+  /** An app asking `message_actors`: a message to any actor of the gatherer, as Chat sends one ("gatherer": its
+   * gatherer agent, started if it has none) -- the actor's channel; a new actor started on `harness` in `folder`, with
+   * `text` its first message -- its channel; an actor shown in the pane in focus. */
+  sendActor?: (gatherer: string, channel: string, text: string) => Promise<{ channel: string }>;
+  startActor?: (gatherer: string, harness: string, folder: string, text: string) => Promise<{ channel: string }>;
+  showActor?: (gatherer: string, channel: string) => Promise<unknown> | void;
 }
 /** What a panel asking `actors` is told of them (the SDK's ag.actors). */
 export interface Actors {
@@ -422,6 +429,11 @@ export class AppPane {
       case "agents.focus":
         this.hooks.focusAgent(w.gatherer, this.mine(m.channel));
         return null;
+      case "actors.send":
+      case "actors.answer":
+      case "actors.start":
+      case "actors.show":
+        return toActors(this.app, this.hooks, m, w.gatherer);
       case "native.place": {
         if (!desktop() || !this.app.capabilities?.native_view)
           throw new Error(`${this.app.label} shows no native page`);

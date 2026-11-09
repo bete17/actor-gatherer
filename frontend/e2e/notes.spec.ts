@@ -1,52 +1,10 @@
 // The Notes app (ag_apps/notes/): a notebook per gatherer -- pages of blocks -- written in its panel, read and changed by
 // agents through its tools; what one side changes shown on the other at once. The home is the whole run's: each test
 // makes pages of its own and puts them out of the notebook, for good, before it ends.
-import type { FrameLocator, Page } from "@playwright/test";
+import type { FrameLocator } from "@playwright/test";
 import { expect, test } from "./test";
-import { GATHERER, open } from "./home";
-
-async function openNotes(page: Page): Promise<{ panel: FrameLocator; instance: string }> {
-  const row = page.locator("#agents .gatherer-row").first();
-  await row.hover(); // its buttons shown while hovered
-  await row.locator("button.new-more").click();
-  const entry = page.locator(".row-menu[role=menu] button", { has: page.getByText("Notes", { exact: true }) });
-  await expect(entry.locator("img.app-mark")).toHaveCount(1); // the app's own mark in the menu
-  await entry.click();
-  const pane = page.locator("#top-row > .app-pane[data-app=notes]");
-  await expect(pane).toHaveCount(1);
-  const panel = pane.frameLocator("iframe");
-  await expect(panel.locator("body[data-ready='1']")).toHaveCount(1);
-  const src = (await pane.locator("iframe").getAttribute("src")) || "";
-  return { panel, instance: new URL(src).searchParams.get("instance") || "" };
-}
-
-/** A tool of the app's called as an agent calls it: its text, and whether it is an error. */
-async function call(page: Page, instance: string, tool: string, args: Record<string, unknown>) {
-  const got = await (
-    await page.request.post("/api/apps/call", { data: { app: "notes", gatherer: GATHERER, instance, tool, args } })
-  ).json();
-  return { text: got.content[0].text as string, error: got.isError as boolean };
-}
-
-async function newPage(page: Page, panel: FrameLocator, title: string) {
-  await panel.locator("#new-page").click();
-  await expect(panel.locator("#title")).toBeFocused();
-  await page.keyboard.type(title);
-  await page.keyboard.press("Enter");
-}
-
-/** The page, put in the trash from its row's menu, then deleted for good from the trash. */
-async function binPage(panel: FrameLocator, title: string) {
-  const row = panel.locator(".pg-row", { hasText: title }).first();
-  await row.hover();
-  await row.locator(".acts button[title=More]").click();
-  await panel.locator(".pop .it", { hasText: "Move to trash" }).click();
-  await expect(panel.locator(".pg-row", { hasText: title })).toHaveCount(0);
-  await panel.locator("#trash-btn").click();
-  await panel.locator(".trash-row", { hasText: title }).locator("button[title='Delete for good']").click();
-  await expect(panel.locator(".trash-row", { hasText: title })).toHaveCount(0);
-  await panel.locator("#trash-btn").click();
-}
+import { open } from "./home";
+import { binPage, call, newPage, openNotes } from "./notes-home";
 
 /** The open page's blocks: each its type and what it says (a list's number included). */
 const blocks = (panel: FrameLocator) =>
