@@ -745,8 +745,11 @@ def replies(conn, channel: str, tables: Optional[set] = None) -> List[dict]:
     out = []
     if "p_answer_id" not in _columns(conn, "events"):
         return out
-    since = conn.execute(f"SELECT max(e.row_id) FROM events e WHERE ifnull(e.{CHANNEL}, '') = ? AND {NOT_RECORD}",
-                         (channel,)).fetchone()[0] or 0
+    # (what is told the agent -- an app's or a stream's message, a change of its environment -- is no call carrying an
+    # answer back: an app telling it what the user does, after its answer, leaves the answer pending, its turn over)
+    since = conn.execute(f"SELECT max(e.row_id) FROM events e WHERE ifnull(e.{CHANNEL}, '') = ? AND {NOT_RECORD} "
+                         f"AND e.event_type_id NOT IN (SELECT event_type_id FROM event_types "
+                         f"WHERE name IN ('environment_update', 'context_stream'))", (channel,)).fetchone()[0] or 0
     rows = conn.execute(f"SELECT e.row_id, t.name, e.inserted_at, e.payload_json, e.p_answer_id FROM events e JOIN event_types t "
                         f"ON {BY_CHANNEL} WHERE ifnull(e.{CHANNEL}, '') = ? AND e.row_id > ? AND "
                         f"t.name IN ('reply_part', 'reply_end', 'model_call') ORDER BY e.row_id", (channel, since)).fetchall()

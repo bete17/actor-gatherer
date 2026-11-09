@@ -92,6 +92,15 @@ class RecordsTest(unittest.TestCase):
         turns = files.files("g", "s", cwd="/w")["turns"]
         self.assertEqual([r["text"] for r in turns[0]["replies"] if r["kind"] == "text"], ["Counting.", "There are 42 rows."])
 
+    def test_what_an_app_tells_the_agent_after_its_answer_leaves_its_turn_over(self):
+        from app_kit.events import context_stream
+        read = self.turn([user("count the rows")])
+        self.reply("msg_1", [{"type": "text", "text": "There are 42 rows."}], "end_turn", read)
+        self.assertEqual(self.agent()["status"], data.IDLE)
+        self.record(context_stream("Browser", "the user", "opened a page"))      # what the user did there, told it
+        self.assertEqual(self.agent()["status"], data.IDLE)                      # its turn over all the same
+        self.assertEqual([r["text"] for r in data.replies(data._connect("g"), "s")], ["There are 42 rows."])
+
     def test_an_answer_that_broke_off_as_it_streamed_is_dropped_at_the_next_turn(self):
         read = self.turn([user("count the rows")])
         self.reply("msg_1", [TEXT])                                          # streams, then breaks off: no end
