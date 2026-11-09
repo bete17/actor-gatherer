@@ -12,11 +12,11 @@ one the Editor panel shows, as it changes it.
                                 (else every SLOW): the files that differ from where the branch started (git's diff, and
                                 those it does not track and does not ignore), each merged into the project's (`_merge`)
 
-Each of the branch's files is merged three ways, as editor.py's `merge` merges the disk into a file open there: its
+Each of the branch's files is merged three ways, as livedocs.py's `merge` merges the disk into a file open there: its
 BASE -- the branch's file as far as the project has it, merged in or settled (`branch_files.base`: at first as the
 branch started) -- the project's (MINE: the document, when the file is open in the Editor; else the file) and the
 branch's now (THEIRS). The places only the branch changed are taken in, and the base moves on there; the places held
-are not, until the reader settles them in the Editor: each a conflict of the file's open document (editor.py's
+are not, until the reader settles them in the Editor: each a conflict of the file's open document (livedocs.py's
 `Conflict.agent`), whose Accept takes the branch's lines (`theirs`), Reject leaves them out (`mine`), and Edit takes them
 as the reader made them in the box (`edited`) -- the base moving on either way, so each change is asked about once. HELD are, with `approve` (the actor's "auto-merge with approval"):
 every change; without: the branch's changes to the conflict zone (the lines edited in the Editor since the file was
@@ -31,7 +31,7 @@ a stream (the policy's `context_stream`: "Message in the Editor from the gathere
 reads at its next model call -- in its turn, or at the start of the next -- with its lines and the project's there; what
 to make of the difference is its own to work out. No turn is started for it.
 
-The branch's lines, merged in, are MARKED in the document (editor.py's `Room.marks`): those of its file now that differ
+The branch's lines, merged in, are MARKED in the document (livedocs.py's `Room.marks`): those of its file now that differ
 from the file as the branch started and are in the project's as they are -- for as long as the actor is not closed, which
 is the page's to say. A file that is not text, or too large to edit, is not merged."""
 import difflib
@@ -52,7 +52,7 @@ from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 import harness_kit
 
-from . import actions, editor, home, sessions
+from . import actions, home, livedocs, sessions
 
 POLL = 1.0              # seconds between looks at a branch whose actor the dashboard runs a process of
 SLOW = 10.0             # ... at any other
@@ -86,7 +86,7 @@ CREATE TABLE IF NOT EXISTS branch_files (
 GITHUB = re.compile(r"(?:https?://github\.com/|git@github\.com:|ssh://git@github\.com/)([\w.-]+)/([\w.-]+?)(?:\.git)?/?$")
 SHORT = re.compile(r"([\w.-]+)/([\w.-]+)")      # owner/repo
 WHOLE = "file"          # a held file, asked about whole
-STREAM, AUTHOR = "the Editor", "the gatherer"   # where an actor is told the reader left its change out, and by whom
+STREAM, AUTHOR = "your branch's merge", "the gatherer"   # where an actor is told the reader left its change out, and by whom
 CLIP = 1500             # the most characters of each side's lines told
 ONTO_SECONDS = 5.0      # how long what a project has checked out is kept before git is asked again
 
@@ -267,7 +267,7 @@ def combine(base: str, mine: str, theirs: str, approve: bool = False, held: Opti
     o, a, b = base.splitlines(True), mine.splitlines(True), theirs.splitlines(True)
     out, moved, found, keys, size = [], [], [], {}, 0
     zo = za = zb = 0
-    for lo, hi, sa, sb in editor.syncs(o, a, b):
+    for lo, hi, sa, sb in livedocs.syncs(o, a, b):
         was, ours, others = o[zo:lo], a[za:sa], b[zb:sb]
         put, now = ours, was
         if others == was:                           # the branch's as the project has it
@@ -276,8 +276,8 @@ def combine(base: str, mine: str, theirs: str, approve: bool = False, held: Opti
             now = others
         else:
             key, said = _key(o, zo, lo), "".join(others)
-            both = others if ours == was else editor._both(was, ours, others)
-            zoned = (ours != was and editor._guarded(za, sa, guard)) or editor._theirs_guarded(was, ours, others, za, guard)
+            both = others if ours == was else livedocs._both(was, ours, others)
+            zoned = (ours != was and livedocs._guarded(za, sa, guard)) or livedocs._theirs_guarded(was, ours, others, za, guard)
             why = "approve" if approve else held.get(key) or ("zone" if zoned else "both" if both is None else None)
             if every is not None and why:
                 put, now = (others if every == "theirs" else ours), others
@@ -334,7 +334,7 @@ def note(what: str, rel: str, project: str, pairs: List[Tuple[str, str]] = ()) -
 
 def tell(gatherer: str, channel: str, text: str) -> None:
     """`text` put in the actor's channel as a message from a stream (module doc), for its next model call."""
-    actions.record(gatherer, channel, [{"type": "context_stream", "id": f"context_stream:editor:{uuid.uuid4().hex}",
+    actions.record(gatherer, channel, [{"type": "context_stream", "id": f"context_stream:branch:{uuid.uuid4().hex}",
                                         "payload": {"stream": STREAM, "author": AUTHOR, "text": text,
                                                     "timestamp": time.time()}}])
 
@@ -359,22 +359,22 @@ def marked(start: str, theirs: str, mine: str) -> List[Tuple[int, int]]:
 
 
 def _text(path: str) -> Optional[str]:
-    """The file's text; None: there is none. editor.EditorError: not text, or too large."""
+    """The file's text; None: there is none. livedocs.DocError: not text, or too large."""
     for _ in range(5):
         try:
-            return editor.read(path)[0]
-        except editor._Changing:
+            return livedocs.read(path)[0]
+        except livedocs._Changing:
             time.sleep(0.05)
-        except editor.EditorError:
+        except livedocs.DocError:
             if not os.path.lexists(path):
                 return None
             raise
-    raise editor.EditorError(f"{path} keeps changing")
+    raise livedocs.DocError(f"{path} keeps changing")
 
 
 def _sig(path: str) -> Optional[tuple]:
     try:
-        return editor._signature(os.stat(path))
+        return livedocs._signature(os.stat(path))
     except OSError:
         return None
 
@@ -387,7 +387,7 @@ def _write(path: str, text: str, was: Optional[tuple]) -> bool:
         mode = stat.S_IMODE(os.stat(path).st_mode)
     except FileNotFoundError:
         mode = 0o644
-    fd, temp = tempfile.mkstemp(prefix="." + os.path.basename(path) + ".", suffix=editor.TEMP, dir=os.path.dirname(path))
+    fd, temp = tempfile.mkstemp(prefix="." + os.path.basename(path) + ".", suffix=livedocs.TEMP, dir=os.path.dirname(path))
     try:
         with os.fdopen(fd, "wb") as fh:
             fh.write(text.encode("utf-8"))
@@ -405,13 +405,13 @@ def _write(path: str, text: str, was: Optional[tuple]) -> bool:
 
 class Branches:
     """The actors' branches, each looked at as the module doc says, by a thread of its own; their changes held for the
-    reader shown in the files open in the Editor (`editors`, whose `branches` this becomes). `started`: the sessions
+    reader shown in the files open in the Editor (`docs`, whose `branches` this becomes). `started`: the sessions
     started from the page (sessions.py), where a branch's actor is made and which says whose process runs.
     `on_change(gatherer, channel)`: told when a branch's held changes change."""
 
-    def __init__(self, editors: "editor.Editors", started: "sessions.Sessions",
+    def __init__(self, docs: "livedocs.LiveDocs", started: "sessions.Sessions",
                  on_change: Optional[Callable[[str, str], None]] = None, poll: Optional[float] = None):
-        self.editors, self.started, self.on_change = editors, started, on_change
+        self.docs, self.started, self.on_change = docs, started, on_change
         self.lock = threading.RLock()
         self.looked: Dict[str, float] = {}                  # by branch: when last looked at
         self.seen: Dict[Tuple[str, str], tuple] = {}        # by (branch, file): what it was merged at (its file, the project's)
@@ -424,7 +424,7 @@ class Branches:
         self.redo_lock = threading.Lock()
         self.poll = POLL if poll is None else poll
         self.wakeup, self.stop = threading.Event(), threading.Event()
-        editors.branches = self
+        docs.branches = self
         self.thread = threading.Thread(target=self._watch, name="branches", daemon=True)
         self.thread.start()
 
@@ -620,7 +620,7 @@ class Branches:
             names.update(self.held.get(sid, {}))
         changed = False
         for rel in sorted(names):
-            room = self.editors.rooms.get(os.path.join(b["project"], rel))
+            room = self.docs.rooms.get(os.path.join(b["project"], rel))
             now = (_sig(os.path.join(b["worktree"], rel)),
                    (id(room), hash(str(room.text))) if room is not None else _sig(os.path.join(b["project"], rel)))
             if rel not in opened and self.seen.get((sid, rel)) == now:
@@ -638,7 +638,7 @@ class Branches:
         if k not in self.starts:
             done = _git(b["project"], "show", f"{b['start']}:{rel}", ok=(0, 128))
             text = None
-            if done.returncode == 0 and b"\0" not in done.stdout[:8192] and len(done.stdout) <= editor.MAX_BYTES:
+            if done.returncode == 0 and b"\0" not in done.stdout[:8192] and len(done.stdout) <= livedocs.MAX_BYTES:
                 try:
                     text = done.stdout.decode("utf-8")
                 except UnicodeDecodeError:
@@ -672,7 +672,7 @@ class Branches:
         skipped = (theirs_sig, (id(room), hash(str(room.text))) if room is not None else _sig(mine_path))
         try:
             theirs = _text(theirs_path)
-        except editor.EditorError:                      # not text, or too large: not merged
+        except livedocs.DocError:                      # not text, or too large: not merged
             self.seen[(sid, rel)] = skipped
             return False
         row = self._file(sid, rel)
@@ -691,7 +691,7 @@ class Branches:
             else:
                 try:
                     mine = _text(mine_path)
-                except editor.EditorError:              # the project's is not text: left alone
+                except livedocs.DocError:              # the project's is not text: left alone
                     self.seen[(sid, rel)] = skipped
                     return False
             if theirs == base:                          # nothing of the branch's the project lacks
@@ -726,12 +726,12 @@ class Branches:
                     if room is not None:
                         clean = mine == room.disk
                         before = room.doc.get_state()
-                        editor.change(room.text, merged)
-                        room._send("update", {"update": editor.b64(room.doc.get_update(before))})
+                        livedocs.change(room.text, merged)
+                        room._send("update", {"update": livedocs.b64(room.doc.get_update(before))})
                         if clean:                       # nothing unsaved but this: written now
                             try:
                                 room.save()
-                            except editor.EditorError:
+                            except livedocs.DocError:
                                 pass
                     elif not _write(mine_path, merged, mine_sig):
                         return False                    # changed meanwhile: the next look
@@ -762,7 +762,7 @@ class Branches:
             b1 = b0 + len(mine[start:end].encode("utf-8"))
             cid = hashlib.sha1(f"{b['session_id']}\0{rel}\0{key}".encode()).hexdigest()[:12]
             before = old.get(cid)
-            c = editor.Conflict(b0, b1, was, said, why == "zone", before.since if before else None,
+            c = livedocs.Conflict(b0, b1, was, said, why == "zone", before.since if before else None,
                                 {**who, "key": key, "why": why}, cid)
             if before is not None and before.theirs == said:
                 c.at = before.at
@@ -780,7 +780,7 @@ class Branches:
     # ------------------------------------------------------------------ the reader's say
     def settle(self, room, c, take: str, text: Optional[str] = None, theirs: Optional[str] = None,
                mine: Optional[str] = None) -> dict:
-        """A place held, settled in the Editor (editor.py's `Editors.settle`): `take` put in the document as for any
+        """A place held, settled in the Editor (livedocs.py's `LiveDocs.settle`): `take` put in the document as for any
         conflict, and the base moved on there -- the branch's lines as the reader saw them taken in, left out, or taken
         in as the reader edited them (`text`)."""
         b = self._row(c.agent["session_id"])
@@ -811,7 +811,7 @@ class Branches:
         if rel.startswith(".."):
             raise BranchError(f"{path} is not in {b['project']}")
         with self.lock:
-            room = self.editors.rooms.get(os.path.join(b["project"], rel))
+            room = self.docs.rooms.get(os.path.join(b["project"], rel))
             kind = (self.held.get(b["session_id"], {}).get(rel) or {}).get("kind")
             settled: List[Tuple[str, str]] = []
             self._merge(b, rel, room, every=take, settled=settled)

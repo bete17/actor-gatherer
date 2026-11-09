@@ -1,0 +1,59 @@
+# A notebook per gatherer -- pages of to-dos, lists and notes, a minimal Notion -- that the user writes in its panel and
+# their agents read and change with its tools. Kept in a file of the app's data folder (backend.py), not as events:
+# the user's typing is many small changes, each kept at once.
+name = "notes"
+label = "Notes"
+version = "1"
+description = "pages of to-dos, lists and notes"
+instances = "one"
+mark = "mark.svg"
+instructions = """Notes is the user's notebook for this gatherer, which they keep in the dashboard: pages of to-dos,
+lists and notes (pages can sit under other pages). When the user mentions their notes, to-dos, lists or a page of
+theirs, read it with notes_read (no `page`: the pages; with one: its blocks as markdown, each line its block's id
+first). Add with notes_add -- markdown lines to a page, or `title` for a new page -- and change a block (tick a to-do,
+rewrite or delete it), or a page's title, with notes_change. Change the notebook only when the user asks you to; they
+see your changes at once.
+
+The user can also send you a line of their notes, as their message to you: it starts with a note in parentheses,
+"(From my Notes, page ..., block <id>. ...)", then the line and any instructions they added; "(A reply in my Notes,
+...)" starts their message about a line they sent you before. Do what it asks. When it asks you to write something in
+the notes (a bullet, a to-do, a summary, a list), write it on the page itself with notes_add -- after that line, its id
+as `after` -- or notes_change. When you are done, or can't do it, and the note asks you to report back, report with
+notes_report: one to three lines on what you did and where it is (a file, a branch, a PR), not your whole answer -- with
+`done` true if it finished what the line asks, which ticks a to-do. A report goes into that line's conversation, beside
+the page, not on the page: it is never how you write in the notes. Your answer itself goes as always."""
+
+[asked]
+when = 'my Notes, page "'
+pattern = '^(?=\((?:From|A reply in) my Notes, page "(?:[^"\\]|\\.)*", block [a-z0-9]+[^)]*\)\s*([\s\S]*)$)\((?:From|A reply in) my Notes, page "((?:[^"\\]|\\.)*)", block ([a-z0-9]+)'
+otherwise = "A line from the notes"
+
+[capabilities]
+actors = true
+message_actors = true
+
+[backend]
+python = "backend:NotesApp"
+
+[panel]
+entry = "panel/index.html"
+
+[[tools]]
+name = "read"
+description = "The notebook's pages (no `page`), or one page: its blocks as markdown, each line its block's id first, as [id]."
+input_schema = { type = "object", properties = { page = { type = "string", description = "a page's id or title" } } }
+
+[[tools]]
+name = "add"
+description = "Add markdown to a page (each line a block: `- [ ] ` to-do, `- ` or `1. ` list, `# ` heading, `> ` quote, ``` code, `---`; two spaces in, a level in), or make a new page with `title`."
+input_schema = { type = "object", properties = { markdown = { type = "string", description = "the blocks to add, as markdown lines" }, page = { type = "string", description = "the page to add to: its id or title" }, title = { type = "string", description = "instead of `page`: a new page with this title" }, parent = { type = "string", description = "for a new page: the page it goes under (id or title)" }, icon = { type = "string", description = "for a new page: an emoji" }, after = { type = "string", description = "the block's id to add after, or \"start\"; default the end" } }, required = ["markdown"] }
+
+[[tools]]
+name = "change"
+description = "Change one block of a page -- what it says (`markdown`, which may be several lines), a to-do ticked (`checked`), or `delete` -- or, with no `block`, the page's title, icon, parent, or the page itself into the trash (`delete`)."
+input_schema = { type = "object", properties = { page = { type = "string", description = "the page: its id or title" }, block = { type = "string", description = "the block's id, from notes_read" }, markdown = { type = "string", description = "what the block becomes (\"\" deletes it)" }, checked = { type = "boolean", description = "a to-do ticked, or not" }, delete = { type = "boolean" }, title = { type = "string" }, icon = { type = "string" }, parent = { type = "string", description = "the page it goes under (id or title), or \"top\"" } }, required = ["page"] }
+
+[[tools]]
+name = "report"
+description = "Report back on a block of the user's notes they sent you (its message began \"(From my Notes, page ..., block <id>. ...)\"): one to three lines on what you did and where it is, into the conversation about that line (beside the page, not on it: write on the page with notes_add). `done` true ticks it, if it is a to-do."
+input_schema = { type = "object", properties = { block = { type = "string", description = "the block's id, from the note at the start of the user's message" }, text = { type = "string", description = "your report: one to three lines" }, done = { type = "boolean", description = "what the block asks is done (a to-do: ticked)" } }, required = ["block", "text"] }

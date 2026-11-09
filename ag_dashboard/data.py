@@ -88,7 +88,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from . import home as paths
 from . import seen as looked                    # `seen` names a file's stat here
-from . import answers, avatars, folders, gatherer_folders, hiding, live, saved, sessions, titles
+from . import answers, avatars, folders, gatherer_folders, hiding, live, saved, sessions, tasks, titles
 import app_kit
 import harness_kit
 from harness_kit import USERS, Kind
@@ -255,12 +255,13 @@ def home(started: Optional[List[dict]] = None, kept: Optional["Kept"] = None) ->
             agents = kept.agents(conn, name, now) if kept is not None else _agents(conn, now)
             if {s["session_id"] for s in started if s["gatherer"] == name} - {a["channel"] for a in agents}:
                 named[name] = _names(conn, _tables(conn))
+            apps = app_notices(conn)
         except sqlite3.Error as exc:
             gatherers.append({"name": name, "policy": _policy(name), "error": str(exc), "agents": [], "last": None})
             continue
         finally:
             conn.close()
-        gatherers.append({"name": name, "policy": _policy(name), "agents": agents,
+        gatherers.append({"name": name, "policy": _policy(name), "agents": agents, "apps": apps,
                           "last": max((a["last"] or 0 for a in agents), default=0) or None})
     _with_started(gatherers, started, now, named)
     wakes = {}                           # the actors whose status changes at a time of their own, with nothing written
@@ -275,7 +276,7 @@ def home(started: Optional[List[dict]] = None, kept: Optional["Kept"] = None) ->
     gatherers.sort(key=lambda g: g.get("created") or 0, reverse=True)
     return {"home": paths.HOME, "now": now, "running_seconds": RUNNING_SECONDS, "gatherers": gatherers,
             "hook_servers": _hook_servers(), "hiding": hiding.stored(), "titles": titles.stored(), "saved": saved.stored(),
-            "folders": folders.stored(), "gatherer_folders": gatherer_folders.stored(),
+            "folders": folders.stored(), "gatherer_folders": gatherer_folders.stored(), "tasks": tasks.stored(),
             "seen": looked.stored(), "harness_info": harness_info(), "harness_default": harness_kit.DEFAULT}
 
 
@@ -631,6 +632,25 @@ def _agents(conn, now: float, only: Optional[set] = None) -> List[dict]:
     return sorted(out.values(), key=lambda a: a["created"] or 0, reverse=True)   # in place: newest created first
 
 
+def app_notices(conn) -> Dict[str, dict]:
+    """The gatherer's apps' ITEMS' status, as `_status` reads an agent's from its facts: each instance with
+    notifications open -- sent by its app (the host's `app_notified` records: app_kit's notices.py), not settled since,
+    its instance not closed -- {instance: {app, notices: [{id, key, title, text, show, where, at}, oldest first],
+    last}}; `last` when the newest came, which the page compares with when the reader last looked at the instance
+    (seen.py, its item "app:<id>"): newer, it shows NOTIFIED, as an agent done since is FINISHED. Read by type (its
+    index): few rows."""
+    if CHANNEL not in _columns(conn, "events") or not {"p_app", "p_instance"} <= _columns(conn, "events"):
+        return {}
+    kinds = (*app_kit.NOTICE_TYPES, "app_closed")
+    rows = conn.execute(f"SELECT t.name, e.p_app, e.p_instance, e.payload_json FROM events e JOIN event_types t "
+                        f"ON t.event_type_id = e.event_type_id WHERE t.name IN ({', '.join('?' * len(kinds))}) "
+                        "ORDER BY e.row_id", kinds).fetchall()
+    app_of = {inst: app for _, app, inst, _ in rows if inst}
+    found = app_kit.notices.still_open((kind, inst, _json(raw) or {}) for kind, _, inst, raw in rows)
+    return {inst: {"app": app_of.get(inst), "notices": ns, "last": app_kit.notices.newest(ns)}
+            for inst, ns in found.items()}
+
+
 def _status(conn, ch: str, a: dict, tables: set, now: float) -> None:
     """The agent's status as its hook recorded what its harness's answers, calls and own record of the session say
     (module doc; `Record`): a call hung up on (Esc), or a turn its record says stopped -- interrupted, on an error, or
@@ -745,8 +765,11 @@ def replies(conn, channel: str, tables: Optional[set] = None) -> List[dict]:
     out = []
     if "p_answer_id" not in _columns(conn, "events"):
         return out
-    since = conn.execute(f"SELECT max(e.row_id) FROM events e WHERE ifnull(e.{CHANNEL}, '') = ? AND {NOT_RECORD}",
-                         (channel,)).fetchone()[0] or 0
+    # (what is told the agent -- an app's or a stream's message, a change of its environment -- is no call carrying an
+    # answer back: an app telling it what the user does, after its answer, leaves the answer pending, its turn over)
+    since = conn.execute(f"SELECT max(e.row_id) FROM events e WHERE ifnull(e.{CHANNEL}, '') = ? AND {NOT_RECORD} "
+                         f"AND e.event_type_id NOT IN (SELECT event_type_id FROM event_types "
+                         f"WHERE name IN ('environment_update', 'context_stream'))", (channel,)).fetchone()[0] or 0
     rows = conn.execute(f"SELECT e.row_id, t.name, e.inserted_at, e.payload_json, e.p_answer_id FROM events e JOIN event_types t "
                         f"ON {BY_CHANNEL} WHERE ifnull(e.{CHANNEL}, '') = ? AND e.row_id > ? AND "
                         f"t.name IN ('reply_part', 'reply_end', 'model_call') ORDER BY e.row_id", (channel, since)).fetchall()

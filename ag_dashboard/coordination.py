@@ -5,16 +5,17 @@ reach them: `ag actors` (ag/cli/actors.py), run in its shell, asks this dashboar
     list      the actors of its gatherer, those not closed (`all`: every one): each one's id, name, status, harness,
               directory, what it was last asked and its recap
     show      one actor: that, what it said last, and the files its latest turn changed (files.py's `files`)
-    who       the actors of its gatherer that changed a file lately, the latest first (editor.py's `writers`)
+    who       the actors of its gatherer that changed a file lately, the latest first (livedocs.py's `writers`)
     send      a message to an actor -- `gatherer` names the gatherer agent, started for it if it has none -- typed into
               its terminal as a message of its conversation, as Chat sends one (sessions.py's `send`: its terminal opened
               for it, if it has none open), in an envelope saying who it is from and how to answer (`envelope`)
     new       a new actor in the gatherer, started with a message: in a directory, on a harness and model, as given, else
-              as the actor it is `like` has them, else as the asker's -- or an app's actor (`--<name>`, apps.py): a
-              new one of the app on the directory (its `create`), its actor named as asked -- a DocWriter's
-              (`docwriter`), writing with the user there, its edits proposals the user accepts or rejects in its
-              DocWriter view; a Browser's (`browser`), a Chrome tab in the dashboard the actor and the user use
-              together -- or an actor on a branch of its own (`branch`): a new worktree of the repository the
+              as the actor it is `like` has them, else as the asker's -- or an app's actor (`--<name>`, an app that
+              starts an agent of its own: app_agents.py's `start`): a new one of the app on the directory, its actor
+              attached to it and named as asked -- a DocWriter's (`docwriter`), writing with the user there, its edits
+              proposals the user accepts or rejects in DocWriter; a Browser's (`browser`), a Chrome tab in the
+              dashboard the actor and the user use together -- or an actor on a branch of its own (`branch`): a new
+              worktree of the repository the
               directory is in (branches.py's `create`, as the page's branch button makes one; the repository made one
               of the gatherer's projects if it is not yet), what the actor changes there merged into the repository's
               checkout by the dashboard (`approve`: each change waiting for the user in the Editor)
@@ -83,9 +84,9 @@ import uuid
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import harness_kit
+from app_kit import AppError
 
-from . import actions, branches, data, editor, files, folders, naming, saved, sessions
-from .apps import APPS, App
+from . import actions, branches, data, files, folders, livedocs, naming, saved, sessions
 
 COORDINATOR = sessions.COORDINATOR
 ALIASES = ("gatherer", "gatherer-agent", "coordinator")   # what `send`, `show` and `when` take for the gatherer agent
@@ -190,19 +191,33 @@ def instructions(gatherer: str) -> str:
 
 
 
+def _app_of(s: dict) -> Optional[str]:
+    """The app of app_kit's whose actor the session is (app_agents.py's `role_of`: DocWriter's), else None."""
+    from . import app_agents, tool_gateway
+    got = app_agents.role_of(s)
+    return got[0] if got and tool_gateway.HOST is not None and got[0] in tool_gateway.HOST.apps else None
+
+
+def _starters() -> Dict[str, Any]:
+    """The apps on this dashboard's host that start an agent of their own ([agent] start), by name: what
+    `ag actors new --<name>` may ask for."""
+    from . import tool_gateway
+    h = tool_gateway.HOST
+    if h is None:
+        return {}
+    return {n: x.manifest for n, x in h.apps.items() if x.manifest.agent.start}
+
+
 class Coordination:
     """What actors ask the dashboard (module doc), and the watches: `started`, the dashboard's sessions, which run the
     actors; `ring(gatherer)`, told when a gatherer's actors changed; `branched`, its actors' branches (branches.py),
-    which a new actor may be on; `apps`, the running part of each app (apps.py) by its name -- server.py's `apps` --
-    a new one of which a new actor may be the actor of.
+    which a new actor may be on. A new actor may be an app's (`_starters`: the app host's apps that start one).
     Thread-safe: the server's handlers share one, and its watches are looked at on a thread of its own, until
     `close`."""
 
     def __init__(self, started: "sessions.Sessions", ring: Optional[Callable[[Optional[str]], None]] = None,
-                 watch: bool = True, branched: Optional["branches.Branches"] = None,
-                 apps: Optional[Dict[str, Any]] = None):
+                 watch: bool = True, branched: Optional["branches.Branches"] = None):
         self.started, self.ring, self.branched = started, ring, branched
-        self.apps: Dict[str, Any] = dict(apps or {})
         self.lock = threading.RLock()
         self.stop = threading.Event()
         self.marked: set = set()                 # the gatherer agents' channels marked private by this dashboard
@@ -306,7 +321,7 @@ class Coordination:
                 "asked": _clip(_unwrapped(a.get("last_user_message")), ASKED_CHARS),
                 "recap": _clip((a.get("recap") or {}).get("text"), ASKED_CHARS),
                 "last": a.get("last"), "you": bool(me) and a["channel"] == me["channel"],
-                "gatherer_agent": self._is_coordinator(a), **{x.name: x.key_of(s) is not None for x in APPS}}
+                "gatherer_agent": self._is_coordinator(a), **({_app_of(s): True} if _app_of(s) else {})}
 
     # ---- what an actor asks
 
@@ -335,7 +350,7 @@ class Coordination:
         if not path:
             raise CoordinationError("which file?")
         full = os.path.normpath(os.path.join(me.get("cwd") or os.getcwd(), os.path.expanduser(path)))
-        found = editor.writers([os.path.dirname(full)], time.time() - WHO_SECONDS).get(os.path.basename(full), [])
+        found = livedocs.writers([os.path.dirname(full)], time.time() - WHO_SECONDS).get(os.path.basename(full), [])
         by = {a["channel"]: a for a in agents}
         return {"path": full, "actors": [{**self._view(by[w["channel"]], me), "how": w["how"], "at": w["at"]}
                                          for w in found if w["gatherer"] == g and w["channel"] in by]}
@@ -354,22 +369,25 @@ class Coordination:
             model: Optional[str] = None, like: Optional[str] = None, name: Optional[str] = None,
             branch: bool = False, approve: bool = False, folder: Optional[str] = None, **app: bool) -> dict:
         """A new actor (module doc), in the folder at the path `folder` if given (made if new). `app`, {<name>: True}:
-        the actor of a new one of that app (apps.py), as `ag actors new --<name>` asks."""
-        unknown = sorted(set(app) - {x.name for x in APPS})
-        if unknown:
-            raise TypeError(f"new() got an unexpected keyword argument {unknown[0]!r}")
+        the actor of a new one of that app (an app that starts an agent of its own: app_agents.py), as
+        `ag actors new --<name>` asks."""
+        starters = _starters()                            # apps on the host that start an agent of their own
         g, me, agents = self._asker(actor)
         text = _message(text)
-        chosen = [x for x in APPS if app.get(x.name)]
-        if chosen and branch:
-            raise CoordinationError(f"a {chosen[0].label}'s actor works in its folder, not on a branch: "
-                                    f"--{chosen[0].name} or --branch, not both")
-        if len(chosen) > 1:
-            raise CoordinationError("an actor is one app's at most: "
-                                    + " or ".join(f"--{x.name} alone" for x in chosen))
+        asked = [n for n in sorted(app) if app[n]]          # the apps asked for, found here or not
+        found = starters
+        label = lambda n: found[n].label if n in found else n   # noqa: E731
+        if asked and branch:
+            raise CoordinationError(f"a {label(asked[0])}'s actor works in its folder, not on a branch: "
+                                    f"--{asked[0]} or --branch, not both")
+        if len(asked) > 1:
+            raise CoordinationError("an actor is one app's at most: " + " or ".join(f"--{n} alone" for n in asked))
+        if asked and asked[0] not in found:               # an app this dashboard's host has none of (or no host)
+            raise CoordinationError(f"this dashboard runs no {asked[0]}: no such app is found here")
+        chosen = [found[n] for n in asked]
         if approve and not branch:
             raise CoordinationError("--approve is for an actor on a branch of its own (--branch): each change it makes "
-                                    "there waits for the user in the Editor")
+                                    "there waits for the user to accept or reject it")
         try:
             target = folders.find_or_make(g, folder) if folder else None
         except folders.FolderError as exc:
@@ -387,7 +405,7 @@ class Coordination:
         made = on = None
         mode = bs.get("permission_mode") or "auto"
         if chosen:
-            row, made = self._new_of(chosen[0], g, cwd or "", harness, model, name)
+            row, made = self._new_with_app(chosen[0].name, g, cwd or "", harness, model, name)
         else:
             if branch:
                 row, on = self._new_on_branch(g, cwd or "", harness, model, mode, approve)
@@ -431,21 +449,18 @@ class Coordination:
         row = next(r for r in self.started.list() if r["session_id"] == got["session_id"])
         return row, {k: b[k] for k in ("branch", "project", "worktree", "approve")}
 
-    def _new_of(self, app: App, gatherer: str, cwd: str, harness: str, model: Optional[str],
-                name: Optional[str]) -> Tuple[dict, dict]:
-        """A new one of `app` on `cwd` (its running part's `create`), its actor named `name`, else as the app names it
-        ("<label> · <folder>"), once its first message is sent: (its actor's session, as the dashboard's table has
-        it; {key, root})."""
-        running = self.apps.get(app.name)
-        if running is None:
-            raise CoordinationError(f"this dashboard runs no {app.label}")
+    def _new_with_app(self, app: str, gatherer: str, cwd: str, harness: str, model: Optional[str],
+                      name: Optional[str]) -> Tuple[dict, dict]:
+        """A new instance of the app on `cwd` and its actor (app_agents.py's `start`), named `name`, else as the app
+        names it: (its actor's session, as the dashboard's table has it; {key, root})."""
+        from . import app_agents, tool_gateway
         try:
-            got = running.create(gatherer, cwd, harness, model)
-        except app.error as exc:
-            raise CoordinationError(f"no {app.label} started: {exc}") from None
-        running.name_actor(got["key"], name)
-        row = next(r for r in self.started.list() if r["session_id"] == got["channel"])
-        return row, {"key": got["key"], "root": got["root"]}
+            got, inst = app_agents.start(self.started, tool_gateway.HOST, app, gatherer, cwd, harness, model, name)
+        except AppError as exc:
+            label = tool_gateway.HOST.apps[app].manifest.label if app in tool_gateway.HOST.apps else app
+            raise CoordinationError(f"no {label} started: {exc}") from None
+        row = next(r for r in self.started.list() if r["session_id"] == got["session_id"])
+        return row, {"key": inst.id, "root": inst.folder}
 
     def when(self, actor: str, ref: str, note: str = "") -> dict:
         g, me, agents = self._asker(actor)

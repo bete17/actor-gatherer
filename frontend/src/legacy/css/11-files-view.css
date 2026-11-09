@@ -68,6 +68,12 @@
 /* a turn begun, its message sent, that ag has not stored yet: in full, as the latest turn shows it, not yet one to pick */
 .files .fl-turn.opened .fl-user .tx { -webkit-line-clamp: unset; }
 .files .fl-user .tx.bang { font: .92em/var(--lh) var(--mono); }   /* a command the user ran with `!`, or typed as /name */
+/* a message an app wrote for the user (a line Notes sent): where in the app it came from, then the user's words */
+.files .fl-user .tx.app-said { display: flex; flex-direction: column; gap: 2px; -webkit-line-clamp: unset; }
+.files .app-from { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); }
+.files .app-from img { width: 13px; height: 13px; flex: none; }
+.files .app-words { white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; }
+.files .fl-turn.on .fl-user .app-words, .files .fl-turn.shown .fl-user .app-words, .files .fl-turn.opened .fl-user .app-words { -webkit-line-clamp: unset; }
 /* a bash band (bashBubble): a command the user ran with `!`, as a terminal shows it -- its `!` in bash mode's colour,
    the band edged in it -- and under a rule, in the same band, what it printed */
 .files .fl-user.bash { background: var(--term-code); border-color: color-mix(in srgb, var(--term-bash) 45%, transparent); }

@@ -5,7 +5,7 @@ import harness_kit
 from fastapi import APIRouter
 from starlette.responses import Response
 
-from .. import apps, coordination, data, home, sessions
+from .. import coordination, data, home, sessions
 from .common import Body, Errors, Parts, answer
 
 router = APIRouter(route_class=Errors)
@@ -43,8 +43,8 @@ def send_message(srv: Parts, body: Body) -> Response:
     `adopt`). While the codex in the dashboard's terminal asks whether to implement its plan, what to change instead
     ("No, stay in Plan mode", then the message); refused while it waits on a question there (`dialog`), and while its
     terminal's message box is not there, empty, to take it -- a dialog, a menu, a question, a permission asked, or
-    something typed there and not sent: the error then has `box` (sessions.py's NotAtBox). A message to an app's actor
-    is as its app composes it (apps.py's `compose`): a Browser's ends with what the user did and picked in it."""
+    something typed there and not sent: the error then has `box` (sessions.py's NotAtBox). The message goes as typed:
+    an app tells its agent what it needs to by events of its own (a Browser: what the user did and picked in it)."""
     started = srv.sessions
     sid = str(body.get("session_id") or "")
     if not sid and body.get("gatherer") and body.get("channel"):     # a session not started here
@@ -58,16 +58,8 @@ def send_message(srv: Parts, body: Body) -> Response:
         rules = harness_kit.get(held.get("harness"))
         raise sessions.SessionError(f"{rules.label if rules else 'It'} waits on its question in the "
                                     "terminal: answer it, or press Esc there to stop the turn, first")
-    row = next((x for x in started.list() if x["session_id"] == sid), None)
-    app = apps.of(row) if row is not None else None   # an app's actor: the message as its app composes it
-    running = srv.apps.get(app.name) if app is not None else None
-    told = None
-    if running is not None and text.strip() and text.lstrip()[0] not in "/!":
-        text, told = app.compose(running, row, text)
     sent = started.send(sid, text, int(body.get("cols") or 120), int(body.get("rows") or 32), bool(body.get("fullscreen")),
                         str(body.get("cid") or "") or None)
-    if told is not None:                         # the app told the message went
-        told()
     return answer(sent)
 
 
@@ -141,7 +133,7 @@ def actors_op(crew: coordination.Coordination, op: str, body: dict):
     if op == "new":
         return crew.new(me, s("text"), opt("cwd"), opt("harness"), opt("model"), opt("like"), opt("name"),
                         branch=bool(body.get("branch")), approve=bool(body.get("approve")), folder=opt("folder"),
-                        **{a.name: bool(body.get(a.name)) for a in apps.APPS})
+                        **{n: True for n in coordination._starters() if body.get(n) is True})
     if op == "when":
         return crew.when(me, s("ref"), s("note"))
     if op == "watches":
@@ -169,7 +161,7 @@ def actors(srv: Parts, op: str, body: Body) -> Response:
     error's text for the command to print (400).
 
     list {all?}, show {ref}, who {path}, send {ref, text}, new {text, cwd?, harness?, model?, like?, name?, folder?,
-    <app>? (apps.py: docwriter?, browser?), branch?, approve?}, when {ref, note?}, watches, unwatch {watch},
+    <app>? (an app that starts an agent of its own: docwriter?, browser?), branch?, approve?}, when {ref, note?}, watches, unwatch {watch},
     save {ref, folder?, unfiled?}, unsave {ref}, folders, folder {do: new | rename | move | delete, name, to?},
     move {refs, folder} (folders: by path, "top" or none for the gatherer's top)."""
     return answer(actors_op(srv.crew, op, body))

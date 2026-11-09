@@ -1,0 +1,253 @@
+// The Editor app (ag_apps/editor/), set up as the Browser and DocWriter are: started from a gatherer's "+ ⋯" menu on a
+// folder, with an actor of its own below it; its panel in the top row under the head the dashboard draws over every
+// app's; opened on a file by the `open-file` intent too, the file edited there and saved to disk; and beside the file
+// the project's preview, run by Execute and shown in a column of its own, a source's place sent back to the file; and
+// its actor's change, made with its tools, as the Editor's mode says (Review: a proposal there, accepted). The project
+// is one the test makes, a git repository with a script that draws an SVG.
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import type { APIRequestContext, Page } from "@playwright/test";
+import { expect, streamsAsRequests, test } from "./test";
+import { CLAUDE, openActor } from "./home";
+
+function project(): { repo: string; plot: string } {
+  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ag-preview-")));
+  const plot = path.join(repo, "plot.py");
+  fs.writeFileSync(
+    plot,
+    'print(\'drawing\')\nopen(\'out.svg\', \'w\').write(\'<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><rect width="40" height="40" fill="#3a7"/></svg>\')\n',
+  );
+  const env = {
+    ...process.env,
+    GIT_AUTHOR_NAME: "t",
+    GIT_AUTHOR_EMAIL: "t@t",
+    GIT_COMMITTER_NAME: "t",
+    GIT_COMMITTER_EMAIL: "t@t",
+  };
+  execFileSync("git", ["init", "-q"], { cwd: repo, env });
+  execFileSync("git", ["add", "."], { cwd: repo, env });
+  execFileSync("git", ["commit", "-qm", "init"], { cwd: repo, env });
+  return { repo, plot };
+}
+
+/** An intent raised from a panel, as a page's link raises it: through the test app's SDK (tests/apps/notepad). */
+async function raise(page: Page, kind: string, data: Record<string, unknown>) {
+  const row = page.locator("#agents .gatherer-row").first();
+  if (!(await page.locator("#top-row > .app-pane[data-app=notepad]").count())) {
+    await row.hover();
+    await row.locator("button.new-more").click();
+    await page.locator(".row-menu[role=menu]").getByText("Notepad", { exact: true }).click();
+    await expect(
+      page.locator("#top-row > .app-pane[data-app=notepad]").frameLocator("iframe").locator("body[data-ready='1']"),
+    ).toHaveCount(1);
+  }
+  const notes = page.frames().find((f) => /^http:\/\/notepad\.localhost:\d+\//.test(f.url()))!;
+  type Notes = { notes: { intents: { open: (k: string, d: object) => Promise<unknown> } } };
+  await notes.evaluate(
+    ([k, d]) => (window as unknown as Notes).notes.intents.open(k as string, d as object),
+    [kind, data],
+  );
+}
+
+const editorPane = (page: Page) => page.locator("#top-row > .app-pane[data-app=editor]");
+const editorPanel = (page: Page) => editorPane(page).frameLocator("iframe");
+
+/** The file opened in the Editor, as Chat's link to it opens it. */
+async function openFile(page: Page, file: string) {
+  await raise(page, "open-file", { path: file });
+  await expect(editorPane(page)).toHaveCount(1);
+  await expect(editorPanel(page).locator(".ed-head .ed-path")).toContainText(path.basename(file));
+  await expect(editorPanel(page).locator(".cm-content")).toHaveCount(1);
+}
+
+/** An Editor started from the menu on `repo`, with its actor (as DocWriter's test: Claude Code set up here, the page's
+ * stream held back; the actor's session is only made, never run): the actor's row, and how to put the home back. */
+async function startEditor(page: Page, repo: string) {
+  await page.route("**/api/home", async (route) => {
+    const home = await (await route.fetch()).json();
+    home.harnesses = ["claude"];
+    home.harness_info.claude = { ...home.harness_info.claude, runs: true };
+    await route.fulfill({ json: home });
+  });
+  await streamsAsRequests(page);
+  await page.route("**/api/stream*", (route) => route.abort());
+  await openActor(page, CLAUDE);
+  const row = page.locator("#agents .gatherer-row").first();
+  await row.hover();
+  await row.locator("button.new-more").click();
+  await page.locator(".row-menu[role=menu]").getByText("Editor…", { exact: true }).click();
+  const box = page.locator(".dw-menu[role=dialog]", { hasText: "New Editor" });
+  await box.locator("input").fill(repo);
+  await box.locator("button.go").first().click();
+  await expect(editorPane(page)).toHaveCount(1);
+  // the Editor and its actor, one task (the dashboard's task_links.py): the task's row shown, the Editor's mark among its
+  // faces; its actor, the one attached to the Editor's instance
+  const actor = page.locator("#agents button.agent.task[aria-current=true]");
+  await expect(actor.locator(".t-faces img.t-app")).toHaveAttribute("src", "/apps/mark/editor.svg");
+  await expect(actor.locator(".t-faces .t-face")).toHaveCount(1);
+  const src = new URL((await editorPane(page).locator("iframe").getAttribute("src")) || "");
+  const listed = await (await page.request.get(`/api/apps?gatherer=${src.searchParams.get("gatherer")}`)).json();
+  const sid: string = (listed.attached[src.searchParams.get("instance") || ""] || [])[0] || "";
+  expect(sid).toMatch(/^[0-9a-f-]{36}$/);
+  return { actor, sid, src };
+}
+
+/** The home as it was, for the tests after: the Editor closed, its actor (never started) forgotten. */
+async function endEditor(page: Page, request: APIRequestContext, sid: string, src: URL) {
+  await editorPane(page).locator(".app-close").click();
+  await expect(editorPane(page)).toHaveCount(0);
+  const closed = await request.post("/api/apps/close", {
+    data: { gatherer: src.searchParams.get("gatherer"), instance: src.searchParams.get("instance") },
+  });
+  expect(closed.ok()).toBe(true);
+  const discarded = await request.post("/api/discard", { data: { session_id: sid } });
+  expect(discarded.ok(), await discarded.text()).toBe(true);
+}
+
+test("an Editor started from the menu: its panel above on the folder, its actor below with its mark", async ({
+  page,
+  request,
+}) => {
+  const { repo } = project();
+  const { sid, src } = await startEditor(page, repo);
+  await expect(page.locator("#controls button[aria-label=Editor]")).toHaveCount(0); // no button of its own on an actor
+  await expect(editorPane(page).locator(".app-head")).toContainText(path.basename(repo));
+  await expect(editorPane(page).locator(".app-agents")).toHaveText("1 agent");
+  await expect(editorPanel(page).locator(".ed-folder .nm")).toHaveText(path.basename(repo)); // the folder it was started on
+  await endEditor(page, request, sid, src);
+});
+
+test("in Review its actor's edit is a proposal in place, the file unchanged on disk until it is accepted", async ({
+  page,
+  request,
+}) => {
+  const { repo, plot } = project();
+  const { sid, src } = await startEditor(page, repo);
+  const panel = editorPanel(page);
+  await panel.locator(".ed-row", { hasText: "plot.py" }).first().click();
+  await expect(panel.locator(".cm-content")).toContainText("print('drawing')");
+  await panel.locator(".ed-mode-pick select").selectOption("review");
+  await expect(panel.locator(".ed-mode-pick select")).toHaveValue("review");
+  const was = fs.readFileSync(plot, "utf8");
+  // its actor's editor_edit, as Claude Code calls it: through the apps' MCP server
+  const called = await request.post(`/mcp/${sid}`, {
+    data: {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: {
+        name: "editor_edit",
+        arguments: { path: plot, old_string: "print('drawing')", new_string: "print('drawing, reviewed')" },
+      },
+    },
+  });
+  const answer = await called.json();
+  expect(answer.result.content[0].text, JSON.stringify(answer)).toContain("Proposed");
+  const box = panel.locator(".ed-cf", { hasText: "proposes to change these lines" });
+  await expect(box).toHaveCount(1);
+  await expect(box.locator(".ed-cf-theirs")).toContainText("reviewed");
+  await expect(panel.locator(".ed-head .ed-status")).toHaveText("1 change to review");
+  expect(fs.readFileSync(plot, "utf8")).toBe(was); // until it is accepted
+  // its actor detached first: told what the user chose, a never-started actor would stay listed, with that message
+  const detached = await request.post("/api/apps/detach", {
+    data: { gatherer: src.searchParams.get("gatherer"), instance: src.searchParams.get("instance"), channel: sid },
+  });
+  expect(detached.ok(), await detached.text()).toBe(true);
+  await box.getByRole("button", { name: "Accept", exact: true }).click();
+  await expect(box).toHaveCount(0);
+  await expect(panel.locator(".cm-content")).toContainText("print('drawing, reviewed')");
+  await expect.poll(() => fs.readFileSync(plot, "utf8").split("\n")[0]).toBe("print('drawing, reviewed')");
+  await endEditor(page, request, sid, src);
+});
+
+test("a file asked for opens in an Editor's panel, and what is typed is saved", async ({ page }) => {
+  const { plot } = project();
+  await openActor(page, CLAUDE);
+  await openFile(page, plot);
+  const panel = editorPanel(page);
+  await expect(panel.locator(".ed-row[aria-selected=true], .ed-row.on").first()).toContainText("plot.py");
+  await panel.locator(".cm-line").first().click();
+  await page.keyboard.press("End");
+  await page.keyboard.type("  # typed");
+  await expect(panel.locator(".ed-status")).toContainText("Saved"); // Auto-save
+  await expect.poll(() => fs.readFileSync(plot, "utf8").split("\n")[0]).toBe("print('drawing')  # typed");
+  await raise(page, "open-file", { path: path.join(path.dirname(plot), "out.svg") }); // the Editor open takes it
+  await expect(editorPane(page)).toHaveCount(1);
+  await editorPane(page).locator(".app-close").click();
+  await expect(editorPane(page)).toHaveCount(0);
+});
+
+test("Execute opens the project's preview beside the file on its form, a guess in it, and runs what is saved", async ({
+  page,
+}) => {
+  const { repo, plot } = project();
+  await openActor(page, CLAUDE);
+  await openFile(page, plot);
+  const panel = editorPanel(page);
+  await panel.locator("button.ed-exec").click();
+  await expect(panel.locator(".ed-pv")).toBeVisible();
+  await expect(panel.locator(".pv-h .nm")).toContainText(path.basename(repo)); // the project, by its repository
+  await expect(panel.locator(".pv-form input[name=command]")).toHaveValue("python3 {file}"); // the guess, for a .py
+  await panel.getByRole("button", { name: "Save and run" }).click();
+  await expect(panel.locator(".pv-st")).toContainText("Done");
+  await expect(panel.locator(".pv-out")).toContainText("drawing");
+  await expect(panel.locator(".pv-cmd")).toContainText("$ python3 {file}");
+  await expect(panel.locator(".pv-cmd")).toContainText("set by you");
+  // what it shows changed: the file it draws, shown in its place
+  await panel.getByRole("button", { name: "Edit", exact: true }).click();
+  await panel.locator(".pv-form input[name=show]").fill("out.svg");
+  await panel.getByRole("button", { name: "Save and run" }).click();
+  await expect(panel.locator(".pv-result img")).toHaveAttribute("src", /\/api\/preview\/files\/[0-9a-f]+\/out\.svg\?/);
+  await expect.poll(() => panel.locator(".pv-result img").evaluate((i: HTMLImageElement) => i.naturalWidth)).toBe(40);
+  // Ctrl+Enter (⌘↵ on a Mac) in the file: Execute again; the preview's × hides it, Execute shows it again
+  await panel.locator(".pv-edge").hover(); // over a result, its head is tucked away above it until the pointer comes
+  await panel.locator(".pv-x").click();
+  await expect(panel.locator(".ed-pv")).toBeHidden();
+  await panel.locator(".cm-content").click();
+  await page.keyboard.press("Control+Enter"); // Ctrl+Enter: the test's browser says it is on Windows (Desktop Chrome)
+  await expect(panel.locator(".ed-pv")).toBeVisible();
+  await expect(panel.locator(".pv-st")).toContainText("Done");
+});
+
+const hasLatex = (() => {
+  try {
+    execFileSync("which", ["latexmk"]);
+    execFileSync("which", ["synctex"]);
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
+test("a LaTeX build shows in pdf.js, a source line to its place in the PDF and a double-click back", async ({
+  page,
+}) => {
+  test.skip(!hasLatex, "no latexmk and synctex here");
+  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ag-preview-")));
+  const tex = path.join(repo, "paper.tex");
+  fs.writeFileSync(
+    tex,
+    "\\documentclass{article}\n\\begin{document}\nFirst page.\n\\newpage\nSecond page, its own line.\n\\end{document}\n",
+  );
+  execFileSync("git", ["init", "-q"], { cwd: repo });
+  await openActor(page, CLAUDE);
+  await openFile(page, tex);
+  const panel = editorPanel(page);
+  await panel.locator("button.ed-exec").click();
+  await expect(panel.locator(".pv-form input[name=command]")).toHaveValue(/^latexmk -pdf -synctex=1 /);
+  await panel.getByRole("button", { name: "Save and run" }).click();
+  await expect(panel.locator(".pv-st")).toContainText("Done", { timeout: 60_000 });
+  const pdf = () => page.frames().find((f) => /\/_ag\/lib\/pdfjs\/web\/viewer\.html/.test(f.url()));
+  type Viewer = { PDFViewerApplication: { pagesCount: number; page: number } };
+  await expect
+    .poll(async () => pdf()?.evaluate(() => (window as unknown as Viewer).PDFViewerApplication.pagesCount))
+    .toBe(2);
+  await panel.locator(".cm-line").nth(4).click(); // "Second page", line 5: "→ PDF" shows its page
+  await panel.locator("button.ed-topdf").click();
+  await expect.poll(() => pdf()!.evaluate(() => (window as unknown as Viewer).PDFViewerApplication.page)).toBe(2);
+  await pdf()!.evaluate(() => ((window as unknown as Viewer).PDFViewerApplication.page = 1));
+  await panel.frameLocator("iframe.pdf").locator(".page[data-page-number='1'] .textLayer span").first().dblclick();
+  await expect(panel.locator(".cm-activeLine")).toContainText("First page."); // its source line, selected in the file
+});

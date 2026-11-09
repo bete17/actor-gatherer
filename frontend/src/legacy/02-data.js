@@ -110,7 +110,7 @@ const signature = (value) => JSON.stringify(value);
 // action, which draws at once -- so a home that only confirms that action draws nothing anew (a row drawn again under
 // the pointer as the reader presses it to drag starts no drag). "ago" texts: every 30 s.
 const listSignature = () => signature([state.home.gatherers, state.home.hook_servers, state.home.hiding, state.home.titles,
-  state.home.saved, state.home.folders, state.home.gatherer_folders, state.home.seen, state.home.harnesses, state.home.shells, state.home.branches,
+  state.home.saved, state.home.folders, state.home.gatherer_folders, state.home.tasks, state.home.seen, state.home.harnesses, state.home.shells, state.home.branches,
   paneSig(), opened(selectedInfo()), Math.floor(Date.now() / AGO_MS)]);
 // The list drawn again only if what it draws from changed since: after an action's answer, which mostly says what the
 // page guessed and drew already -- a list drawn anew for nothing, as a drag begins, loses its row.
@@ -125,6 +125,7 @@ async function refresh(userAction = false) {
       const first = state.home.gatherers.find((g) => g.agents.length && !isHidden(g)) || state.home.gatherers.find((g) => g.agents.length);
       if (first) state.selected = [first.name, firstAgent(first).channel];
     }
+    if (state.selected && !PANE) showActorsApp(...state.selected);   // an app's actor (19-app-actors.js): its panel above
     await loadAgent().catch(() => { state.agent = null; });   // a session started here may have no database yet
     await loadChat();
     render(userAction);
@@ -208,7 +209,7 @@ const mainSignature = () => {
     info && info.avatar_hello,
     state.chat && [state.chat.key, state.chat.last_row, state.chat.pending], txSignature(), chatView().id,
     chatFeed().signature ? chatFeed().signature() : null,
-    state.details && state.detailsTab, edShown(), bwSignature(), chatMin()]);
+    state.details && state.detailsTab, topShown(), chatMin()]);
 };
 // The page's state, small under its name: its dot green while live, amber paused, red on an error.
 const setLive = (text) => {
@@ -234,8 +235,8 @@ function setTheme(pick, keep) {
   window.dispatchEvent(new Event("ag-theme"));
 }
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => window.dispatchEvent(new Event("ag-theme")));
-// The page's theme as shown, light or dark: the one picked, else the system's. DocWriter's page, the Editor and the
-// Browsers' pages (bwTellScheme) take it on.
+// The page's theme as shown, light or dark: the one picked, else the system's. The Editor and the apps' panels (their
+// SDK's theme: features/apps/host.ts) take it on.
 const shownTheme = () => document.documentElement.dataset.theme
   || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
 // The actor at work in the Chat view: acting out what it does (the stage), or small with its one motion ("simple"); kept in

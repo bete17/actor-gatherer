@@ -1,0 +1,84 @@
+// The native pages of the apps that ask for them (app_kit's `native_view`), in the ag desktop app (desktop/DESIGN.md,
+// "A tab in its pane"): each frame, where each panel asks its page kept (ag.native.show) -- the panel's place offset by
+// its frame's, clipped to it -- and whether something of the dashboard's is over it (at some point of it, the frame
+// isn't on top: a menu, a hover card, Settings), told the desktop app, which keeps each page there, or a still picture
+// of it while it is covered (drawn by the panel: AppPane's `still`).
+import type { AppPane } from "./host";
+
+/** Where a panel asks a native page kept: in its frame's coordinates, and whether the panel covers it. */
+export interface NativePlace {
+  target: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  covered: boolean;
+}
+/** The ag desktop app, as its preload tells the page of it (desktop/src/preload.cts), when the page runs in it. */
+interface Desktop {
+  native?: boolean;
+  place?: (stages: Record<string, unknown>[]) => void;
+  onStill?: (cb: (still: { target: string; url: string | null }) => void) => void;
+  stillDrawn?: (target: string) => void;
+  focusDashboard?: () => void;
+}
+export const desktop = (): Desktop | null => {
+  const d = (window as unknown as { agApp?: Desktop }).agApp;
+  return d && d.native && typeof d.place === "function" ? d : null;
+};
+
+export const nativePanes = new Set<AppPane>();
+const GRID = 5;
+let nativeTold = "";
+let nativeLoop = 0;
+export function nativeSoon(): void {
+  if (!nativeLoop && desktop()) nativeLoop = requestAnimationFrame(nativeFrame);
+}
+function nativeFrame(): void {
+  nativeLoop = 0;
+  const d = desktop();
+  if (!d) return;
+  const stages: Record<string, unknown>[] = [];
+  for (const pane of nativePanes) {
+    const p = pane.native,
+      f = pane.frame;
+    if (!p || !f.isConnected || !f.checkVisibility()) continue;
+    const r = f.getBoundingClientRect();
+    const fx = r.left + f.clientLeft,
+      fy = r.top + f.clientTop;
+    const x0 = Math.max(fx, fx + p.x),
+      y0 = Math.max(fy, fy + p.y);
+    const x1 = Math.min(fx + f.clientWidth, fx + p.x + p.w),
+      y1 = Math.min(fy + f.clientHeight, fy + p.y + p.h);
+    if (x1 - x0 < 2 || y1 - y0 < 2) continue;
+    let covered = p.covered;
+    for (let i = 0; i < GRID && !covered; i++)
+      for (let j = 0; j < GRID && !covered; j++) {
+        const hit = document.elementFromPoint(x0 + ((x1 - x0) * (i + 0.5)) / GRID, y0 + ((y1 - y0) * (j + 0.5)) / GRID);
+        if (hit && hit !== f) covered = true;
+      }
+    stages.push({
+      x: x0,
+      y: y0,
+      w: x1 - x0,
+      h: y1 - y0,
+      target: p.target,
+      covered,
+      app: pane.app.name,
+      key: pane.instance.id,
+    });
+  }
+  const now = JSON.stringify(stages);
+  if (now !== nativeTold) {
+    nativeTold = now;
+    d.place?.(stages);
+  }
+  if (nativePanes.size) nativeLoop = requestAnimationFrame(nativeFrame);
+}
+if (typeof window !== "undefined") {
+  setInterval(() => nativePanes.size && nativeFrame(), 250); // (frames stop while the window is hidden or covered)
+  const d = desktop();
+  d?.onStill?.((still) => {
+    for (const pane of nativePanes) if (pane.native?.target === still.target) pane.still(still.target, still.url);
+  });
+}

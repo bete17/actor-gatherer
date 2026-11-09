@@ -1,6 +1,6 @@
 # Apps beside agents: plan
 
-Status: being built, from 2026-11-06. Steps 1 (`app_kit/`), 2 (the host) and 3 (the tool gateway) are built. This file is the package's design, as
+Status: being built, from 2026-11-06. Steps 1 (`app_kit/`), 2 (the host), 3 (the tool gateway), 4 (app panels), 5 (Preview), 8 (DocWriter, the Browser) and 7's first part (the Editor as an app, the Preview taken into it) are built. This file is the package's design, as
 `harness_kit/DESIGN.md` is that package's.
 
 ## Goal
@@ -9,10 +9,13 @@ A gatherer holds two kinds of things, and the code and the page should treat the
 
 - **Agents.** The actors: harness sessions (Claude Code, Codex, ...) whose context the gatherer puts together. An
   agent's pane (Chat, Terminal, History, and the read-only Messages, Transcript and Details) shows that agent and
-  nothing else.
-- **Apps.** Everything an agent or the user works *with*: the Editor, the Browser, DocWriter, Preview, and the pieces
-  now built into Chat and History (the files-and-commands panel, the file viewer, Summarize / Generate skill /
-  memory / AGENTS.md). An app has a panel of its own beside or above the agent panes.
+  nothing else. A way of looking at the agent's own history is part of its views, not an app: Chat's files and
+  commands, and its file viewer, stay in Chat (decided 2026-11-07).
+- **Apps.** Everything an agent or the user works *with*: the Editor, the Browser, DocWriter, Preview, and History's
+  Summarize / Generate skill / memory / AGENTS.md. An app has a panel of its own, in the row above the agent panes
+  (beside the Editor); opening it shows the agent attached to it below. The user talks to an agent in its own views
+  (Chat, Terminal), right below the panel (decided 2026-11-07). An app whose own page has a request box today keeps
+  it (DocWriter's: what the dashboard does now is kept), through a capability to message its attached agents.
 
 An app reaches the rest of the system through two things only:
 
@@ -113,6 +116,7 @@ intent = "open-url"
 
 [capabilities]                        # shown to the user before they are granted
 native_view = true                    # desktop: a native web view over its panel
+notify = true                         # notifications to the user (5b)
 reads = ["tool_call", "tool_output"]  # other event types it may read, besides its own and the context types
 ```
 
@@ -129,6 +133,7 @@ class App:
     def stop(self) -> None: ...
     def open(self, instance: Instance, args: dict) -> Instance: ...   # the host made its id, gatherer, folder;
     def close(self, instance: Instance) -> None: ...                  # the app sets its title and data
+    def sleep(self, instance: Instance) -> None: ...                  # its task closed: kept, nothing run for it
     def call(self, instance, tool: str, args: dict, caller: Caller) -> ToolResult: ...
     def request(self, instance, method, path, query, body: bytes) -> Response: ...   # its panel's own routes
     def attached(self, instance, channel: str) -> None: ...     # an agent attached: tell it what it needs to know
@@ -141,6 +146,8 @@ class Host(ABC):                                                # what an app is
     def tell_panel(self, instance, message: dict) -> None: ...  # to its open panels
     def folder(self) -> str: ...                                # its own files: <home>/apps/<name>/data
     def instances(self) -> List[Instance]: ...
+    def notify(self, instance, title, text="", key=None, show=("ag",), where=None) -> str: ...   # to the user
+    def clear_notice(self, instance, which: str) -> None: ...   # one of its own (an id), or every one of a key
 ```
 
 An app in its own process gets the same calls over HTTP (`app_kit/remote.py`). The host starts the manifest's
@@ -250,10 +257,9 @@ for apps. An app's event types are ag `EventType`s with ag `Property`s (`Manifes
   | `native` | in the desktop app, a native web view at a rectangle of the panel (`native_view` capability) |
 
 - **Intents separate agent views from apps.** A view raises an intent and the host sends it to the app that handles
-  that kind, opening its panel beside the pane:
+  that kind, opening its panel in the row above the panes:
   - `open-file {path, line, row_id}`
   - `open-url {url}`
-  - `show-activity {channel, turn}`
   - `explain-answer {channel, turn}`
   - `use-history {channel, rows}`
 
@@ -268,16 +274,38 @@ for apps. An app's event types are ag `EventType`s with ag `Property`s (`Manifes
   today, and the Editor borrows Chat's change renderer. Those move into a library both apps import (in `app_kit/js/`,
   or a package of its own), or into an app of their own: a PDF viewer that handles `open-file` for PDFs.
 
+### 5b. Notifications: an app wanting the user
+
+An app whose manifest asks `notify` (capability) sends the user a NOTIFICATION -- from its backend (`Host.notify`,
+`Host.clear_notice`) or its panel (the SDK's `ag.notices.send`, `.clear`, `.onOpen`). It works as an actor's status
+does, so the two are one abstraction:
+
+- **Facts, recorded as events.** The host records it in the instance's gatherer: `app_notified` {id, key, title, text,
+  show, where}, open until `app_notice_settled` {id or key, how} -- the app cleared it, or the user dismissed it -- as
+  an agent's `asked` is open until its `ask_settled`. Its instance closed settles all of its. Records, as the host's
+  others: no policy groups them, and no agent is ever shown one (`app_kit/notices.py` checks what one may say).
+- **Status, worked out on every read.** The dashboard's home read works out each instance's open ones next to its
+  agents' status (data.py's `app_notices`: a gatherer's `apps`), the page told as each is written.
+- **Seen, the reader's.** One newer than the reader's last look at the instance -- its panel shown, the page in front
+  (seen.py, the item `app:<id>`) -- is NOTIFIED, as an agent done since is FINISHED. The list shows it as a state of
+  its own: the app's row's dot, its task's (where it ranks first: after Waiting for you and Error, before Running), the
+  counts on gatherer, folder and rail, the rail's tile; and lists them in the app's card, each opening the app where
+  it says (`where`, handed to its panel) or dismissed.
+- **Said as it happens.** What comes to want the reader -- an app's notification, an actor that comes to wait for them
+  or stops on an error -- pops up in the page's corner, unless they have it in front of them; and, the page not in
+  front, on the computer too (the browser's Notification, the desktop app's), for an app's only where it asked
+  (`show` "system"). The reader turns actors' pop-ups and the computer's off in the settings.
+
 ### 6. What moves out of the agent views
 
 | Piece | Becomes | How the agent view reaches it |
 |---|---|---|
-| Files-and-commands panel (Chat's left side) | **Activity** app: the agent's commands and files for the selected turn, from `tool_call`, `tool_output` and `file_touched` | A line per turn ("12 commands · 5 files") raises `show-activity`. The Activity panel follows the focused pane's selection |
-| File viewer (Chat's file pane) | Activity for what a turn read or changed; the **Editor** for the file itself | `open-file` |
+| Files-and-commands panel (Chat's left side) | Stays in Chat: a way of looking at the agent's own history, not an app the user works with | — |
+| File viewer (Chat's file pane) | Stays in Chat, as the panel does; opening the file itself to edit is the Editor's | `open-file` |
 | Background tasks list | Stays in the agent view: the tasks are the agent's | — |
 | Question and plan-approval card, errors | Stay: the harness asks, and the agent waits | — |
 | `/context`, Details, Messages, Transcript | Stay: views of the agent | — |
-| History's Summarize / Generate skill / memory / AGENTS.md, Save to..., Export | **Skills & memory** app; the skill watcher joins it later | History keeps its tree and selection. A selection raises `use-history` |
+| History's Summarize / Generate skill / memory / AGENTS.md, Save to..., Export | **Skills & memory** app; the skill watcher joins it later (deferred: stays in History for now, 2026-11-07) | History keeps its tree and selection. A selection raises `use-history` |
 | Editor (above the panes) | **Editor** app, one instance per folder | `open-file`; the pane head's button opens the agent's folder |
 | Preview (inside the Editor) | **Preview** app, one instance per checkout; `ag preview` becomes its tools | Opened beside the Editor, or by `open-file` on what it builds |
 | Browser pane view | **Browser** app, instances and attachments | `open-url`; the panel sits beside its agents' panes |
@@ -296,8 +324,8 @@ app_kit/                  the contract, on ag's (ag.ag_interface): standard libr
   backend.py              App, Host, Instance, Caller, ToolResult
   remote.py               the same calls over HTTP, for an app in its own process
   js/                     @ag/app: the panel SDK and its types
-apps/                     our apps, each a package with an app.toml, built as an outside app would be
-  preview/  activity/  editor/  browser/  docwriter/  skills/  sources/
+ag_apps/                  our apps, each a folder with an app.toml, built as an outside app would be
+  preview/  editor/  browser/  docwriter/  skills/  sources/
 ag/                       knows an app only as event types and pollers
   ag_harness/home/        [apps] in config.toml (what is installed); apps = [...] in gatherer.toml (what is on)
 ag_dashboard/             the host: no app's name in its code
@@ -343,7 +371,7 @@ Each step is one PR and leaves the dashboard working. Steps 1–3 change nothing
 
 1. **`app_kit`.** Manifest, `App`, `Host`, the remote protocol and their tests. No app uses it yet.
 2. **The host.** Built:
-   - `ag_dashboard/app_host.py` finds apps (the repo's `apps/`, `AG_APPS_PATH`, `<home>/apps/`), runs their
+   - `ag_dashboard/app_host.py` finds apps (`ag_apps/`, the apps that come with ag; `AG_APPS_PATH`, `<home>/apps/`), runs their
      backends (imported from their folder, or started as a process), and keeps instances and attachments as the
      host's records (`app_opened`, `app_closed`, `app_attached`, `app_detached`, `app_call`). A gatherer's are read
      once, the first time it is asked about.
@@ -373,31 +401,242 @@ Each step is one PR and leaves the dashboard working. Steps 1–3 change nothing
      `finding`, so ag and the dashboard find the same apps). A gatherer runs one when its `gatherer.toml` names it
      in `pollers`, or names its app in `apps`; ag builds and checks it as any poller.
    - The Browser's and DocWriter's own endpoints stay until step 8; their actors are given those, not the gateway.
-4. **The layout and app panels** (front end).
-   - The layout tree, with agent panes as its leaves.
-   - `AppPanel` with the SDK's host side.
-   - Intents and selection.
-   - A test app in `tests/` that uses every part of the SDK.
-5. **Preview, the first real app.** It is the smallest:
-   - its CLI becomes tools;
-   - its SQLite table becomes events (`preview.set`, `preview.ran`);
-   - its panel is the Editor's preview side today.
-
-   This proves the contract from start to end.
-6. **Activity.** The files-and-commands panel and the file viewer leave Chat. Chat raises `show-activity` and
-   `open-file` and publishes its selection. The Editor's changes panel stops calling Chat's code, and what both use
-   goes to `core/ui`.
+4. **App panels** (front end). Built, one change from the plan: app panes join the page's panes as they are (one
+   more kind beside the actors', `07-panes.js`), and the layout tree waits; rebuilding the panes as a tree now would
+   rewrite them under every other change to the page. Changed after step 5 (2026-11-07, its own PR): an app's panel
+   is in the row above the panes (`#top-row`), beside the Editor, sharing its height; each panel's width its share
+   (a bar before it); opening one shows the actor attached to it below, in the pane in focus (one open already: its
+   pane focused); kept in this browser under `ag-dashboard-top-apps`.
+   - The SDK, `app_kit/js/app.js`, served on every app's origin at `/_ag/app.js`: events (read, subscribe, insert),
+     tools (answer, call), agents, intents, the selection, the theme (its colours set on the panel's `:root`), the
+     backend's messages, its own `/api/`; Esc and ⌘/Ctrl keys it leaves unhandled go on to the page.
+   - The page's side, `frontend/src/features/apps/host.ts`: an app's pane (its head: the app, its instance, the agents
+     attached -- a menu attaches and detaches them -- and ×) and the bridge to its frame, which checks every message's
+     source and origin. A panel has one stream for its backend's messages, a tool call among them, and one per
+     subscription; an intent for a panel not yet connected waits for it.
+   - Apps are opened from a gatherer's "+ ⋯" menu, beside the pane in focus, the actor in focus attached. An app's
+     pane is kept with the page's panes and opened again on a reload, if its instance is still open.
+   - Intents: a panel's `intents.open` opens the app that takes it (for `open-file`, by the file's media type), in
+     the instance for the file's folder, and tells its panel. The agent views raising them comes with step 6.
+   - The selection: the actor in the actor's pane in focus last, told to every panel as it changes.
+   - The test app, Notepad (`tests/apps/notepad/`), uses each part, and `frontend/e2e/apps.spec.ts` drives it; the e2e
+     dashboard finds it (`AG_APPS_PATH`) and inserts through this checkout's `ag` (`AG_COMMAND`).
+5. **Preview, the first real app.** Built, as one change, so there is never a second preview beside the first:
+   - The apps that come with ag are a package, `ag_apps/` (found through Python's imports, so a wheel carries them).
+     Preview is `ag_apps/preview/`: its run logic (`runs.py`, ported from `ag_dashboard/preview.py`, which is gone,
+     with its routes and table), its backend (`backend.py`), its panel (`panel/`, ported from the Editor's preview
+     side).
+   - What it keeps is its events: `preview.set`, `preview.allowed`, `preview.cleared`, `preview.ran`. One instance
+     per repository (`per-repository`, new in app_kit: worktrees share it), each worktree's runs its own.
+   - Who may run what is as before: the user anything, an agent only a command the user set or let run. Letting one
+     run is the user's alone: a call passing the command as `ok` from an agent is refused.
+   - Its tools are `preview_show`, `_set`, `_run`, `_stop`, `_clear`; `ag preview` is now a client of them.
+   - The Editor asks for it by intents (new in app_kit): Execute and ⌘↵ raise `run`; "→ PDF" and a double-click in a
+     TeX source raise `locate`. The panel sends a PDF's place back as `open-file`, which, with no app taking it, the
+     page gives the Editor.
+   - What two apps share is a library the host serves on each app's origin (`/_ag/lib/`, `ag_dashboard/libs.py`):
+     pdf.js (with SyncTeX in the panel), marked and DOMPurify. The Editor's own PDF viewer keeps `/vendor/pdfjs/`, the
+     same copy.
+   - `Caller.folder` (the agent's working folder) and `Host.panels(instance)` are new in app_kit: an agent's preview
+     runs in its own checkout, and a server no panel shows is stopped.
+   - Checked live: a Claude Code session (Haiku) started by a scratch dashboard was given the gateway at launch, and
+     set and read the preview with its tools.
+   - Not carried over: previews set before this (the old `previews` table) start again from a guess; `ag preview`
+     from a shell that is not an actor's is refused (it was "a shell's" before).
+6. **Activity: dropped** (2026-11-07). The files-and-commands panel and the file viewer stay in Chat: they are a way
+   of looking at the agent's history, not an app the user works with. The Editor's changes panel keeps using Chat's
+   code until the Editor's step.
 7. **The Editor.** Its tree, live editing, conflicts and viewers become the Editor app; it takes `open-file`. Its
-   panel replaces the area above the panes.
-8. **The Browser and DocWriter.**
-   - Each becomes instances and attachments, with its tools through the gateway. A stored role
-     (`{"browser": key}`) is copied to an `app_attached` once, here: until then they aren't apps the host knows.
-   - `compose` and DocWriter's page-built prompt become `context_stream` events.
-   - The desktop app's native view becomes the capability.
-   - The `browser` and `docwriter` pane views go, and the per-app MCP endpoints with them.
+   panel replaces the area above the panes. The whole Editor is to be an app, not only its preview (2026-11-07).
+   Taken up 2026-11-08, as asked: it looks as it did; the Preview is part of it, not an app of its own; and agents
+   work with it as they do with DocWriter, through tools of its own, an edit landing as one of several modes the user
+   picks. Two PRs:
+
+   **(a) The Editor as an app: built** (2026-11-08). Set up and used as the Browser and DocWriter are (the user,
+   2026-11-08: "the editor should be setup and used exactly like a browser, docwriter"): started from a gatherer's
+   "+ ⋯" menu on a folder, with an actor of its own attached (`[agent] start`, "Editor · {folder}", its `mark` on the
+   actor's avatar); one per Editor started (`instances = "many"`); its tools and instructions its attached actors'
+   (`offer = "attached"`); its panel in the top row under the head the dashboard draws over every app's. No button
+   of its own on an actor's pane. It still takes `open-file` (an app naming the file's type first): an Editor open in
+   the top row is told, rather than another opened.
+   `ag_apps/editor/`: `app.toml`, `backend.py` (its panel's routes, the Preview's tools and runs: `runs.py`, moved
+   from `ag_apps/preview/`, which is gone), `chooser.py` (the system's Open dialog, moved from the dashboard), `panel/`
+   (the dashboard's `legacy/18-editor*.js` and their CSS, moved as they were, beside `page.js`: the page's helpers they
+   used, small, and the SDK in place of the page's state; `preview.js`: the Preview app's panel as a column beside the
+   file; `vendor/editor.js`: CodeMirror, Yjs and now the dashboard's highlighter, built by `assets/src/editor`). Each
+   project's preview kept by its repository and shared by the gatherer's Editors (`editor.preview_set`, `_allowed`,
+   `_cleared`, `_ran`, each with its `key`); its tools `editor_preview_show`, `_set`, `_run`, `_stop`, `_clear` --
+   `ag preview` a client of them, for an actor attached to an Editor.
+   - **The files it edits stay the host's** (found while building it): `editor.py`'s live documents -- the merge,
+     the conflict zone, saving, who changed which file -- are what the actors' branches merge into (`branches.py`
+     raises its conflicts and marks in them) and what `ag actors who` reads (`coordination.py`). Moved into the app,
+     branches would be cut off from the files open. So they stay in the dashboard, as `livedocs.py` (renamed; no
+     app's name in it), and an app reaches them through the contract: capability `docs` and `Host.docs()`
+     (`app_kit/docs.py`, the dashboard's `app_docs.py`), for an app run in the host's process. Another app with files
+     to edit live (DocWriter, a PowerPoint app) can use the same documents, and the same concurrency control.
+   - **What else the contract gained**, each general: capability `actors` (the SDK's `ag.actors`: the actors as the
+     list shows them, their names, avatars, hues, folders, status -- the Editor's marks and tree); `ag.folder` (the
+     instance's folder, to its panel); `Response.file_at` (a file served in ranges: a video, a PDF); `_here` in a
+     request's query (a dialog the app opens shows on the host's machine); an intent's handler, one naming the file's
+     type first.
+   - **The page**: its Editor is gone (`18-editor*.js`, `#ed-top`), with the actor's Editor button and what only it
+     used (`/api/files/place`, `files.lately_changed`); `18-top.js` keeps what is the page's -- the top row's grip, the
+     chat minimized under the row -- for any panel there.
+   - Checked: the Python suite and the browser tests (`e2e/editor.spec.ts`, in place of `preview.spec.ts`: an Editor
+     started from the menu; a file opened by `open-file`, typed into and saved; Execute and the preview beside it; a
+     LaTeX build and SyncTeX both ways); live on a scratch dashboard beside `main`'s.
+   - Not carried over: the Editor's shown-or-not (`ag-dashboard-editor`); opening it at an actor's folder from the
+     actor's pane (the user had it removed); ⌘P from outside the Editor (the page's) -- inside it, as before;
+     `ag preview` from an actor not attached to an Editor.
+
+   **(b) Agents work with it, DocWriter's way: built** (2026-11-08). Its agents change files with its tools, and the
+   user picks how their changes land.
+   - **Tools** (`editor_read`, `editor_edit`, `editor_write`, `editor_open`): `editor_edit` is Claude Code's Edit
+     (old_string, unique unless replace_all), `editor_read` numbers its lines as Read does. A file no Editor has open
+     is read and written on disk, whatever the mode; one open is changed through the host's live document.
+   - **Modes**, one per Editor, picked in its head ("Agents: Live / Review / Hands off"), kept as `editor.mode`
+     events; a file open in two Editors takes the strictest. Live: the change lands at once, in the agent's hue
+     (the document's `marks`), and is written to the file -- its lines only, what the user typed and did not save
+     left unsaved; one to the conflict zone's lines is held in a box. Review: each change a proposal in place
+     (Accept / Reject / Keep both / Edit, and Accept all / Reject all in the head), the file on disk unchanged until
+     accepted; the agent reads the file with its own proposals in, its next change building on them (one proposal per
+     place). It never waits on one (the user, 2026-11-08: "propose and move on"): its tool answers at once, it is told
+     to carry on with its task, and what the user chose reaches it whenever they choose. Hands off: refused, "ask the
+     user first".
+   - **Writes around the tools** (a shell command, Codex's or Antigravity's own edits, an agent not attached): in Live
+     merged as before; in Review and Hands off asked about (`Conflict.asked`), Reject putting the user's lines back on
+     the file.
+   - **The guard**: Claude Code's own Edit and Write on a file open in an Editor refused (the existing `edit_guard`
+     capability), pointing at `editor_edit` -- for an agent attached to an Editor, which has its tools.
+   - **Told**: the agent whose change was held, what the user chose (a `context_stream` message in its channel);
+     agents that used the tools, when the mode changes (one that never started would otherwise be listed as having a
+     conversation).
+   - **The contract** (`app_kit.docs`), each general: `open(..., hold)` and `hold(...)` ("merge" or "ask": how a page
+     takes the file's changes on disk); `state`; `view(path, root, channel)` (the text with an actor's proposals in);
+     `put(path, root, seen, wanted, by, how)` (an actor's change, "live" or "propose", merged onto what changed since it
+     read). A conflict's `agent` now also marks a change put in (`put`, `why`: "approve" or "zone"). A branch's held
+     changes are unchanged; settling routes to the branches only for those (`branch`).
+   - Not done: telling the actor below the Editor which file is open and what is selected when the user messages it
+     (decision 4); Codex and Antigravity can't be stopped from editing open files (no edit hook) -- their writes are
+     merged or asked about as above.
+8. **The Browser and DocWriter.** What they do for the user and the agent today is kept (2026-11-07): only where
+   their panel sits and how they plug in change. DocWriter first, then the Browser, each its own PR.
+   - Each becomes instances (the instance id is its key today, so its profile, logins and saved tabs stay where they
+     are) and attachments, with its tools through the gateway. A stored role (`{"browser": key}`) is copied to an
+     `app_attached` once, here: until then they aren't apps the host knows.
+   - Its panel is in the row above the panes, its actor's Chat and Terminal below: the `browser` and `docwriter` pane
+     views go, and the per-app MCP endpoints with them. "+ Browser" / "+ DocWriter" still make one and a new actor
+     attached to it.
+   - What the agent is told of the app reaches it as ag's events, not by the dashboard rewriting the user's message:
+     the app inserts them, or gives an ag poller that pulls its state before each model call of an attached agent.
+     The Browser's `<browser_state>` (the page, what the user did since, what they picked) becomes events it inserts
+     into its agent's channel (below: a poller's would reach every session): the same content, now also between the
+     calls of a turn. DocWriter's page-built prompt stays the message its page sends.
+   - DocWriter's guard on the harness's own edit tools becomes a capability an app declares (the host adds the hook).
+   - DocWriter's own request box stays: its page messages its attached agent through the SDK, as it sends today
+     (`message_agents` capability), the prompt it builds as it builds it.
+   - The desktop app's native view becomes the capability: the panel says where its screen is, the page tells the
+     desktop app.
+
+   **DocWriter: built** (2026-11-07, its own PR). `ag_apps/docwriter/`: `core.py` is the dashboard's `docwriter.py`
+   moved as it was (documents, tabs, files, hooks, previews, SyncTeX), `backend.py` the App over it, `panel/` its page
+   built from upstream against the panel SDK (assets/src/docwriter, `npm run build`, which also writes `tools.json`
+   and `instructions.md` and the dashboard's shared pdf.js at `ag_dashboard/vendor/pdfjs/`). The dashboard names it
+   nowhere: its `docwriter.py`, `api/docwriter.py`, `vendor/docwriter/` and the page's DocWriter view are gone. What
+   the contract gained for it, each general:
+   - manifest: `offer = "attached"` (its tools and instructions only for an agent attached to one: its instructions
+     as the agent's own, `instruction_args`, as before), `[agent] start` (the menu starts one with a new actor:
+     app_agents.py, `/api/apps/start`, and `ag actors new --docwriter`), `tools_file` (tools a build writes), `mark`
+     (the badge on its actor's avatar, served at `/apps/mark/<name>.svg`), `[asked]` (what the list shows of a
+     message the app's page wrote); capabilities `message_agents` (send, answer a question, Esc), `transcript` (the
+     agent's turn as Transcript has it), `edit_guard` (App.guard: the harness's hook, `ag_dashboard/app_guard.py`, asks
+     `/api/apps/guard`)
+   - the SDK: `agents.state` / `onState`, `send`, `answer`, `interrupt`, `transcript`
+   - a panel's request may name its instance in its path (`/api/w/<gatherer>/<instance>/...`), for URLs it can't add a
+     query to (its preview page, an image)
+   - the page holds a panel out of sight while an attached agent is at work, for an app whose panel answers its tools
+     (as DocWriter's frame was), and selecting an app's actor opens its app's panel above it
+   - adoption: an actor whose stored role is `{"<app>": key}` of an app the host now finds is attached to that app's
+     instance of that key (app_host.py's `adopt`, at the dashboard's start); the app copies what it kept in
+     dashboard.db once (DocWriter: `docwriter_docs`, `docwriter_kv`, left in place)
+   Checked live: a Claude Code (Haiku) actor started with a DocWriter had its six tools; `docwriter_read_doc` was
+   answered by the panel; its own Edit of a document open in DocWriter was refused with DocWriter's reason.
+
+   **The Browser: built** (2026-11-07, its own PR). `ag_apps/browser/`: `core.py` is the dashboard's `browser.py`
+   moved as it was (the Chrome, the tools and their checks, the user's input, picks, the screen as video:
+   `video.py`), `backend.py` the App over it, `panel/` the dashboard's Browser view (`20-browser.js`, its CSS) moved
+   onto the SDK, `make.py` writes `tools.json` and `instructions.md` from the core. The dashboard names no app at all
+   now (`test_dashboard_apps.py`): `apps.py` -- the old way an app was built into the dashboard -- is gone with
+   `browser.py`, `browser_video.py`, `api/browser.py` and the Browser view; Settings' "Import logins" is the panel's
+   own "⋯" menu. Its 14 actors are adopted as DocWriter's were, and its tabs copied from dashboard.db once; its Chrome's
+   profile, downloads and the desktop app's marks stay in `<home>/dashboard/`, where they were.
+   - **What the user does reaches its agent as ag's events, inserted, not a poller.** A poller's events belong to no
+     channel (every session in the gatherer would see one Browser's clicks), so the Browser inserts a `context_stream`
+     ("Browser", "the user") into each attached agent's channel: what the user did, the page, what they picked --
+     `<browser_state>`'s content -- `TELL_AFTER` (2 s) after they last did something, at once on a pick. Its agent
+     sees it at its next model call, also between the calls of a turn, where `<browser_state>` waited for the user's
+     next message. An action's result still says what the user did meanwhile, unless told already.
+   - **The user's next message to its agent** (read as `user_message`: a `reads` capability) puts their picks away and
+     lifts a stop (Esc), as sending one did: looked for on each tool call and every 3 s while a Browser waits on one.
+   - **`Response.stream`**: a backend run in the dashboard may answer its panel with server-sent events (the screen).
+     Panel requests' bodies are capped at 40 MB (413).
+   - **The native view is `native_view`**, for an app run in the dashboard. The panel says where its screen is
+     (`ag.native.show(el, target)`, each frame, covered by the panel's own menus or not); the page offsets it by the
+     frame, checks the dashboard's own overlays over it (`features/apps/native.ts`), and tells the desktop app
+     (`agApp.place`), whose preload no longer scans the page. A still picture goes desktop app → page → panel, its
+     "drawn" back the same way. The desktop link (`/api/desktop`, `desktop.py`'s token) is the host's: it hands it to
+     each app that asks (`App.native`), every message tagged with its app; the desktop app keeps each app's pages
+     apart (seen, driven and placed only by it) and in a profile of its own -- the Browser's the one it always had
+     (`persist:browsers`), so its logins stay.
+   - Clicking an app's actor that is already shown opens its app's panel again, if closed.
 9. **Skills & memory, and Sources.** History's actions move to Skills & memory. Sources becomes an app once it is
-   merged.
+   merged. Deferred for now (2026-11-07): History keeps its Summarize, Generate skill / memory / AGENTS.md, Save to
+   and Export as they are, until this step is taken up.
 10. **Apps from outside.** `ag apps install`, the permissions shown at install, and the store's manifest format.
+    Skipped for now (2026-11-07). Proposed when taken up: install from a folder or git URL into
+    `<home>/apps/<name>/app/` (data kept in `data/`), permissions shown and confirmed, off until turned on, run in a
+    process of its own, `update` / `remove`, loaded without a restart; `native_view` unavailable to it (as in a
+    browser tab) until the desktop link can be passed to an app's own process.
+
+**Notes**, a new app (2026-11-08), not a move: a notebook per gatherer (`ag_apps/notes/`, instances `one`), pages
+and subpages of blocks (text, headings, to-dos, lists, quotes, code, dividers), a minimal Notion. It is kept in a file
+of the app's data folder (`<home>/apps/notes/data/<gatherer>.json`), not as events: each keystroke's change would be
+an `ag home insert`, and a gatherer with no database yet holds its writes. The panel and the agents change it by the
+same ops (`notebook.py`), one batch at a time; the backend tells every open panel each batch, numbered, in order.
+Agents get `notes_read`, `notes_add` and `notes_change` (offer `always`), and read and write pages as markdown with
+each block's id. The test app it took the name of is now Notepad (`tests/apps/notepad/`). An app's mark now shows
+on its "+ ⋯" menu entry too.
+
+**Notes and the actors** (2026-11-08): the user works with the gatherer's actors from the notebook.
+- **Sending a line:** `@` typed in a block (or its Assign / Ask button) picks an actor, the gatherer agent, or a new
+  actor on a harness the dashboard runs; a box in the picker takes instructions to add to the line. The message is the
+  user's own, as Chat sends one: a note first, "(From my Notes, page "…", block <id>. …)" -- first, so what the list
+  keeps of a message (cut at 600 characters) still names the line -- then the line's words and what was added. The
+  block keeps who it went to and with what (`to`, `sent`, `extra`).
+- **Each line's own status:** the line an actor is on now is the one its latest message names (`asked_of`); only it
+  shows the actor working, or its question. A line the actor reported on since the user last wrote about it (or a
+  ticked to-do) is Done, whatever the actor does next; another line sent to a busy actor waits ("After …"), else it
+  shows Sent. Whether the line itself is ticked or struck through is the agent's to do, with its tools. A message sent mid-turn becomes the
+  latest one, so with two lines in one turn, the line it is on is the last one given it.
+- **The block after:** one status line under it: how that actor stands now (working, needs you, done), its latest
+  report (or what it asks), and a button that opens the conversation. The conversation is never on the page (the user,
+  2026-11-08: "the notes itself should only have notes/status updates, not the conversation"). It is a panel beside
+  the page, one line's at a time: the line as sent, the user's messages (each sent to the actor too) and the actor's
+  reports as bubbles, its question answered there where the dashboard can (one question picked from options, or a
+  permission), and a box to message it. Reports come from the new `notes_report` tool, one to three lines, which
+  ticks a to-do the actor says is done. The block keeps them all as its `thread`.
+- **The Agents page and the `/agents` block:** every actor with its state, what it was sent from the notes, and its
+  last report.
+- **What the contract gained, each general:**
+  - capability `message_actors`: the SDK's `ag.actors.send` / `answer` / `start` / `show`, for any actor of the
+    panel's gatherer ("gatherer": its gatherer agent, started if it has none), as Chat does them. `message_agents`
+    stays limited to the agents attached to the instance; attaching an agent would have put it in the notebook's task.
+  - `ag.actors` gives each actor's question (`asking`) and whether the page can answer it, whether it is saved, its
+    role and recap, and the harnesses a new actor can start on.
+  - `[asked]`'s pattern may have a second group, where in the app a message came from. Chat then shows "From
+    <app> · <that>" above the user's words, and the list shows the words alone, for every actor, not only one the
+    app started. A third group names the item the message is about; panels are told it as the actor's `asked_of`.
+    The words may be read by a lookahead, so the note can come first (Python and JavaScript share no named groups).
 
 Steps 6–8 change what the user sees the most. Each gets its Playwright tests before it moves and keeps them after,
 as the move to React did.
@@ -409,14 +648,17 @@ Settled on 2026-11-06:
 1. **Every app's panel is an iframe**, ours and outside ones alike. One way for all apps; outside apps are isolated
    from the dashboard; our apps test the same contract an outside one uses. The cost: the SDK forwards keys, theme,
    focus and drag and drop across the frame, and each open panel costs about a page.
-2. **Which tools an agent is given: every app turned on for the gatherer, at launch.** Works for Claude Code and Codex
+2. **Which tools an agent is given: every app turned on for the gatherer, at launch.** Kept so once Preview, an app
+   that comes with ag, put its tools in every session (2026-11-07) -- the Editor's now (2026-11-08): a gatherer turns
+   apps off with `apps = []`. Works for Claude Code and Codex
    alike; costs context for each app's tools, so a gatherer's apps should be few. The others, kept for later:
    - only the apps it's attached to, with the list sent again when that changes. Claude Code refreshes on MCP's
      `tools/list_changed` (checked in its 2.1.319 binary); Codex knows the message, but whether it refreshes
      mid-thread is unconfirmed; and `mcp.py` would have to send notifications.
    - one tool, `app_call(app, tool, args)`, with each app's tools described in the instructions: cheapest in context,
      but the harness can't check arguments against a schema.
-3. **Files and commands leave Chat**, which keeps a one-line count per turn that opens Activity.
+3. **Files and commands stay in Chat** (changed 2026-11-07, from "leave Chat for an Activity app"): they show the
+   agent's own history, so they are part of its views.
 4. **App backends run in the dashboard's process** for now. A separate `ag apps serve`, so apps work without the
    dashboard, can come later: nothing in `app_kit` assumes the dashboard.
 5. **Names carry the app:** `<app>_<tool>` for tools and `<app>.<what>` for event types. One app's names can't collide

@@ -43,7 +43,7 @@ function connect() {
   if (PANE) { state.stream = PANE.stream; paneUrl(); PANE.shows(window, state.selected); return; }
   if (state.stream) { state.stream.close(); state.stream = null; }
   if (SNAPSHOT || state.paused) return;
-  const sel = state.selected, also = panes.others.filter((p) => !isShell(p.c));   // a shell: nothing to stream but its terminal
+  const sel = state.selected, also = actorPanes().filter((p) => !isShell(p.c));   // a shell: nothing to stream but its terminal
   const q = [...(sel && !isShell(sel[1]) ? [`gatherer=${encodeURIComponent(sel[0])}`, `channel=${encodeURIComponent(sel[1])}`] : []),
     ...(also.length ? [`also=${encodeURIComponent(JSON.stringify(also.map((p) => [p.g, p.c])))}`] : [])];
   const es = window.agNext.stream("/api/stream" + (q.length ? "?" + q.join("&") : ""));
@@ -71,7 +71,11 @@ function streamTake(name, data, mine = () => true, sel = null) {
         await loadedSoon(loadChat());                // a session's state: its messages may have moved on too
         if (!state.selected && !PANE) {              // the first agent to appear: shown, and watched
           const first = got.gatherers.find((g) => g.agents.length);
-          if (first) { state.selected = [first.name, firstAgent(first).channel]; await loadAgent(); render(true); connect(); }
+          if (first) {
+            state.selected = [first.name, firstAgent(first).channel];
+            showActorsApp(...state.selected);        // an app's actor: its panel above (19-app-actors.js)
+            await loadAgent(); render(true); connect();
+          }
         }
       } else if (name === "chat") {                   // what Chat shows of the actor: drawn as it comes, nothing to load
         if (!sel || !isAt(state.selected, ...sel)) return;

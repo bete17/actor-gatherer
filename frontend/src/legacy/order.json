@@ -7,13 +7,10 @@
     "04-list.css",
     "05-chat.css",
     "06-terminal.css",
-    "07-editor.css",
+    "07-top.css",
     "08-docwriter.css",
-    "09-browser.css",
-    "10-editor-marks.css",
     "11-files-view.css",
-    "12-editor-tree.css",
-    "13-editor-view.css"
+    "12-notices.css"
   ],
   "js": [
     "00-preamble.js",
@@ -25,6 +22,7 @@
     "05-gatherer-folders.js",
     "06-list-modes.js",
     "07-panes.js",
+    "07-notices.js",
     "08-charts.js",
     "09-selected-agent.js",
     "10-chat.js",
@@ -35,12 +33,9 @@
     "15-shell.js",
     "16-files-view.js",
     "17-history.js",
-    "18-editor.js",
-    "18-editor-tree.js",
-    "18-editor-open.js",
-    "18-editor-view.js",
-    "19-docwriter.js",
-    "20-browser.js",
+    "18-top.js",
+    "19-app-actors.js",
+    "20-own-views.js",
     "21-start.js"
   ]
 }

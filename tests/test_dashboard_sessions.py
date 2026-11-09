@@ -20,6 +20,7 @@ import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import app_kit.finding  # noqa: E402
 from ag_dashboard import avatars, data, folders, hiding, saved, seen, server, sessions, titles  # noqa: E402
 import harness_kit  # noqa: E402
 from harness_kit.base import Box  # noqa: E402
@@ -85,6 +86,9 @@ class SessionsBase(unittest.TestCase):
         self.env = unittest.mock.patch.dict(os.environ, {"AG_COMMAND": f"{sys.executable} {fake}", "FAKE_AG_LOG": self.log,
                                                          "FAKE_AG_DELAY": "0", "CLAUDE_CONFIG_DIR": self.claude})
         self.env.start()
+        no_apps = unittest.mock.patch.object(app_kit.finding, "BUILTIN", os.path.join(self.tmp.name, "no-apps"))
+        no_apps.start()                           # no app on: a session is given no apps' tools (the Preview's)
+        self.addCleanup(no_apps.stop)
         self.chat("headless")                     # a message to the agent with no screen; ChatTerminalTest: the default
         self.s = sessions.Sessions()
 
@@ -712,22 +716,25 @@ class ChatTerminalTest(SessionsBase):
 
 @unittest.skipUnless(sessions.TERMINALS, "a terminal needs a Unix pseudo-terminal")
 class ChatToolsTest(SessionsBase):
-    """A session the dashboard gives its own MCP server's tools (an app's actor: apps.py's `tools_of`) starts its
-    terminal without its first message on the command line, and has the message typed in once that server has listed
-    its tools (sessions.py's `_first_message`): its harness starts the turn without waiting for them, and that turn
-    would run without the tools."""
+    """A session the dashboard gives its own MCP server's tools (the apps' tool gateway: tool_gateway.py's `served`)
+    starts its terminal without its first message on the command line, and has the message typed in once that server
+    has listed its tools (sessions.py's `_first_message`): its harness starts the turn without waiting for them, and
+    that turn would run without the tools."""
 
     AT = "x/0123456789abcdef"
 
     def setUp(self):
         super().setUp()
         self.chat(None)
-        from ag_dashboard import apps
-        self.tools = unittest.mock.patch.object(apps, "tools_of", lambda s: [self.AT])
-        self.tools.start()
+        from ag_dashboard import tool_gateway
+        self.tools = [unittest.mock.patch.object(tool_gateway, "served", lambda s: True),
+                      unittest.mock.patch.object(tool_gateway, "endpoint", lambda actor: self.AT)]
+        for t in self.tools:
+            t.start()
 
     def tearDown(self):
-        self.tools.stop()
+        for t in self.tools:
+            t.stop()
         super().tearDown()
 
     def typed(self):
@@ -813,8 +820,8 @@ class ChatToolsTest(SessionsBase):
         self.noted(sid, "its tools listed")
 
     def test_a_session_given_no_tools_starts_with_the_message_on_its_command_line(self):
-        from ag_dashboard import apps
-        with unittest.mock.patch.object(apps, "tools_of", lambda s: []):
+        from ag_dashboard import tool_gateway
+        with unittest.mock.patch.object(tool_gateway, "served", lambda s: False):
             sid = self.s.create("g", self.work)["session_id"]
             self.s.send(sid, "hi", 90, 25)
             [argv] = self.until(self.argvs)
@@ -1570,6 +1577,24 @@ class EndpointTest(SessionsBase):
         self.assertEqual(self.post("/api/saved", {"gatherer": "", "channel": "c", "saved": True})[0], 400)
         self.assertEqual(self.post("/api/saved", {"gatherer": "g", "channel": "c3", "saved": True}, {"Origin": "https://evil.example"})[0], 403)
         self.post("/api/saved", {"gatherer": "g", "channel": "c2", "saved": False})
+
+    def test_actors_and_apps_are_kept_together_as_tasks(self):
+        ask = lambda body: self.post("/api/tasks", body)         # noqa: E731
+        self.assertEqual(json.load(urllib.request.urlopen(self.url + "/api/home", timeout=10))["tasks"], {})
+        code, got = ask({"gatherer": "g", "do": "add", "to": "c1", "channels": ["c2"], "name": "Book the trip"})
+        tid = got["task"]
+        self.assertEqual((code, got["tasks"], got["attached"]),
+                         (200, {"g": {"tasks": [{"id": tid, "name": "Book the trip"}], "tasked": {"c1": tid, "c2": tid}}}, {}))
+        self.assertEqual(json.load(urllib.request.urlopen(self.url + "/api/home", timeout=10))["tasks"], got["tasks"])
+        self.assertEqual(ask({"gatherer": "g", "do": "rename", "id": tid, "to": "Trip"})[1]["tasks"]["g"]["tasks"][0]["name"], "Trip")
+        self.assertEqual(ask({"gatherer": "g", "do": "add", "to": "c1", "channels": "c3"}), (400, {"error": "which actors or apps? `items`, a list"}))
+        code, got = ask({"gatherer": "g", "do": "add", "to": "c1", "items": ["app:b1"]})    # an app: an item as an actor is
+        self.assertEqual((code, got["tasks"]["g"]["tasked"]), (200, {"c1": tid, "c2": tid, "app:b1": tid}))
+        self.assertEqual(ask({"gatherer": "g", "do": "out", "items": ["app:b1"]})[0], 200)
+        self.assertEqual(ask({"gatherer": "g", "do": "join"})[0], 400)
+        self.assertEqual(self.post("/api/tasks", {"gatherer": "g", "do": "out", "channels": ["c1"]}, {"Origin": "https://evil.example"})[0], 403)
+        code, got = ask({"gatherer": "g", "do": "out", "channels": ["c1"]})
+        self.assertEqual((code, got["tasks"], type(got["now"])), (200, {}, float))                       # one left: none
 
     def test_actors_are_kept_in_folders_in_folders(self):
         ask = lambda body: self.post("/api/folders", body)       # noqa: E731

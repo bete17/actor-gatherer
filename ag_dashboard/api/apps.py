@@ -21,28 +21,44 @@ For agents (tool_gateway.py): POST /mcp/<actor>, the apps' MCP server; POST /api
 For an app in its own process (app_kit's remote.py), with its token: POST /apps/host/<name>/<op>.
 
 On an app's own origin, http://<name>.localhost:<port> (app_host's `origin`), which a page of the dashboard frames:
-GET its panel's files (`/` is its entry), and /api/<path>?gatherer&instance (any method) its backend's `request`. A
+GET its panel's files (`/` is its entry), the panels' SDK (/_ag/app.js) and the libraries the dashboard shares with
+apps (/_ag/lib/..., libs.py), and /api/<path>?gatherer&instance (any method) its backend's `request`. A
 write there only from that origin. No other route of the dashboard answers there, its WebSocket included."""
 
+import asyncio
 import hmac
 import mimetypes
 import os
 import re
+import time
 from typing import Optional
-from urllib.parse import parse_qsl
+from urllib.parse import parse_qsl, unquote
 
 import anyio
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, WebSocket, WebSocketDisconnect
 from starlette.datastructures import Headers
-from starlette.responses import Response
+from starlette.responses import FileResponse, Response
 
+import app_kit
+import harness_kit
 from app_kit import AppError, Caller, remote
 
-from .. import app_host, mcp, tool_gateway
-from .common import Body, Errors, Parts, answer, failure, local_only, not_found, queue_events
+from .. import app_agents, app_host, desktop, libs, livedocs, mcp, task_links, tasks, tool_gateway
+from .common import (KEEPALIVE_EVENT, Body, Errors, Events, Parts, answer, blocking, event, failure, local_only, named_here, not_found,
+                     queue_events)
 
 router = APIRouter(route_class=Errors)
 ORIGIN_HOST = re.compile(r"^([a-z][a-z0-9-]{0,23})\.localhost(?::\d+)?$")
+SDK_PATH = "/_ag/app.js"                         # the panels' SDK (app_kit/js/app.js), on every app's origin
+LIB_PATH = "/_ag/lib/"                           # the libraries the dashboard shares with apps (libs.py)
+#: A backend request naming its instance in its path, /api/w/<gatherer>/<instance>/<rest>, for URLs a panel can't add a
+#: query to (an image, a page in a frame, a viewer's file): the same as <rest>?gatherer=..&instance=..
+DESKTOP_FIRST_WAIT = 10.0                        # seconds the desktop app's token is waited for
+APP_MAX_BODY = 40_000_000                        # the largest request body an app's panel sends its backend (a file
+                                                 # given a page, as base64 in JSON: the Browser takes up to 22 MB)
+IN_PATH = re.compile(r"^w/([^/]+)/([0-9a-f]{16})(?:/(.*))?$")
+LOOPBACK = frozenset({"127.0.0.1", "::1", "localhost"})   # a page on the host's own machine (App.request's `_here`)
+SDK = os.path.join(os.path.dirname(os.path.abspath(app_kit.__file__)), "js", "app.js")
 
 
 def _failed(exc: AppError) -> Response:
@@ -65,9 +81,14 @@ def _need(body: dict, *keys: str) -> list:
 @router.get("/api/apps", dependencies=[Depends(local_only)])
 def apps_listed(srv: Parts, gatherer: str = "") -> Response:
     """The apps found (each its manifest, its panel's origin), those whose manifest can't be read (`broken`), and --
-    for gatherer G -- its open instances and the agents attached to each."""
+    for gatherer G -- its open instances, the agents attached to each, and its tasks (tasks.py: which an app is in, read
+    with them), with when they were read (`now`, as the home's: the page takes no tasks read before those it has)."""
     try:
-        return answer(_host(srv).listed(gatherer or None))
+        got = _host(srv).listed(gatherer or None)
+        if not gatherer:
+            return answer(got)
+        now = time.time()                                     # (taken before they are read: no later than they are)
+        return answer({**got, "tasks": tasks.of(gatherer), "now": now})
     except AppError as exc:
         return _failed(exc)
 
@@ -75,12 +96,14 @@ def apps_listed(srv: Parts, gatherer: str = "") -> Response:
 @router.post("/api/apps/open")
 def apps_open(srv: Parts, body: Body) -> Response:
     """The app's instance for the gatherer (and folder, for an app with one per folder or checkout): the open one, or
-    a new one. With `channel`, that agent attached to it."""
+    a new one. With `channel`, that agent attached to it -- the app, in no task, put in the agent's (task_links.py's
+    `link`)."""
     try:
         name, gatherer = _need(body, "app", "gatherer")
         h = _host(srv)
         i = h.open(name, gatherer, body.get("folder") or None, body.get("args") or {})
-        if body.get("channel"):
+        if body.get("channel"):                                # its task first: whoever hears of the attaching
+            task_links.link(gatherer, i.id, body["channel"])   # finds it in it
             h.attach(gatherer, i.id, body["channel"])
         return answer(i.to_dict())
     except AppError as exc:
@@ -89,10 +112,23 @@ def apps_open(srv: Parts, body: Body) -> Response:
 
 @router.post("/api/apps/close")
 def apps_close(srv: Parts, body: Body) -> Response:
-    """The instance closed: its agents detached, its backend told."""
+    """The instance closed: its agents detached, its backend told; out of its task."""
     try:
         gatherer, instance = _need(body, "gatherer", "instance")
         _host(srv).close_instance(gatherer, instance)
+        task_links.closed(gatherer, instance)
+        return answer({})
+    except AppError as exc:
+        return _failed(exc)
+
+
+@router.post("/api/apps/sleep")
+def apps_sleep(srv: Parts, body: Body) -> Response:
+    """The instance put to sleep, its task closed (app_host.py's `sleep_instance`): what runs for it let go of, the
+    instance kept open, in its task."""
+    try:
+        gatherer, instance = _need(body, "gatherer", "instance")
+        _host(srv).sleep_instance(gatherer, instance)
         return answer({})
     except AppError as exc:
         return _failed(exc)
@@ -100,9 +136,12 @@ def apps_close(srv: Parts, body: Body) -> Response:
 
 @router.post("/api/apps/attach")
 def apps_attach(srv: Parts, body: Body) -> Response:
-    """An agent (its channel) attached to the instance."""
+    """An agent (its channel) attached to the instance by the reader: put in the app's task, so attached to its other
+    apps too (task_links.py's `link`, `move`) -- the app in none, the app put in the agent's."""
     try:
         gatherer, instance, channel = _need(body, "gatherer", "instance", "channel")
+        _host(srv).instance(gatherer, instance)
+        task_links.link(gatherer, instance, channel, move=True)   # its task first, as `apps_open`
         _host(srv).attach(gatherer, instance, channel)
         return answer({})
     except AppError as exc:
@@ -111,10 +150,12 @@ def apps_attach(srv: Parts, body: Body) -> Response:
 
 @router.post("/api/apps/detach")
 def apps_detach(srv: Parts, body: Body) -> Response:
-    """An agent detached from the instance."""
+    """An agent detached from the instance by the reader: in the app's task, taken out of it (task_links.py's
+    `unlink`), so detached from its other apps too."""
     try:
         gatherer, instance, channel = _need(body, "gatherer", "instance", "channel")
-        _host(srv).detach(gatherer, instance, channel)
+        _host(srv).instance(gatherer, instance)
+        task_links.unlink(gatherer, instance, channel)
         return answer({})
     except AppError as exc:
         return _failed(exc)
@@ -140,6 +181,34 @@ def apps_insert(srv: Parts, body: Body) -> Response:
         name, gatherer, instance = _need(body, "app", "gatherer", "instance")
         h = _host(srv)
         h.insert(name, h.instance(gatherer, instance, name), body.get("events"), body.get("channel") or None)
+        return answer({})
+    except AppError as exc:
+        return _failed(exc)
+
+
+@router.post("/api/apps/notify")
+def apps_notify(srv: Parts, body: Body) -> Response:
+    """A notification the app's panel sends the user (app_kit's Host.notify), checked as its backend's is -> {id}."""
+    try:
+        name, gatherer, instance = _need(body, "app", "gatherer", "instance")
+        h = _host(srv)
+        return answer({"id": h.notify(name, h.instance(gatherer, instance, name), body.get("title"), body.get("text"),
+                                      body.get("key"), body.get("show") or ("ag",), body.get("where"))})
+    except AppError as exc:
+        return _failed(exc)
+
+
+@router.post("/api/apps/notices/settle")
+def apps_notice_settle(srv: Parts, body: Body) -> Response:
+    """An instance's open notification (`which`: its id, or its key) settled: `by` "user", dismissed from the list or a
+    pop-up; "app", cleared by its panel (`app` then names it, and it may clear only its own)."""
+    try:
+        gatherer, instance, which = _need(body, "gatherer", "instance", "which")
+        by = "app" if body.get("by") == "app" else "user"
+        name = body.get("app") if by == "app" else None
+        if by == "app" and not (isinstance(name, str) and name):
+            raise AppError("app: required")
+        _host(srv).settle_notice(gatherer, instance, which, by=by, name=name)
         return answer({})
     except AppError as exc:
         return _failed(exc)
@@ -182,9 +251,11 @@ async def apps_mcp(srv: Parts, actor: str, request: Request) -> Response:
             row = tool_gateway.row_of(rows, actor)
         except AppError as exc:
             return 404, {"jsonrpc": "2.0", "id": None, "error": {"code": -32001, "message": str(exc)}}
-        return mcp.handle(raw, tool_gateway.tools(row["gatherer"]),
+        channels, head = tool_gateway.channels_of(row), tool_gateway.lead(row)   # a gatherer agent: every app's
+        return mcp.handle(raw, tool_gateway.tools(row["gatherer"], channels, head),
                           lambda name, args: tool_gateway.call(srv.sessions.list(), actor, name, args),
-                          tool_gateway.NAME, tool_gateway.endpoint(actor), tool_gateway.instructions(row["gatherer"]))
+                          tool_gateway.NAME, tool_gateway.endpoint(actor),
+                          tool_gateway.instructions(row["gatherer"], channels=channels, head=head))
     status, got = await anyio.to_thread.run_sync(serve)
     return answer(got, status) if got is not None else Response(status_code=status)
 
@@ -198,6 +269,102 @@ def apps_agent(srv: Parts, body: Body) -> Response:
         return answer(tool_gateway.listed(srv.sessions.list(), actor))
     except AppError as exc:
         return _failed(exc)
+
+
+@router.get("/apps/mark/{name}.svg")
+def apps_mark(srv: Parts, name: str) -> Response:
+    """An app's mark (its manifest's `mark`), from the dashboard's own origin: the badge on an agent it started."""
+    h = getattr(srv, "app_host", None)
+    hosted = h.apps.get(name) if h is not None else None
+    m = hosted.manifest if hosted is not None else None
+    if m is None or not m.mark or not m.folder:
+        return not_found()
+    try:
+        with open(os.path.join(m.folder, m.mark), "rb") as fh:
+            body = fh.read()
+    except OSError:
+        return not_found()
+    return Response(body, 200, media_type="image/svg+xml", headers={"cache-control": "max-age=300",
+                                                                     "content-security-policy": "script-src 'none'"})
+
+
+@router.websocket("/api/desktop")
+async def desktop_link(ws: WebSocket) -> None:
+    """The ag desktop app's link (desktop/DESIGN.md, "The app link"; desktop.py): one WebSocket the desktop app opens to
+    its dashboard, over which it plays the browser for the native pages of the apps that ask `native_view` -- the
+    Chrome DevTools Protocol, each message JSON text, as Chrome's own connection carries them, each tagged with its app
+    ("app": app_host.py's `native_link`) -- until either side closes. The desktop app opens no port of its own: nothing
+    connects to it. Only the desktop app may use it: its first message is the home's token (desktop.py's `app_token`),
+    which it reads from the home and no web page can; and a page's socket always says where the page is (Origin),
+    where the desktop app's says nothing."""
+    srv = ws.app.state.server
+    h = getattr(srv, "app_host", None) if srv is not None else None
+    if h is None or ws.headers.get("origin") or not named_here(ws.headers.get("host"), srv):
+        await ws.close(code=1008)
+        return
+    await ws.accept()
+    try:
+        token = await asyncio.wait_for(ws.receive_text(), DESKTOP_FIRST_WAIT)
+    except (asyncio.TimeoutError, WebSocketDisconnect, KeyError):
+        await _close_socket(ws)
+        return
+    if not hmac.compare_digest(token.encode("utf-8"), desktop.app_token().encode("utf-8")):
+        await _close_socket(ws, 1008)
+        return
+    loop = asyncio.get_running_loop()
+    out: "asyncio.Queue" = asyncio.Queue()       # to the desktop app, from any thread: `send`; None, `close`
+    got = await anyio.to_thread.run_sync(h.native_link, lambda text: loop.call_soon_threadsafe(out.put_nowait, text),
+                                         lambda: loop.call_soon_threadsafe(out.put_nowait, None))
+
+    async def to_app() -> None:
+        while True:
+            text = await out.get()
+            if text is None:
+                break
+            await ws.send_text(text)
+        await _close_socket(ws)
+
+    sending = asyncio.create_task(to_app())
+    try:
+        while True:
+            got(await ws.receive_text())
+    except (WebSocketDisconnect, KeyError, RuntimeError):
+        pass
+    finally:
+        got(None)                                # the link gone: the apps' native pages with it (paused)
+        sending.cancel()
+
+
+async def _close_socket(ws: WebSocket, code: int = 1000) -> None:
+    try:
+        await ws.close(code=code)
+    except Exception:                            # noqa: BLE001 - closed already
+        pass
+
+
+@router.post("/api/apps/start")
+def apps_start(srv: Parts, body: Body) -> Response:
+    """{app, gatherer, cwd, harness?, model?}: a new instance of an app that starts an agent of its own ([agent] start),
+    and a new actor there attached to it (app_agents.py) -> {instance, session}."""
+    try:
+        app, gatherer = _need(body, "app", "gatherer")
+        got, inst = app_agents.start(srv.sessions, _host(srv), str(app), str(gatherer), str(body.get("cwd") or ""),
+                                     str(body.get("harness") or harness_kit.DEFAULT), str(body.get("model") or "") or None)
+    except AppError as exc:
+        return _failed(exc)
+    return answer({"instance": inst.to_dict(), "session": got})
+
+
+@router.post("/api/apps/guard")
+def apps_guard(srv: Parts, gatherer: str, channel: str, body: Body) -> Response:
+    """{path}: an agent of `gatherer` (`channel`) about to change `path` with its harness's own edit tools, asked by
+    its guard (app_guard.py) -> {deny: why} when an app it is attached to refuses it (an app asking `edit_guard`)."""
+    try:
+        (path,) = _need(body, "path")
+        why = _host(srv).guard(gatherer, channel, str(path))
+    except AppError:
+        why = None
+    return answer({"deny": why} if why else {})
 
 
 @router.post("/api/apps/agent/call")
@@ -214,12 +381,13 @@ def apps_agent_call(srv: Parts, body: Body) -> Response:
 
 @router.get("/api/apps/stream", dependencies=[Depends(local_only)])
 def apps_stream(srv: Parts, app: str = "", gatherer: str = "", instance: str = "", types: str = "",
-                after: int = 0) -> Response:
-    """Server-sent events, until the page goes: `event` (a new row of TYPES the app may read, after AFTER) and
-    `message` (what its backend tells its panels)."""
+                after: int = 0, messages: int = 1) -> Response:
+    """Server-sent events, until the page goes: `event` (a new row of TYPES the app may read, after AFTER) and --
+    unless MESSAGES is 0 -- `message` (what its backend tells its panels: one stream of a panel's takes them)."""
     try:
         h = _host(srv)
-        sub, leave = h.subscribe(app, h.instance(gatherer, instance, app), [t for t in types.split(",") if t], after)
+        sub, leave = h.subscribe(app, h.instance(gatherer, instance, app), [t for t in types.split(",") if t], after,
+                                 bool(messages))
     except AppError as exc:
         return _failed(exc)
     return queue_events(sub.queue, leave)
@@ -257,7 +425,8 @@ async def host_op(srv: Parts, name: str, op: str, request: Request) -> Response:
 
 class Origins:
     """Requests to an app's origin (<name>.localhost) answered here, never by the dashboard's routes: its panel's
-    files, and its backend's /api/. Every other request passes on."""
+    files, and its backend's /api/ -- its instance named by the query (gatherer, instance) or the path (IN_PATH).
+    Every other request passes on."""
 
     def __init__(self, app):
         self.app = app
@@ -281,19 +450,40 @@ class Origins:
         if path == "/api" or path.startswith("/api/"):
             if method != "GET" and headers.get("origin") != origin:
                 return await send_plain(403, b"only the app's own panel may do that", scope, receive, send)
-            body = await _read_body(receive)
+            try:
+                body = await _read_body(receive)
+            except _TooLarge:
+                return await send_plain(413, b"too large a request", scope, receive, send)
             query = dict(parse_qsl((scope.get("query_string") or b"").decode("latin-1")))
+            client = scope.get("client") or ("", 0)
+            query["_here"] = "1" if client[0] in LOOPBACK else "0"     # the host's own: never the page's (App.request)
+            rest = path[len("/api/"):]
+            at = IN_PATH.match(rest)              # /api/w/<gatherer>/<instance>/...: what a URL with no query names
+            if at:
+                query = {**query, "gatherer": unquote(at.group(1)), "instance": at.group(2)}
+                rest = at.group(3) or ""
             try:
                 inst = h.instance(query.get("gatherer", ""), query.get("instance", ""), hosted.manifest.name) \
                     if query.get("instance") else None
-                r = await anyio.to_thread.run_sync(h.request, hosted.manifest.name, inst, method,
-                                                   path[len("/api/"):], query, body)
+                r = await anyio.to_thread.run_sync(h.request, hosted.manifest.name, inst, method, rest, query, body)
             except AppError as exc:
                 return await _failed(exc)(scope, receive, send)
-            return await Response(r.body, r.status, headers={**r.headers, **_framed(srv)})(scope, receive, send)
+            if r.events is not None:                     # server-sent events (Response.stream), as they come
+                return await _streamed(*r.events)(scope, receive, send)
+            if r.file is not None:                       # a file on disk, its ranges as asked (Response.file_at)
+                f = r.file
+                return await FileResponse(f["path"], media_type=f["media_type"], filename=f.get("filename") or None,
+                                          content_disposition_type="attachment" if f.get("download") else "inline",
+                                          headers=_with_framed(r.headers, srv))(scope, receive, send)
+            return await Response(r.body, r.status, headers=_with_framed(r.headers, srv))(scope, receive, send)
         if method != "GET":
             return await send_plain(405, b"its panel's files are read only", scope, receive, send)
-        found = _panel_file(hosted.manifest, path)
+        if path.startswith(LIB_PATH):                # the libraries the dashboard shares with apps (libs.py)
+            got = libs.lib_file(path[len(LIB_PATH):])
+            if got is None:
+                return await send_plain(404, b"not found", scope, receive, send)
+            return await Response(got[0], 200, media_type=got[1], headers=_framed(srv))(scope, receive, send)
+        found = SDK if path == SDK_PATH else _panel_file(hosted.manifest, path)
         if found is None:
             return await send_plain(404, b"not found", scope, receive, send)
         kind = mimetypes.guess_type(found)[0] or "application/octet-stream"
@@ -303,10 +493,34 @@ class Origins:
 
 
 def _framed(srv) -> dict:
-    """An app's answers framed by the dashboard's own page only, and read as what they say they are."""
+    """An app's answers framed by the dashboard's own page, or by its own (its panel's frames: a PDF's viewer, a page
+    it previews), and read as what they say they are."""
     port = srv.server_port if srv is not None else 0
-    return {"content-security-policy": f"frame-ancestors http://127.0.0.1:{port} http://localhost:{port}",
+    return {"content-security-policy": f"frame-ancestors 'self' http://127.0.0.1:{port} http://localhost:{port}",
             "x-content-type-options": "nosniff", "cache-control": "no-store"}
+
+
+def _with_framed(headers: dict, srv) -> dict:
+    """The app's own headers with the host's: one Content-Security-Policy, its own directives (a page it serves
+    sandboxed) and the host's `frame-ancestors` together."""
+    out = {k.lower(): v for k, v in (headers or {}).items()}
+    framed = _framed(srv)
+    csp = "; ".join(p for p in (out.get("content-security-policy"), framed.pop("content-security-policy")) if p)
+    return {**out, **framed, "content-security-policy": csp}
+
+
+def _streamed(take, close) -> Events:
+    """An app's server-sent events (app_kit's Response.stream): `take` asked in a thread till it says the end."""
+    async def events():
+        while True:
+            got = await blocking(take, livedocs.GONE_CHECK)
+            if got is None:
+                return
+            if not got:
+                yield KEEPALIVE_EVENT
+            for name, value in got:
+                yield event(name, value)
+    return Events(events(), close=close)
 
 
 def _panel_file(manifest, path: str) -> Optional[str]:
@@ -322,11 +536,20 @@ def _panel_file(manifest, path: str) -> Optional[str]:
     return full
 
 
+class _TooLarge(Exception):
+    pass
+
+
 async def _read_body(receive) -> bytes:
-    chunks, more = [], True
+    """A request's body, at most APP_MAX_BODY bytes (more: _TooLarge, answered 413)."""
+    chunks, more, size = [], True, 0
     while more:
         msg = await receive()
-        chunks.append(msg.get("body", b""))
+        chunk = msg.get("body", b"")
+        size += len(chunk)
+        if size > APP_MAX_BODY:
+            raise _TooLarge()
+        chunks.append(chunk)
         more = msg.get("more_body", False)
     return b"".join(chunks)
 

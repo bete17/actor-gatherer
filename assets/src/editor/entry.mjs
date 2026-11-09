@@ -1,8 +1,9 @@
-// What the dashboard's Editor panel (frontend/src/legacy/18-editor.js) uses, as `window.agEditor`: CodeMirror 6 to edit
-// in, Yjs to share each file between everyone editing it (y-codemirror.next binds the two, with each other
-// editor's cursor and selection), and a language for a file's name, coloured with the page's own classes (LaTeX and
-// BibTeX are latex.mjs's).
-// Bundled by build.mjs into ag_dashboard/vendor/editor.js, which the page loads the first time it opens the view.
+// What the Editor app's panel (ag_apps/editor/panel/) uses, as `window.agEditor`: CodeMirror 6 to edit in, Yjs to share
+// each file between everyone editing it (y-codemirror.next binds the two, with each other editor's cursor and
+// selection), and a language for a file's name, coloured with the page's own classes (LaTeX and BibTeX are
+// latex.mjs's); and, as `ui`, the dashboard's own highlighter (frontend/src/core/ui/highlight/), which colours an
+// actor's changes to a file as the dashboard's Chat colours them.
+// Bundled by build.mjs into ag_apps/editor/panel/vendor/editor.js, which the panel loads the first time it opens a file.
 import { basicSetup } from "codemirror";
 import { EditorState, StateEffect, StateField, Compartment, RangeSet } from "@codemirror/state";
 import { EditorView, Decoration, WidgetType, keymap } from "@codemirror/view";
@@ -28,6 +29,7 @@ import { latex, bibtex, latexStyles } from "./latex.mjs";
 import * as Y from "yjs";
 import { yCollab, yUndoManagerKeymap } from "y-codemirror.next";
 import { Awareness, encodeAwarenessUpdate, applyAwarenessUpdate, removeAwarenessStates } from "y-protocols/awareness";
+import { ansiHtml, guessWeb, hlLines, hlPart, langOfPath, tildePath } from "../../../frontend/src/core/ui/highlight/index.ts";
 
 // The page's code colours (its .hl-* classes, the Chat view's), by what the parser says each piece is.
 const highlight = syntaxHighlighting(tagHighlighter([
@@ -71,4 +73,5 @@ window.agEditor = {
   basicSetup, EditorState, StateEffect, StateField, Compartment, RangeSet, EditorView, Decoration, WidgetType, keymap, indentWithTab,
   highlight, language, Y, yCollab, yUndoManagerKeymap,
   Awareness, encodeAwarenessUpdate, applyAwarenessUpdate, removeAwarenessStates,
+  ui: { ansiHtml, guessWeb, hlLines, hlPart, langOfPath, tildePath },
 };

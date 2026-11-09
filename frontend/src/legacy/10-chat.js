@@ -33,10 +33,7 @@ function chatCard(info) {
   const heading = [...(tools.length ? [el("div", { class: "chat-tools" }, ...tools)] : []),
     ...[viewSwitcher(view)].filter(Boolean),
     el("div", { class: "side-btns" },
-      SNAPSHOT ? null : el("button", { type: "button", class: "details-btn", "aria-expanded": edShown() ? "true" : "false", "aria-label": "Editor",
-        title: "Editor, at this actor's work -- the folder holding the files it changed lately, else its working directory: files edited live, above the actors' views -- with everyone who has a file open, and what the actors write to them as it lands. Closed by its ×",
-        onclick: edAtActor }, strokeIcon(ICONS.code, 16)),
-      SNAPSHOT || !edShown() ? null : el("button", { type: "button", class: "details-btn", "aria-label": "Minimize the chat", title: MIN_TIP,
+      SNAPSHOT || !topShown() ? null : el("button", { type: "button", class: "details-btn", "aria-label": "Minimize the chat", title: MIN_TIP,
         onclick: () => setChatMin(true) }, strokeIcon(ICONS.minimize, 16)),
       el("button", { type: "button", class: "details-btn", "aria-expanded": state.details ? "true" : "false", "aria-label": "Details",
         title: "Details: what ag saw and did for this actor (its context, calls, history and builds), and the history's other views",
@@ -207,12 +204,8 @@ function askingNote(info, answerable = true) {
     ...((harnessInfo(ask.harness || (state.home || {}).harness_default) || {}).ask_says || {}) };
   const qs = ask.questions || [];
   const s = info.session || {};
-  // the dashboard's terminal, and nothing typed into it since it asked: answered from here -- not where its terminal
-  // was opened again since and its harness does not ask again (`asks_shown_again`): no dialog there to type into
-  const touched = !!(s.terminal && s.typed && s.typed >= ask.at);
-  const reopened = !!(s.terminal && s.since && ask.at && s.since > ask.at
-    && (harnessInfo(ask.harness || info.harness) || {}).asks_shown_again === false);
-  const here = answerable && !SNAPSHOT && !!s.terminal && !touched && !reopened;
+  const { touched, reopened, here: answersHere } = askWhere(info, ask);
+  const here = answerable && answersHere;
   const key = askKey(ask), perm = ask.kind === "permission", dialog = ask.kind === "dialog";
   const sent = info.answer && info.answer.call === key ? info.answer : null;
   const who = info.harness ? harnessName(info.harness) : "The agent";
@@ -336,6 +329,16 @@ const answerDrafts = new Map(), lateTimers = new Set(), answersSeen = new Set();
 const ANSWER_LATE = 12;                              // seconds after an answer is sent before it counts as lost
 // What an answer names an ask by (data.py's `id`): a question's or a plan's call, a permission's own key.
 const askKey = (ask) => ask.id || ask.call;
+// Where what an actor asks is answered: the dashboard's terminal, and nothing typed into it since it asked -- answered
+// from the page (`here`) -- not where its terminal was opened again since and its harness does not ask again
+// (`asks_shown_again`): no dialog there to type into. A dialog no hook reported: in its terminal only.
+function askWhere(info, ask) {
+  const s = info.session || {};
+  const touched = !!(s.terminal && s.typed && s.typed >= ask.at);
+  const reopened = !!(s.terminal && s.since && ask.at && s.since > ask.at
+    && (harnessInfo(ask.harness || info.harness) || {}).asks_shown_again === false);
+  return { touched, reopened, here: !SNAPSHOT && !!s.terminal && !touched && !reopened };
+}
 // What a permission is for, after "asks to": by the call's shape, as its harness reads it (data.py's `view`).
 const PERMISSION_VERBS = { shell: "run a command", edit: "edit a file", write: "write a file", patch: "change files",
   read: "read a file", search: "search files", web: "use the web", agent: "start an agent", skill: "use a skill" };

@@ -3,7 +3,7 @@
     App         what an app's backend subclasses: open and close instances, answer tool calls and its panel's own
                 requests, hear of agents attached. Every method has a default (`call`'s refuses every tool)
     Host        what the host gives an app: insert and read events, the agents of an instance, a message to its
-                panels, the app's own folder
+                panels, the app's own folder, a notification to the user
     Instance    one opened copy of an app: the host makes its id; the app may set its title and data
     Caller      who made a tool call: an agent (its channel), or the user through the panel
     ToolResult  a tool call's answer, as MCP's `tools/call` gives one
@@ -18,9 +18,12 @@ import base64
 import json
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, List, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from .manifest import Manifest
+
+if TYPE_CHECKING:
+    from .docs import Docs  # noqa: F401
 
 
 class AppError(Exception):
@@ -55,11 +58,12 @@ class Instance:
 
 @dataclass(frozen=True)
 class Caller:
-    """Who made a tool call: an agent, by its channel (and its gatherer and harness), or the user through the app's
-    panel (`channel` None)."""
+    """Who made a tool call: an agent, by its channel (and its gatherer, harness, and the folder it works in), or the
+    user through the app's panel (`channel` None)."""
     channel: Optional[str] = None
     gatherer: Optional[str] = None
     harness: Optional[str] = None
+    folder: Optional[str] = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -67,7 +71,8 @@ class Caller:
     @classmethod
     def from_dict(cls, d: Optional[dict]) -> "Caller":
         d = d or {}
-        return cls(channel=d.get("channel"), gatherer=d.get("gatherer"), harness=d.get("harness"))
+        return cls(channel=d.get("channel"), gatherer=d.get("gatherer"), harness=d.get("harness"),
+                   folder=d.get("folder"))
 
 
 @dataclass
@@ -104,14 +109,36 @@ class ToolResult:
 
 @dataclass
 class Response:
-    """The backend's answer to a request its panel made (`App.request`)."""
+    """The backend's answer to a request its panel made (`App.request`): a body; or, `events`, server-sent events
+    (`Response.stream`); or, `file`, a file on disk served as it is, in the ranges asked for (`Response.file`: a video
+    the page seeks in, a large PDF) -- those two an app run inside the dashboard only (an app in its own process answers
+    with a body)."""
     status: int = 200
     body: bytes = b""
     headers: Dict[str, str] = field(default_factory=dict)
+    events: Optional[Tuple[Callable[[float], Optional[List[Tuple[str, Any]]]], Optional[Callable[[], None]]]] = None
+    file: Optional[Dict[str, Any]] = None
 
     @classmethod
     def json(cls, value: Any, status: int = 200) -> "Response":
         return cls(status, json.dumps(value).encode(), {"Content-Type": "application/json"})
+
+    @classmethod
+    def stream(cls, take: Callable[[float], Optional[List[Tuple[str, Any]]]],
+               close: Optional[Callable[[], None]] = None) -> "Response":
+        """Server-sent events to the panel (its EventSource), until `take` says the stream is over: `take(wait)`,
+        called again and again in a thread of its own, returns within `wait` seconds the events to send, each
+        (name, JSON value) -- [] none yet (a keepalive goes), None the end. `close()` is called once, when it is over,
+        however (the panel gone, the end, the server stopping): what the stream held let go."""
+        return cls(200, b"", {"Content-Type": "text/event-stream"}, (take, close))
+
+    @classmethod
+    def file_at(cls, path: str, media_type: str, filename: str = "", download: bool = False,
+                headers: Optional[Dict[str, str]] = None) -> "Response":
+        """The file at `path` (absolute), as `media_type`, inline -- or, `download`, to be saved as `filename` -- its
+        ranges served as they are asked for."""
+        return cls(200, b"", dict(headers or {}), None, {"path": path, "media_type": media_type,
+                                                        "filename": filename, "download": download})
 
 
 class Host(ABC):
@@ -149,6 +176,28 @@ class Host(ABC):
         """The app's open instances, in every gatherer."""
         return []
 
+    def panels(self, instance: Instance) -> int:
+        """How many panels of the instance are open now (a server it runs, left with none, may be stopped)."""
+        return 0
+
+    def docs(self) -> "Docs":
+        """The host's files shared live (app_kit.docs), for an app whose manifest asks `docs`, run in the host's
+        process; AppError otherwise."""
+        raise AppError("the host's shared files are not given to this app", 403)
+
+    def notify(self, instance: Instance, title: str, text: str = "", key: Optional[str] = None,
+               show: Sequence[str] = ("ag",), where: Any = None) -> str:
+        """A notification to the user, for an app whose manifest asks `notify` (manifest.NOTICE_TYPES): `title`, a line
+        of `text`; shown in the dashboard's list until the user looks at the instance, and as a pop-up there ("ag")
+        and, with "system", on the computer too; `where` (JSON) handed back to the panel as the user clicks it
+        (the SDK's `ag.notices.onOpen`). A newer one of the same `key` takes the open one's place. -> its id."""
+        raise AppError("this host takes no notifications", 403)
+
+    def clear_notice(self, instance: Instance, which: str) -> None:
+        """The instance's open notification `which` -- its id, or every one of that key -- no longer asking for the
+        user."""
+        raise AppError("this host takes no notifications", 403)
+
 
 class App:
     """An app's backend. The host sets `manifest` and calls `start` once, before anything else; then, from any thread,
@@ -171,6 +220,10 @@ class App:
     def close(self, instance: Instance) -> None:
         """The instance closed: by the user, or its gatherer gone."""
 
+    def sleep(self, instance: Instance) -> None:
+        """The instance put to sleep -- its task closed: it stays open, and what runs for it (a process, a page) is let
+        go of, its state kept to come back as it was once it is used again. Nothing runs for it: nothing to do."""
+
     def call(self, instance: Instance, tool: str, args: dict, caller: Caller) -> ToolResult:
         """A call of one of its tools (its own name) handled by the backend, on `instance`, by `caller`. Raise
         AppError, or return ToolResult.error, to refuse it."""
@@ -179,7 +232,8 @@ class App:
     def request(self, instance: Optional[Instance], method: str, path: str, query: Dict[str, str],
                 body: bytes) -> Response:
         """A request the panel made of the backend: `path` is what follows /apps/<name>/api/. Its data that are not
-        events (a file's contents, a picture)."""
+        events (a file's contents, a picture). `query` holds the host's own `_here`: "1" when the page asking is on the
+        host's machine (a system dialog the app opens shows on that machine's screen), else "0"."""
         return Response(404, b"not found")
 
     def attached(self, instance: Instance, channel: str) -> None:
@@ -188,3 +242,17 @@ class App:
 
     def detached(self, instance: Instance, channel: str) -> None:
         """An agent was detached from the instance."""
+
+    def native(self, send: Callable[[str], None], close: Callable[[], None]) -> Optional[Callable[[Optional[str]], None]]:
+        """The ag desktop app connected (an app whose manifest asks `native_view`, run inside the dashboard): its link,
+        over which the app drives its native pages with the Chrome DevTools Protocol, the desktop app playing the
+        browser (desktop/DESIGN.md, "The app link"; the pages this app makes are its own, apart from another app's).
+        `send(text)` a message to it, `close()` the link ended. Returns what takes each message from it (None: the link
+        gone) -- or None, not taken."""
+        return None
+
+    def guard(self, instance: Instance, path: str, caller: Caller) -> Optional[str]:
+        """An agent attached to the instance is about to change `path` with its harness's own edit tools (an app whose
+        manifest asks `edit_guard`): why it must not -- the file is one the app has open, say, and the agent should use
+        the app's tools -- or None to let it."""
+        return None

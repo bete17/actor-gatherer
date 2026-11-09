@@ -403,7 +403,7 @@ Not covered yet:
 
 ## The Editor panel
 
-The Editor (editor.py, the page's "the Editor") opens from a pane's header above the panes: the actors' views are
+The Editor (since 2026-11-08 an app, ag_apps/editor/, over the dashboard's livedocs.py) opens from a pane's header above the panes: the actors' views are
 below it, shorter while it is open, and Cmd/Ctrl+click in the list opens more of them side by side. On its left, a
 folder's tree, any folder: the one above, one typed, or an actor's working directory. A file opens as a shared document
 (Yjs, kept by pycrdt on the dashboard's side): every page with the file open sees the others' edits and cursors as they
@@ -565,6 +565,9 @@ Not done yet:
 - **The bundle is 8.5 MB** in ag_dashboard/vendor/docwriter/: DocWriter's page 2.2 MB, pdf.js's viewer 6.3 MB.
 
 ## Browser
+
+(Since 2026-11-07 the Browser is an app, `ag_apps/browser/`: its panel above its actor, not a view of it; what the user
+does there is told its agent as the Browser's messages, not with the user's message. What follows is from before.)
 
 A Browser (browser.py) is an actor of its own, like DocWriter's: a gatherer's "+ more" drop-down, "Browser…" (Claude
 Code or Codex), starts one in the folder a new session there would use, and selecting it shows its view -- a Chrome tab

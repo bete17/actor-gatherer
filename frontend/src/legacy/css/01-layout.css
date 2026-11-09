@@ -47,13 +47,13 @@ aside h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; co
 .agent-group { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); padding: 6px 18px 2px 40px; }
 button.agent-group { display: block; width: 100%; text-align: left; background: none; border: 0; cursor: pointer; font-family: inherit; }
 button.agent-group:hover { color: var(--ink-2); }
-.agent { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 10px; text-align: left; border: 0; border-radius: 8px;
+.agent { display: grid; grid-template-columns: 10px minmax(0, 1fr) 28px; gap: 9px; text-align: left; border: 0; border-radius: 8px;
   background: none; padding: 8px 10px; margin: 2px 8px; width: calc(100% - 16px); cursor: pointer; color: var(--ink); }
 .agent:hover { background: var(--wash); }
 .agent[aria-current="true"] { background: var(--selected); }
-/* open in a pane other than the one in focus: the same, fainter */
-.agent[data-open="true"] { background: color-mix(in srgb, var(--selected) 45%, transparent); }
-.agent[data-open="true"]:hover { background: var(--selected); }
+/* open in a panel: a bar at its left edge -- every one open, the one selected too (it alone also filled, so the rows of a
+   task's actors, every one open in a pane, do not all look picked) */
+.agent:is([data-open="true"], [aria-current="true"]) { box-shadow: inset 3px 0 0 color-mix(in srgb, var(--s1) 60%, transparent); }
 .agent .logo { width: 28px; height: 28px; margin-top: 1px; display: block; }
 /* an actor's avatar, its harness's badge small at the corner: the avatar cut away around the badge, so
    whatever is behind the row (hovered, selected) shows between them */
@@ -88,21 +88,29 @@ button.agent-group:hover { color: var(--ink-2); }
 .gatherer-row .name-box { flex: 1 1 60%; min-width: 0; width: auto; margin: 4px 8px; font-size: 14px; }
 :is(.agent, .gatherer-row) .name-box::placeholder { color: var(--muted); font-weight: 400; }
 .agent .meta { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; margin-top: 4px; font-variant-numeric: tabular-nums; }
-.agent .meta .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--axis); flex: none; }
-.agent .meta .dot.building { background: var(--warning); } .agent .meta .dot.failed { background: var(--critical); }
-.agent .meta .dot.finished { background: var(--s1); }
+.agent .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--axis); flex: none; }
+.agent .dot.building { background: var(--warning); } .agent .dot.failed { background: var(--critical); }
+.agent .dot.finished { background: var(--s1); }
 /* its turn under way: the glyph turns, as Claude Code's does while it works */
-.agent .meta .dot.running { width: 9px; height: auto; border-radius: 0; background: none; color: var(--good); font-size: 12px; line-height: 1; text-align: center; }
-.agent .meta .dot.running::before { content: "✻"; animation: term-spin 1.2s steps(1) infinite; animation-delay: var(--spin-at, 0s); }
+.agent .dot.running { width: 9px; height: auto; border-radius: 0; background: none; color: var(--good); font-size: 12px; line-height: 1; text-align: center; }
+.agent .dot.running::before { content: "✻"; animation: term-spin 1.2s steps(1) infinite; animation-delay: var(--spin-at, 0s); }
 /* its turn waits on the user: a question asked, a plan to approve, in its terminal */
-.agent .meta .dot.asking, .status.asking i { background: var(--warning); box-shadow: 0 0 0 2px color-mix(in srgb, var(--warning) 35%, transparent); }
+.agent .dot.asking, .status.asking i { background: var(--warning); box-shadow: 0 0 0 2px color-mix(in srgb, var(--warning) 35%, transparent); }
 /* its turn stopped on an error: its call to the model failed, and it gave up */
-.agent .meta .dot.error, .status.error i { background: var(--critical); box-shadow: 0 0 0 2px color-mix(in srgb, var(--critical) 30%, transparent); }
+.agent .dot.error, .status.error i { background: var(--critical); box-shadow: 0 0 0 2px color-mix(in srgb, var(--critical) 30%, transparent); }
 /* its turn over, but something it started still runs: Running's colour, holding still */
-.agent .meta .dot.background, .status.background i { background: var(--good); }
+.agent .dot.background, .status.background i { background: var(--good); }
 /* what it runs in the background, under its facts: how many, and what they are for */
 .agent .bgline { font-size: 12px; color: var(--ink-2); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.agent .meta .dot.closed { background: none; box-shadow: inset 0 0 0 1.5px var(--axis); }
+.agent .dot.closed { background: none; box-shadow: inset 0 0 0 1.5px var(--axis); }
+/* an actor is a task too (05-agent-list.js's agentRow): its state at its left, on its name's line, its face at its right;
+   its state in a word on its meta line, as a task's line says it */
+.agent > .dot { justify-self: center; margin-top: 6px; }
+.agent > .dot.running { margin-top: 3px; }
+.agent .meta b { font-weight: 600; color: var(--ink-2); }
+.agent .meta b.asking { color: light-dark(#a15c00, #e0a42a); }
+.agent .meta b.error { color: var(--critical); }
+.agent .meta b.running { color: light-dark(#1b7a3a, #6fcf8a); }
 .hidden-list { border-top: 1px solid var(--grid); padding: 8px 0 4px; }
 .hidden-list > summary { margin: 0; padding: 4px 16px; font-size: 12px; color: var(--muted); list-style: none; }
 .hidden-list > summary::-webkit-details-marker { display: none; }

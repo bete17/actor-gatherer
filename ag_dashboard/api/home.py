@@ -1,11 +1,13 @@
 """The home -- every gatherer and its actors, as the list shows them -- and what the reader keeps of it: gatherers made,
 hidden, named; actors saved, named, seen, and kept in folders."""
 
+import time
+
 import harness_kit
 from fastapi import APIRouter
 from starlette.responses import Response
 
-from .. import folders, gatherer_folders, hiding, naming, saved, seen, sessions, titles
+from .. import folders, gatherer_folders, hiding, naming, saved, seen, sessions, task_links, tasks, titles
 from ..models import Home
 from .common import Body, Errors, Parts, answer
 
@@ -83,6 +85,38 @@ def folder(srv: Parts, body: Body) -> Response:
         raise ValueError("do what? One of new, rename, move, delete, file, close, reopen")
     srv.hub.ring(None, what="list")
     return answer({"folders": folders.stored(), **({"made": made} if made is not None else {}), **closing})
+
+
+@router.post("/api/tasks")
+def task(srv: Parts, body: Body) -> Response:
+    """{gatherer, do, ...}: the gatherer's tasks changed (tasks.py) -> {tasks: every gatherer's, now, task?, attached?}. An
+    item is an actor, by its channel, or an app's instance, "app:<its id>"; attachment follows (task_links.py): every
+    agent of a task attached to every app of it, one leaving detached from them.
+
+    add {to, items, name?} (the items put in the task the item `to` is in -- in none, one made of them all, called
+    `name`, none: named by what is in it -- each agent among them attached to the task's apps before its agent starts, so
+    it is given their tools as it starts: `attached`, {channel: [instance ids]}), out {items} (taken out of their
+    tasks), rename {id, to}. `channels` is `items`, as it was called before apps were items."""
+    g, do = str(body.get("gatherer") or ""), str(body.get("do") or "")
+    items = body.get("items", body.get("channels"))
+    if do in ("add", "out") and not isinstance(items, list):
+        raise ValueError("which actors or apps? `items`, a list")
+    got = {}
+    if do == "add":
+        new = [str(c) for c in items]
+        if any(task_links.coordinator(c) for c in [str(body.get("to") or ""), *new]):
+            raise ValueError("a gatherer's own agent is in no task")
+        tid, attached = task_links.change(g, lambda: tasks.add(g, str(body.get("to") or ""), new, body.get("name")))
+        got = {"task": tid, "attached": attached}
+    elif do == "out":
+        task_links.change(g, lambda: tasks.take_out(g, [str(c) for c in items]))
+    elif do == "rename":
+        tasks.rename(g, body.get("id"), str(body.get("to") or ""))
+        srv.hub.ring(None, what="list")
+    else:
+        raise ValueError("do what? One of add, out, rename")
+    now = time.time()
+    return answer({"tasks": tasks.stored(), "now": now, **got})
 
 
 @router.post("/api/gatherer-folders")

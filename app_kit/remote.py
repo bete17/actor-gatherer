@@ -16,9 +16,11 @@ each side POSTs JSON to the other:
     call     {instance, tool, args, caller}         attached  {instance} -> {channels}
              -> {content, isError}                  tell      {instance, message} -> {}
     request  {instance?, method, path, query,       instances {} -> {instances}
+                                                    panels    {instance} -> {panels}
               body (base64)} -> {status, headers,
               body (base64)}
     attached / detached  {instance, channel}
+    guard    {instance, path, caller} -> {refused}
     stop     {}
 
 A refusal is a 4xx with `{"error": "..."}`. Each side here: `launch` (the host starting an app, RemoteApp the app as
@@ -156,6 +158,9 @@ class RemoteApp(App):
     def close(self, instance: Instance) -> None:
         self._op("close", {"instance": instance.to_dict()})
 
+    def sleep(self, instance: Instance) -> None:
+        self._op("sleep", {"instance": instance.to_dict()})
+
     def call(self, instance: Instance, tool: str, args: dict, caller: Caller) -> ToolResult:
         return ToolResult.from_dict(self._op("call", {"instance": instance.to_dict(), "tool": tool, "args": args,
                                                        "caller": caller.to_dict()}))
@@ -173,6 +178,9 @@ class RemoteApp(App):
     def detached(self, instance: Instance, channel: str) -> None:
         self._op("detached", {"instance": instance.to_dict(), "channel": channel})
 
+    def guard(self, instance: Instance, path: str, caller: Caller) -> Optional[str]:
+        return self._op("guard", {"instance": instance.to_dict(), "path": path, "caller": caller.to_dict()}).get("refused")
+
 
 def host_ops(host: Host, instance_of: Callable[[dict], Instance]) -> Dict[str, Callable[[dict], dict]]:
     """The calls an app in its own process makes of the host, answered by `host`: what a host serves at AG_APP_HOST.
@@ -184,6 +192,10 @@ def host_ops(host: Host, instance_of: Callable[[dict], Instance]) -> Dict[str, C
         "attached": lambda b: {"channels": host.attached(instance_of(b["instance"]))},
         "tell": lambda b: host.tell_panel(instance_of(b["instance"]), dict(b["message"])) or {},
         "instances": lambda b: {"instances": [i.to_dict() for i in host.instances()]},
+        "panels": lambda b: {"panels": host.panels(instance_of(b["instance"]))},
+        "notify": lambda b: {"id": host.notify(instance_of(b["instance"]), b["title"], b.get("text") or "",
+                                               b.get("key"), b.get("show") or ("ag",), b.get("where"))},
+        "clear_notice": lambda b: host.clear_notice(instance_of(b["instance"]), b["which"]) or {},
     }
 
 
@@ -258,6 +270,18 @@ class RemoteHost(Host):
     def instances(self) -> List[Instance]:
         return [Instance.from_dict(d) for d in self._op("instances", {})["instances"]]
 
+    def panels(self, instance: Instance) -> int:
+        return int(self._op("panels", {"instance": instance.to_dict()})["panels"])
+
+    def notify(self, instance: Instance, title: str, text: str = "", key: Optional[str] = None,
+               show: Sequence[str] = ("ag",), where: Any = None) -> str:
+        return str(self._op("notify", {"instance": instance.to_dict(), "title": title, "text": text, "key": key,
+                                       "show": list(show) if not isinstance(show, str) else [show],
+                                       "where": where})["id"])
+
+    def clear_notice(self, instance: Instance, which: str) -> None:
+        self._op("clear_notice", {"instance": instance.to_dict(), "which": which})
+
 
 def app_ops(app: App) -> Dict[str, Callable[[dict], Optional[dict]]]:
     """The host's calls of an app, answered by `app`: what an app in its own process serves."""
@@ -271,11 +295,13 @@ def app_ops(app: App) -> Dict[str, Callable[[dict], Optional[dict]]]:
     return {
         "open": lambda b: {"instance": app.open(inst(b["instance"]), dict(b.get("args") or {})).to_dict()},
         "close": lambda b: app.close(inst(b["instance"])),
+        "sleep": lambda b: app.sleep(inst(b["instance"])),
         "call": lambda b: app.call(inst(b["instance"]), b["tool"], dict(b.get("args") or {}),
                                    Caller.from_dict(b.get("caller"))).to_dict(),
         "request": request,
         "attached": lambda b: app.attached(inst(b["instance"]), b["channel"]),
         "detached": lambda b: app.detached(inst(b["instance"]), b["channel"]),
+        "guard": lambda b: {"refused": app.guard(inst(b["instance"]), b["path"], Caller.from_dict(b.get("caller")))},
         "stop": lambda b: app.stop(),
     }
 

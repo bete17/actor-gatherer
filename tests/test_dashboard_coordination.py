@@ -20,8 +20,10 @@ import harness_kit  # noqa: E402
 import page_source  # noqa: E402
 from harness_kit.base import Box  # noqa: E402
 from ag.cli import actors as cli  # noqa: E402
-from ag_dashboard import branches, browser, coordination, data, docwriter, editor, files, folders, saved, server, sessions  # noqa: E402
+from ag_dashboard import branches, coordination, data, files, folders, livedocs, saved, server, sessions  # noqa: E402
 from test_dashboard_sessions import FAKE_AG, SessionsBase  # noqa: E402
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # the fake ag, also saying who the dashboard told it it is, and where the dashboard is
 FAKE = FAKE_AG.replace('"claudecode": os.environ.get("CLAUDECODE")}',
@@ -294,56 +296,74 @@ class CoordinationTest(CoordinationBase):
             self.assertEqual(named[1:], [("g", thread, "Parser")])   # once it has it; the one gone before: forgotten
             self.assertEqual(self.crew.unnamed, {})
 
-    def test_a_new_docwriter_is_a_docwriters_actor_on_the_folder_started_with_the_message(self):
-        if not docwriter.AVAILABLE:
-            self.skipTest("pycrdt is not installed")
-        dws = docwriter.DocWriters(self.s)
-        self.addCleanup(dws.close)
-        crew = coordination.Coordination(self.s, watch=False, apps={"docwriter": dws})
+    def docwriter_host(self, app: str = "docwriter"):
+        """A host that finds the apps ag comes with (DocWriter and the Browser among them), as the gateway's: what the
+        dashboard runs. `app`: the one the test needs (the Browser: its Chrome said to be there)."""
+        from ag_dashboard import app_host, tool_gateway
+        env = unittest.mock.patch.dict(os.environ, {app_host.PATH_ENV: os.path.join(ROOT, "ag_apps")})
+        env.start()
+        self.addCleanup(env.stop)
+        h = app_host.AppHost(0, write=lambda *a, **k: None)
+        self.addCleanup(h.close)
+        if app not in h.apps:
+            self.skipTest(f"{app} is not found (its panel not built, or pycrdt not installed)")
+        if app == "browser":
+            h.backend("browser")
+            avail = unittest.mock.patch.object(sys.modules["_ag_app_browser.core"], "available", lambda: True)
+            avail.start()
+            self.addCleanup(avail.stop)
+        saved = tool_gateway.HOST
+        tool_gateway.HOST = h
+        self.addCleanup(setattr, tool_gateway, "HOST", saved)
+        return h
+
+    def test_a_new_docwriter_is_an_actor_attached_to_a_new_one_on_the_folder_started_with_the_message(self):
+        from ag_dashboard import app_agents
+        h = self.docwriter_host()
         paper = os.path.join(self.tmp.name, "paper")
         os.makedirs(paper)
-        with unittest.mock.patch.object(dws, "name_actor") as name_actor:
-            got = crew.new(self.a, "Tighten the introduction.", cwd=paper, name="Paper", docwriter=True)
+        with unittest.mock.patch.object(app_agents, "_name") as name_it:
+            got = self.crew.new(self.a, "Tighten the introduction.", cwd=paper, name="Paper", docwriter=True)
         new = got["actor"]["channel"]
         row = next(r for r in self.s.list() if r["session_id"] == new)
-        key = json.loads(row["role"])["docwriter"]
-        self.assertEqual((row["cwd"], row["harness"], row["gatherer"]), (os.path.realpath(paper), "claude", "g"))
-        self.assertEqual(got["docwriter"], {"key": key, "root": os.path.realpath(paper)})
-        self.assertEqual(dws.config(key)["channel"], new)
+        role = json.loads(row["role"])
+        self.assertEqual((role["app"], row["cwd"], row["harness"], row["gatherer"]),
+                         ("docwriter", os.path.realpath(paper), "claude", "g"))
+        self.assertEqual(got["docwriter"], {"key": role["key"], "root": os.path.realpath(paper)})
+        self.assertEqual(h.agents_of(h.instance("g", role["key"])), [new])       # attached to its DocWriter
         self.assertTrue(got["actor"]["docwriter"])
-        name_actor.assert_called_once_with(key, "Paper")
+        self.assertEqual(name_it.call_args.args[1:], ("g", new, "Paper"))
         self.assertEqual(coordination.opened(self.until(lambda: self.messages(new))[0])["text"], "Tighten the introduction.")
         self.assertEqual(self.kept[-1][2][0]["payload"]["kind"], "new")
         with self.assertRaisesRegex(coordination.CoordinationError, "no DocWriter started: no directory"):
-            crew.new(self.a, "Write.", cwd=os.path.join(self.tmp.name, "nope"), docwriter=True)
-        with self.assertRaisesRegex(coordination.CoordinationError, "runs no DocWriter"):
-            self.crew.new(self.a, "Write.", cwd=paper, docwriter=True)
-        self.assertEqual(len(self.s.list()), 3)                 # neither started an actor
+            self.crew.new(self.a, "Write.", cwd=os.path.join(self.tmp.name, "nope"), docwriter=True)
+        self.assertEqual(len(self.s.list()), 3)                 # it started no actor
 
-    @unittest.skipUnless(browser.available(), "no Chrome here")
-    def test_a_new_browser_is_a_browsers_actor_in_the_folder_started_with_the_message(self):
-        bs = browser.Browsers(self.s)
-        self.addCleanup(bs.close)
-        crew = coordination.Coordination(self.s, watch=False, apps={"browser": bs})
+    def test_no_docwriter_where_the_dashboard_finds_none(self):
+        with self.assertRaisesRegex(coordination.CoordinationError, "runs no docwriter"):
+            self.crew.new(self.a, "Write.", cwd=self.work, docwriter=True)
+        self.assertEqual(len(self.s.list()), 2)
+
+    def test_a_new_browser_is_an_actor_attached_to_a_new_one_in_the_folder_started_with_the_message(self):
+        from ag_dashboard import app_agents
+        h = self.docwriter_host("browser")
         site = os.path.join(self.tmp.name, "site")
         os.makedirs(site)
-        with unittest.mock.patch.object(bs, "name_actor") as name_actor:
-            got = crew.new(self.a, "Find the conference's deadline.", cwd=site, name="Deadlines", browser=True)
+        with unittest.mock.patch.object(app_agents, "_name") as name_it:
+            got = self.crew.new(self.a, "Find the conference's deadline.", cwd=site, name="Deadlines", browser=True)
         new = got["actor"]["channel"]
         row = next(r for r in self.s.list() if r["session_id"] == new)
-        key = json.loads(row["role"])["browser"]
-        self.assertEqual((row["cwd"], row["harness"], row["gatherer"]), (os.path.realpath(site), "claude", "g"))
-        self.assertEqual(got["browser"], {"key": key, "root": os.path.realpath(site)})
-        self.assertEqual(bs.config(key)["channel"], new)
+        role = json.loads(row["role"])
+        self.assertEqual((role["app"], row["cwd"], row["harness"], row["gatherer"]), ("browser", os.path.realpath(site), "claude", "g"))
+        self.assertEqual(got["browser"], {"key": role["key"], "root": os.path.realpath(site)})
+        self.assertEqual(h.agents_of(h.instance("g", role["key"])), [new])
         self.assertTrue(got["actor"]["browser"])
-        name_actor.assert_called_once_with(key, "Deadlines")
+        self.assertEqual(name_it.call_args.args[1:], ("g", new, "Deadlines"))
         self.assertEqual(coordination.opened(self.until(lambda: self.messages(new))[0])["text"], "Find the conference's deadline.")
         with self.assertRaisesRegex(coordination.CoordinationError, "--browser alone"):
-            crew.new(self.a, "Go.", cwd=site, browser=True, docwriter=True)
+            self.crew.new(self.a, "Go.", cwd=site, browser=True, docwriter=True)
         with self.assertRaisesRegex(coordination.CoordinationError, "no Browser started: no directory"):
-            crew.new(self.a, "Go.", cwd=os.path.join(self.tmp.name, "nope"), browser=True)
-        with self.assertRaisesRegex(coordination.CoordinationError, "runs no Browser"):
-            self.crew.new(self.a, "Go.", cwd=site, browser=True)
+            self.crew.new(self.a, "Go.", cwd=os.path.join(self.tmp.name, "nope"), browser=True)
         self.assertEqual(len(self.s.list()), 3)                 # none of those started an actor
 
     def test_show_says_what_an_actor_was_asked_said_and_changed(self):
@@ -351,14 +371,14 @@ class CoordinationTest(CoordinationBase):
         self.assertEqual((got["asked"], got["said"], got["changed"]), ("write the docs", "The docs are written.", ["/w/README.md"]))
 
 
-@unittest.skipIf(not docwriter.AVAILABLE, "pycrdt is not installed")      # the Editor, which branches merge into
+@unittest.skipIf(not livedocs.AVAILABLE, "pycrdt is not installed")      # the Editor, which branches merge into
 class BranchTest(CoordinationBase):
     """`ag actors new --branch`: a new actor on a branch of its own, as the page's branch button starts one."""
 
     def setUp(self):
         super().setUp()
         self.repo = make_repo(os.path.join(self.tmp.name, "repo"))
-        self.editors = editor.Editors(poll=3600)
+        self.editors = livedocs.LiveDocs(poll=3600)
         self.addCleanup(self.editors.close)
         self.branched = branches.Branches(self.editors, self.s, poll=3600)     # looked at by hand: not here
         self.addCleanup(self.branched.close)
@@ -499,35 +519,35 @@ class CommandTest(CoordinationBase):
         self.assertEqual(json.loads(out)["you"], self.a)
 
     def test_the_gatherer_agent_starts_a_docwriter_from_its_shell(self):
-        if not docwriter.AVAILABLE:
-            self.skipTest("pycrdt is not installed")
+        from ag_dashboard import app_agents
+        CoordinationTest.docwriter_host(self)
         paper = os.path.join(self.tmp.name, "paper")
         os.makedirs(paper)
-        with unittest.mock.patch.object(docwriter.DocWriters, "_name", lambda *args: None):   # no ag to name it in
+        with unittest.mock.patch.object(app_agents, "_name", lambda *args: None):   # no ag to name it in
             code, out, err = self.run_cli("new", "--docwriter", "--cwd", paper, "Tighten", "the", "introduction.")
         self.assertEqual((code, err), (0, ""))
         self.assertIn("a DocWriter, with your message", out)
         new = re.match(r"Started actor (\S+) ", out).group(1)
         row = next(r for r in self.s.list() if r["session_id"] == new)
-        self.assertEqual((json.loads(row["role"]).keys(), row["cwd"]), ({"docwriter"}, os.path.realpath(paper)))
+        self.assertEqual((json.loads(row["role"])["app"], row["cwd"]), ("docwriter", os.path.realpath(paper)))
         self.assertEqual(coordination.opened(self.until(lambda: self.messages(new))[0])["text"], "Tighten the introduction.")
         code, out, _ = self.run_cli()
         self.assertIn(f"{new} (a DocWriter) -- idle, claude, in", out)
 
-    @unittest.skipUnless(browser.available(), "no Chrome here")
     def test_the_gatherer_agent_starts_a_browser_from_its_shell(self):
-        self.crew.apps["browser"] = self.httpd.apps["browser"]
-        with unittest.mock.patch.object(browser.Browsers, "name_actor"):   # no ag to name it in
+        from ag_dashboard import app_agents
+        CoordinationTest.docwriter_host(self, "browser")
+        with unittest.mock.patch.object(app_agents, "_name", lambda *args: None):   # no ag to name it in
             code, out, err = self.run_cli("new", "--browser", "--cwd", self.tmp.name, "Find", "the", "deadline.")
         self.assertEqual((code, err), (0, ""))
         self.assertIn("a Browser, with your message", out)
         new = re.match(r"Started actor (\S+) ", out).group(1)
         row = next(r for r in self.s.list() if r["session_id"] == new)
-        self.assertEqual((json.loads(row["role"]).keys(), row["cwd"]), ({"browser"}, os.path.realpath(self.tmp.name)))
+        self.assertEqual((json.loads(row["role"])["app"], row["cwd"]), ("browser", os.path.realpath(self.tmp.name)))
         code, out, _ = self.run_cli()
         self.assertIn(f"{new} (a Browser) -- idle, claude, in", out)
 
-    @unittest.skipIf(not docwriter.AVAILABLE, "pycrdt is not installed")
+    @unittest.skipIf(not livedocs.AVAILABLE, "pycrdt is not installed")
     def test_the_gatherer_agent_starts_an_actor_on_a_branch_from_its_shell(self):
         repo = make_repo(os.path.join(self.tmp.name, "repo"))
         code, out, err = self.run_cli("new", "--branch", "--approve", "--cwd", repo, "Try", "another", "layout.")

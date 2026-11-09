@@ -1,0 +1,763 @@
+[
+ {
+  "name": "snapshot",
+  "description": "The page as an outline of its elements -- role, name, value, state -- each with a ref to act on it by, and the page's address, title and tabs. With `ref`: that element's part of the page only.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "ref": {
+     "type": "string",
+     "description": "only this element and what is inside it"
+    }
+   }
+  },
+  "handled_by": "backend"
+ },
+ {
+  "name": "click",
+  "description": "Click an element.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "ref": {
+     "type": "string",
+     "description": "the element's ref: e12 from a snapshot, or p1 that the user picked"
+    },
+    "double": {
+     "type": "boolean"
+    },
+    "button": {
+     "type": "string",
+     "enum": [
+      "left",
+      "right",
+      "middle"
+     ]
+    },
+    "modifiers": {
+     "type": "array",
+     "items": {
+      "type": "string",
+      "enum": [
+       "Alt",
+       "Control",
+       "Meta",
+       "Shift"
+      ]
+     }
+    },
+    "expect": {
+     "type": "array",
+     "minItems": 1,
+     "maxItems": 20,
+     "description": "What this action relies on that the user could have changed: they may be using the page while you think and write this call. Each check runs in the page right before the action, which is done only if every one is true -- else you are told what is there now and what the user did. `js`: a JavaScript expression about the page as the user sees it (document, location, the elements -- not the page's own script variables), true if it is as this action needs; with `ref`, that element is `el`. It runs in the tab shown, or its `ref`'s; `tab` (its number, as `tabs` lists them): in that tab's page -- e.g. the one a `tabs` switch or close is for. E.g. [{\"ref\": \"e7\", \"js\": \"el.innerText.includes('Invoice #4411')\"}, {\"js\": \"location.pathname === '/invoices'\"}], or [{\"tab\": 3, \"js\": \"location.hostname === 'mail.google.com'\"}]",
+     "items": {
+      "type": "object",
+      "properties": {
+       "js": {
+        "type": "string"
+       },
+       "ref": {
+        "type": "string",
+        "description": "the element's ref: e12 from a snapshot, or p1 that the user picked"
+       },
+       "tab": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "the tab whose page it runs in"
+       }
+      },
+      "required": [
+       "js"
+      ]
+     }
+    }
+   },
+   "required": [
+    "ref",
+    "expect"
+   ]
+  },
+  "handled_by": "backend"
+ },
+ {
+  "name": "type",
+  "description": "Type text into a field (its text replaced, unless `append`); `submit`: press Enter after.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "ref": {
+     "type": "string",
+     "description": "the element's ref: e12 from a snapshot, or p1 that the user picked"
+    },
+    "text": {
+     "type": "string"
+    },
+    "submit": {
+     "type": "boolean"
+    },
+    "append": {
+     "type": "boolean"
+    },
+    "expect": {
+     "type": "array",
+     "minItems": 1,
+     "maxItems": 20,
+     "description": "What this action relies on that the user could have changed: they may be using the page while you think and write this call. Each check runs in the page right before the action, which is done only if every one is true -- else you are told what is there now and what the user did. `js`: a JavaScript expression about the page as the user sees it (document, location, the elements -- not the page's own script variables), true if it is as this action needs; with `ref`, that element is `el`. It runs in the tab shown, or its `ref`'s; `tab` (its number, as `tabs` lists them): in that tab's page -- e.g. the one a `tabs` switch or close is for. E.g. [{\"ref\": \"e7\", \"js\": \"el.innerText.includes('Invoice #4411')\"}, {\"js\": \"location.pathname === '/invoices'\"}], or [{\"tab\": 3, \"js\": \"location.hostname === 'mail.google.com'\"}]",
+     "items": {
+      "type": "object",
+      "properties": {
+       "js": {
+        "type": "string"
+       },
+       "ref": {
+        "type": "string",
+        "description": "the element's ref: e12 from a snapshot, or p1 that the user picked"
+       },
+       "tab": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "the tab whose page it runs in"
+       }
+      },
+      "required": [
+       "js"
+      ]
+     }
+    }
+   },
+   "required": [
+    "ref",
+    "text",
+    "expect"
+   ]
+  },
+  "handled_by": "backend"
+ },
+ {
+  "name": "press",
+  "description": "Press a key in the page, or in an element: Enter, Tab, Escape, Backspace, ArrowDown, PageDown, a letter, or a combination such as Meta+a or Shift+Tab.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "key": {
+     "type": "string"
+    },
+    "ref": {
+     "type": "string",
+     "description": "the element's ref: e12 from a snapshot, or p1 that the user picked"
+    },
+    "expect": {
+     "type": "array",
+     "minItems": 1,
+     "maxItems": 20,
+     "description": "What this action relies on that the user could have changed: they may be using the page while you think and write this call. Each check runs in the page right before the action, which is done only if every one is true -- else you are told what is there now and what the user did. `js`: a JavaScript expression about the page as the user sees it (document, location, the elements -- not the page's own script variables), true if it is as this action needs; with `ref`, that element is `el`. It runs in the tab shown, or its `ref`'s; `tab` (its number, as `tabs` lists them): in that tab's page -- e.g. the one a `tabs` switch or close is for. E.g. [{\"ref\": \"e7\", \"js\": \"el.innerText.includes('Invoice #4411')\"}, {\"js\": \"location.pathname === '/invoices'\"}], or [{\"tab\": 3, \"js\": \"location.hostname === 'mail.google.com'\"}]",
+     "items": {
+      "type": "object",
+      "properties": {
+       "js": {
+        "type": "string"
+       },
+       "ref": {
+        "type": "string",
+        "description": "the element's ref: e12 from a snapshot, or p1 that the user picked"
+       },
+       "tab": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "the tab whose page it runs in"
+       }
+      },
+      "required": [
+       "js"
+      ]
+     }
+    }
+   },
+   "required": [
+    "key",
+    "expect"
+   ]
+  },
+  "handled_by": "backend"
+ },
+ {
+  "name": "select",
+  "description": "Choose options of a <select> by their value or label.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "ref": {
+     "type": "string",
+     "description": "the element's ref: e12 from a snapshot, or p1 that the user picked"
+    },
+    "values": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "expect": {
+     "type": "array",
+     "minItems": 1,
+     "maxItems": 20,
+     "description": "What this action relies on that the user could have changed: they may be using the page while you think and write this call. Each check runs in the page right before the action, which is done only if every one is true -- else you are told what is there now and what the user did. `js`: a JavaScript expression about the page as the user sees it (document, location, the elements -- not the page's own script variables), true if it is as this action needs; with `ref`, that element is `el`. It runs in the tab shown, or its `ref`'s; `tab` (its number, as `tabs` lists them): in that tab's page -- e.g. the one a `tabs` switch or close is for. E.g. [{\"ref\": \"e7\", \"js\": \"el.innerText.includes('Invoice #4411')\"}, {\"js\": \"location.pathname === '/invoices'\"}], or [{\"tab\": 3, \"js\": \"location.hostname === 'mail.google.com'\"}]",
+     "items": {
+      "type": "object",
+      "properties": {
+       "js": {
+        "type": "string"
+       },
+       "ref": {
+        "type": "string",
+        "description": "the element's ref: e12 from a snapshot, or p1 that the user picked"
+       },
+       "tab": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "the tab whose page it runs in"
+       }
+      },
+      "required": [
+       "js"
+      ]
+     }
+    }
+   },
+   "required": [
+    "ref",
+    "values",
+    "expect"
+   ]
+  },
+  "handled_by": "backend"
+ },
+ {
+  "name": "hover",
+  "description": "Move the mouse over an element.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "ref": {
+     "type": "string",
+     "description": "the element's ref: e12 from a snapshot, or p1 that the user picked"
+    },
+    "expect": {
+     "type": "array",
+     "minItems": 1,
+     "maxItems": 20,
+     "description": "What this action relies on that the user could have changed: they may be using the page while you think and write this call. Each check runs in the page right before the action, which is done only if every one is true -- else you are told what is there now and what the user did. `js`: a JavaScript expression about the page as the user sees it (document, location, the elements -- not the page's own script variables), true if it is as this action needs; with `ref`, that element is `el`. It runs in the tab shown, or its `ref`'s; `tab` (its number, as `tabs` lists them): in that tab's page -- e.g. the one a `tabs` switch or close is for. E.g. [{\"ref\": \"e7\", \"js\": \"el.innerText.includes('Invoice #4411')\"}, {\"js\": \"location.pathname === '/invoices'\"}], or [{\"tab\": 3, \"js\": \"location.hostname === 'mail.google.com'\"}]",
+     "items": {
+      "type": "object",
+      "properties": {
+       "js": {
+        "type": "string"
+       },
+       "ref": {
+        "type": "string",
+        "description": "the element's ref: e12 from a snapshot, or p1 that the user picked"
+       },
+       "tab": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "the tab whose page it runs in"
+       }
+      },
+      "required": [
+       "js"
+      ]
+     }
+    }
+   },
+   "required": [
+    "ref",
+    "expect"
+   ]
+  },
+  "handled_by": "backend"
+ },
+ {
+  "name": "scroll",
+  "description": "Scroll the page, or an element, by about a screen (`amount`: pixels instead); or, with only `ref`, bring the element into view.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "direction": {
+     "type": "string",
+     "enum": [
+      "up",
+      "down",
+      "left",
+      "right"
+     ]
+    },
+    "amount": {
+     "type": "number"
+    },
+    "ref": {
+     "type": "string",
+     "description": "the element's ref: e12 from a snapshot, or p1 that the user picked"
+    },
+    "expect": {
+     "type": "array",
+     "minItems": 1,
+     "maxItems": 20,
+     "description": "What this action relies on that the user could have changed: they may be using the page while you think and write this call. Each check runs in the page right before the action, which is done only if every one is true -- else you are told what is there now and what the user did. `js`: a JavaScript expression about the page as the user sees it (document, location, the elements -- not the page's own script variables), true if it is as this action needs; with `ref`, that element is `el`. It runs in the tab shown, or its `ref`'s; `tab` (its number, as `tabs` lists them): in that tab's page -- e.g. the one a `tabs` switch or close is for. E.g. [{\"ref\": \"e7\", \"js\": \"el.innerText.includes('Invoice #4411')\"}, {\"js\": \"location.pathname === '/invoices'\"}], or [{\"tab\": 3, \"js\": \"location.hostname === 'mail.google.com'\"}]",
+     "items": {
+      "type": "object",
+      "properties": {
+       "js": {
+        "type": "string"
+       },
+       "ref": {
+        "type": "string",
+        "description": "the element's ref: e12 from a snapshot, or p1 that the user picked"
+       },
+       "tab": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "the tab whose page it runs in"
+       }
+      },
+      "required": [
+       "js"
+      ]
+     }
+    }
+   },
+   "required": [
+    "expect"
+   ]
+  },
+  "handled_by": "backend"
+ },
+ {
+  "name": "navigate",
+  "description": "Open a page in the tab shown: a URL, or a host (https://, or http:// for localhost).",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "url": {
+     "type": "string"
+    },
+    "expect": {
+     "type": "array",
+     "minItems": 1,
+     "maxItems": 20,
+     "description": "What this action relies on that the user could have changed: they may be using the page while you think and write this call. Each check runs in the page right before the action, which is done only if every one is true -- else you are told what is there now and what the user did. `js`: a JavaScript expression about the page as the user sees it (document, location, the elements -- not the page's own script variables), true if it is as this action needs; with `ref`, that element is `el`. It runs in the tab shown, or its `ref`'s; `tab` (its number, as `tabs` lists them): in that tab's page -- e.g. the one a `tabs` switch or close is for. E.g. [{\"ref\": \"e7\", \"js\": \"el.innerText.includes('Invoice #4411')\"}, {\"js\": \"location.pathname === '/invoices'\"}], or [{\"tab\": 3, \"js\": \"location.hostname === 'mail.google.com'\"}]",
+     "items": {
+      "type": "object",
+      "properties": {
+       "js": {
+        "type": "string"
+       },
+       "ref": {
+        "type": "string",
+        "description": "the element's ref: e12 from a snapshot, or p1 that the user picked"
+       },
+       "tab": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "the tab whose page it runs in"
+       }
+      },
+      "required": [
+       "js"
+      ]
+     }
+    }
+   },
+   "required": [
+    "url",
+    "expect"
+   ]
+  },
+  "handled_by": "backend"
+ },
+ {
+  "name": "back",
+  "description": "Go back a page.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "expect": {
+     "type": "array",
+     "minItems": 1,
+     "maxItems": 20,
+     "description": "What this action relies on that the user could have changed: they may be using the page while you think and write this call. Each check runs in the page right before the action, which is done only if every one is true -- else you are told what is there now and what the user did. `js`: a JavaScript expression about the page as the user sees it (document, location, the elements -- not the page's own script variables), true if it is as this action needs; with `ref`, that element is `el`. It runs in the tab shown, or its `ref`'s; `tab` (its number, as `tabs` lists them): in that tab's page -- e.g. the one a `tabs` switch or close is for. E.g. [{\"ref\": \"e7\", \"js\": \"el.innerText.includes('Invoice #4411')\"}, {\"js\": \"location.pathname === '/invoices'\"}], or [{\"tab\": 3, \"js\": \"location.hostname === 'mail.google.com'\"}]",
+     "items": {
+      "type": "object",
+      "properties": {
+       "js": {
+        "type": "string"
+       },
+       "ref": {
+        "type": "string",
+        "description": "the element's ref: e12 from a snapshot, or p1 that the user picked"
+       },
+       "tab": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "the tab whose page it runs in"
+       }
+      },
+      "required": [
+       "js"
+      ]
+     }
+    }
+   },
+   "required": [
+    "expect"
+   ]
+  },
+  "handled_by": "backend"
+ },
+ {
+  "name": "forward",
+  "description": "Go forward a page.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "expect": {
+     "type": "array",
+     "minItems": 1,
+     "maxItems": 20,
+     "description": "What this action relies on that the user could have changed: they may be using the page while you think and write this call. Each check runs in the page right before the action, which is done only if every one is true -- else you are told what is there now and what the user did. `js`: a JavaScript expression about the page as the user sees it (document, location, the elements -- not the page's own script variables), true if it is as this action needs; with `ref`, that element is `el`. It runs in the tab shown, or its `ref`'s; `tab` (its number, as `tabs` lists them): in that tab's page -- e.g. the one a `tabs` switch or close is for. E.g. [{\"ref\": \"e7\", \"js\": \"el.innerText.includes('Invoice #4411')\"}, {\"js\": \"location.pathname === '/invoices'\"}], or [{\"tab\": 3, \"js\": \"location.hostname === 'mail.google.com'\"}]",
+     "items": {
+      "type": "object",
+      "properties": {
+       "js": {
+        "type": "string"
+       },
+       "ref": {
+        "type": "string",
+        "description": "the element's ref: e12 from a snapshot, or p1 that the user picked"
+       },
+       "tab": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "the tab whose page it runs in"
+       }
+      },
+      "required": [
+       "js"
+      ]
+     }
+    }
+   },
+   "required": [
+    "expect"
+   ]
+  },
+  "handled_by": "backend"
+ },
+ {
+  "name": "reload",
+  "description": "Load the page again.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "expect": {
+     "type": "array",
+     "minItems": 1,
+     "maxItems": 20,
+     "description": "What this action relies on that the user could have changed: they may be using the page while you think and write this call. Each check runs in the page right before the action, which is done only if every one is true -- else you are told what is there now and what the user did. `js`: a JavaScript expression about the page as the user sees it (document, location, the elements -- not the page's own script variables), true if it is as this action needs; with `ref`, that element is `el`. It runs in the tab shown, or its `ref`'s; `tab` (its number, as `tabs` lists them): in that tab's page -- e.g. the one a `tabs` switch or close is for. E.g. [{\"ref\": \"e7\", \"js\": \"el.innerText.includes('Invoice #4411')\"}, {\"js\": \"location.pathname === '/invoices'\"}], or [{\"tab\": 3, \"js\": \"location.hostname === 'mail.google.com'\"}]",
+     "items": {
+      "type": "object",
+      "properties": {
+       "js": {
+        "type": "string"
+       },
+       "ref": {
+        "type": "string",
+        "description": "the element's ref: e12 from a snapshot, or p1 that the user picked"
+       },
+       "tab": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "the tab whose page it runs in"
+       }
+      },
+      "required": [
+       "js"
+      ]
+     }
+    }
+   },
+   "required": [
+    "expect"
+   ]
+  },
+  "handled_by": "backend"
+ },
+ {
+  "name": "tabs",
+  "description": "The tabs: list them, open a new one (`url`), switch to one or close one (`index`, from 1).",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "action": {
+     "type": "string",
+     "enum": [
+      "list",
+      "new",
+      "switch",
+      "close"
+     ]
+    },
+    "index": {
+     "type": "integer"
+    },
+    "url": {
+     "type": "string"
+    },
+    "expect": {
+     "type": "array",
+     "minItems": 1,
+     "maxItems": 20,
+     "description": "needed to open, switch or close: What this action relies on that the user could have changed: they may be using the page while you think and write this call. Each check runs in the page right before the action, which is done only if every one is true -- else you are told what is there now and what the user did. `js`: a JavaScript expression about the page as the user sees it (document, location, the elements -- not the page's own script variables), true if it is as this action needs; with `ref`, that element is `el`. It runs in the tab shown, or its `ref`'s; `tab` (its number, as `tabs` lists them): in that tab's page -- e.g. the one a `tabs` switch or close is for. E.g. [{\"ref\": \"e7\", \"js\": \"el.innerText.includes('Invoice #4411')\"}, {\"js\": \"location.pathname === '/invoices'\"}], or [{\"tab\": 3, \"js\": \"location.hostname === 'mail.google.com'\"}]",
+     "items": {
+      "type": "object",
+      "properties": {
+       "js": {
+        "type": "string"
+       },
+       "ref": {
+        "type": "string",
+        "description": "the element's ref: e12 from a snapshot, or p1 that the user picked"
+       },
+       "tab": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "the tab whose page it runs in"
+       }
+      },
+      "required": [
+       "js"
+      ]
+     }
+    }
+   }
+  },
+  "handled_by": "backend"
+ },
+ {
+  "name": "screenshot",
+  "description": "A picture of the page as shown (the user's view), or of an element; `full`: the whole page.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "ref": {
+     "type": "string",
+     "description": "the element's ref: e12 from a snapshot, or p1 that the user picked"
+    },
+    "full": {
+     "type": "boolean"
+    }
+   }
+  },
+  "handled_by": "backend"
+ },
+ {
+  "name": "console",
+  "description": "The page's console: its messages, errors and failed loads, latest last; `clear`: then forgotten.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "clear": {
+     "type": "boolean"
+    }
+   }
+  },
+  "handled_by": "backend"
+ },
+ {
+  "name": "evaluate",
+  "description": "Run a JavaScript expression in the page (awaited), its value as JSON; with `ref`, the element is `el`.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "expression": {
+     "type": "string"
+    },
+    "ref": {
+     "type": "string",
+     "description": "the element's ref: e12 from a snapshot, or p1 that the user picked"
+    },
+    "says": {
+     "type": "string",
+     "description": "What the script does, in a few words for the user, who sees them as it runs, beginning with a verb in -ing: 'reading the result links', 'clearing the cart'"
+    },
+    "expect": {
+     "type": "array",
+     "minItems": 1,
+     "maxItems": 20,
+     "description": "What this action relies on that the user could have changed: they may be using the page while you think and write this call. Each check runs in the page right before the action, which is done only if every one is true -- else you are told what is there now and what the user did. `js`: a JavaScript expression about the page as the user sees it (document, location, the elements -- not the page's own script variables), true if it is as this action needs; with `ref`, that element is `el`. It runs in the tab shown, or its `ref`'s; `tab` (its number, as `tabs` lists them): in that tab's page -- e.g. the one a `tabs` switch or close is for. E.g. [{\"ref\": \"e7\", \"js\": \"el.innerText.includes('Invoice #4411')\"}, {\"js\": \"location.pathname === '/invoices'\"}], or [{\"tab\": 3, \"js\": \"location.hostname === 'mail.google.com'\"}]",
+     "items": {
+      "type": "object",
+      "properties": {
+       "js": {
+        "type": "string"
+       },
+       "ref": {
+        "type": "string",
+        "description": "the element's ref: e12 from a snapshot, or p1 that the user picked"
+       },
+       "tab": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "the tab whose page it runs in"
+       }
+      },
+      "required": [
+       "js"
+      ]
+     }
+    }
+   },
+   "required": [
+    "expression",
+    "says",
+    "expect"
+   ]
+  },
+  "handled_by": "backend"
+ },
+ {
+  "name": "wait",
+  "description": "Wait until `text` shows in the page (at most `seconds`, 10 by default, 60 at most), or for `seconds`.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "text": {
+     "type": "string"
+    },
+    "seconds": {
+     "type": "number"
+    }
+   }
+  },
+  "handled_by": "backend"
+ },
+ {
+  "name": "dialog",
+  "description": "Answer the page's alert, confirm or prompt: accept (with `text` for a prompt) or dismiss it.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "accept": {
+     "type": "boolean"
+    },
+    "text": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "accept"
+   ]
+  },
+  "handled_by": "backend"
+ },
+ {
+  "name": "upload",
+  "description": "Give a file input files from this machine.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "ref": {
+     "type": "string",
+     "description": "the element's ref: e12 from a snapshot, or p1 that the user picked"
+    },
+    "paths": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "expect": {
+     "type": "array",
+     "minItems": 1,
+     "maxItems": 20,
+     "description": "What this action relies on that the user could have changed: they may be using the page while you think and write this call. Each check runs in the page right before the action, which is done only if every one is true -- else you are told what is there now and what the user did. `js`: a JavaScript expression about the page as the user sees it (document, location, the elements -- not the page's own script variables), true if it is as this action needs; with `ref`, that element is `el`. It runs in the tab shown, or its `ref`'s; `tab` (its number, as `tabs` lists them): in that tab's page -- e.g. the one a `tabs` switch or close is for. E.g. [{\"ref\": \"e7\", \"js\": \"el.innerText.includes('Invoice #4411')\"}, {\"js\": \"location.pathname === '/invoices'\"}], or [{\"tab\": 3, \"js\": \"location.hostname === 'mail.google.com'\"}]",
+     "items": {
+      "type": "object",
+      "properties": {
+       "js": {
+        "type": "string"
+       },
+       "ref": {
+        "type": "string",
+        "description": "the element's ref: e12 from a snapshot, or p1 that the user picked"
+       },
+       "tab": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "the tab whose page it runs in"
+       }
+      },
+      "required": [
+       "js"
+      ]
+     }
+    }
+   },
+   "required": [
+    "ref",
+    "paths",
+    "expect"
+   ]
+  },
+  "handled_by": "backend"
+ },
+ {
+  "name": "steps",
+  "description": "Several actions in one call, done in order: each step a call of one of these tools, as you would make it alone -- {\"tool\": \"type\", \"ref\": \"e3\", \"text\": \"Jane\", \"expect\": [...]} -- its own `expect` run right before it, which may also check what the steps before it should have done (the field now holds the text typed). It stops at the first step not done: the steps after it are not run. `snapshot`: the page's snapshot after them, done or not.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "steps": {
+     "type": "array",
+     "minItems": 1,
+     "maxItems": 20,
+     "items": {
+      "type": "object",
+      "required": [
+       "tool"
+      ],
+      "properties": {
+       "tool": {
+        "type": "string",
+        "enum": [
+         "back",
+         "click",
+         "dialog",
+         "evaluate",
+         "forward",
+         "hover",
+         "navigate",
+         "press",
+         "reload",
+         "scroll",
+         "select",
+         "tabs",
+         "type",
+         "upload",
+         "wait"
+        ]
+       }
+      }
+     }
+    },
+    "snapshot": {
+     "type": "boolean",
+     "description": "the page's snapshot after the steps"
+    }
+   },
+   "required": [
+    "steps"
+   ]
+  },
+  "handled_by": "backend"
+ }
+]

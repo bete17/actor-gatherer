@@ -144,7 +144,7 @@ function open(): void {
   wire(w);
   pages = new Pages(w, log, (target, url) => !w.isDestroyed() && w.webContents.send("ag:still", { target, url }), {
     pagePreload: path.join(HERE, "page-preload.cjs"),
-    downloads: path.join(home, "dashboard", "downloads"), // (ag's own Chrome's: browser.py's downloads_dir)
+    downloads: path.join(home, "dashboard", "downloads"), // (ag's own Chrome's: ag_apps/browser/core.py's downloads_dir)
     permissions: path.join(app.getPath("userData"), "permissions.json"),
   });
   // Closing the window is not quitting (desktop/DESIGN.md): on a Mac it is hidden, its Browsers' pages kept open (the
@@ -180,6 +180,14 @@ ipcMain.on("ag:dialog", (event, d: Dialog) => {
 // The dashboard's page asking for the keys back from a native page (a pick made: the message box next).
 ipcMain.on("ag:focus", (event) => {
   if (win && event.sender === win.webContents) win.webContents.focus();
+});
+// The dashboard's page asking for its window in front: one of its notifications clicked (the page's own, the system's).
+ipcMain.on("ag:raise", (event) => {
+  if (!win || event.sender !== win.webContents) return;
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+  app.focus({ steal: true });
 });
 
 app.whenReady().then(open);

@@ -1,0 +1,57 @@
+/* The top row, above the actors' panes: the apps' panels side by side (07-panes.js; an app's panel, its iframe:
+   features/apps/host.ts), as tall as it is dragged by the edge under it; the actors' views shorter while it shows. And a
+   chat minimized under it (setChatMin, 18-top.js). */
+/* the row above the panes: the apps' panels side by side (07-panes.js), as tall as it is dragged; not shown while none
+   of them is */
+.top-row { flex: 0 0 var(--ed-h, 50%); min-height: 140px; display: flex; position: relative; min-width: 0;
+  background: var(--page); border-bottom: 5px solid color-mix(in srgb, var(--ink) 14%, var(--page)); }   /* the edge between it and the panes: a bar, its grip over it */
+.top-row:not(:has(> section:not([hidden]))) { display: none; }
+.ed-grip { position: absolute; left: 0; right: 0; bottom: -7px; height: 9px; cursor: row-resize; z-index: 4; touch-action: none; }
+/* the chat minimized under the top row (setChatMin): the row the column's height but for the row of message boxes, each
+   pane's as tall as what it shows -- a frame's told by its page (fitMini) -- and no head of its own */
+.work.chat-min > .top-row { flex: 1 1 0; }
+.work.chat-min > .top-row > .ed-grip { display: none; }
+.work.chat-min > .panes { flex: none; }
+.work.chat-min .pane > iframe { flex: none; margin-top: auto; }   /* the strips side by side, along the bottom */
+.pane:has(> main > .chat.mini) > .pane-top { display: none; }
+main:has(> .chat.mini) { align-items: flex-end; }
+/* a pane minimized: what the agent asks the reader, if it does, over the message box; the way back at its left, the actor's
+   status at its right */
+.chat.mini { flex: 1 1 auto; min-height: 48px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center;
+  grid-template-areas: "note note note" "back box st" ". err st"; }
+.chat.mini > * { grid-area: note; }
+.chat.mini > .mini-back { grid-area: back; }
+.chat.mini > :is(.composer, .readonly, .mini-sh) { grid-area: box; }
+.chat.mini > .err { grid-area: err; padding: 0 8px 6px 0; }
+.chat.mini > .mini-st { grid-area: st; }
+.chat.mini .composer, .chat.mini .readonly { border-top: 0; padding: 8px 8px 8px 0; }
+.chat.mini .asking-note { max-height: 360px; }      /* not in vh: a frame is as tall as its pane (fitMini) */
+.mini-back { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; margin: 0 4px 0 8px; padding: 0;
+  border: 0; border-radius: 5px; background: none; color: var(--muted); cursor: pointer; }
+.mini-back:hover, .mini-back:focus-visible { background: var(--wash); color: var(--ink); }
+.mini-st { align-self: stretch; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; min-width: 56px;
+  margin: 0; padding: 4px 10px 5px; border: 0; border-left: 1px solid var(--grid); border-radius: 0; background: none; cursor: pointer;
+  font: 10.5px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); }
+.mini-st:hover, .mini-st:focus-visible { background: var(--wash); }
+.mini-st .pic { display: flex; align-items: center; justify-content: center; height: 26px; }
+.mini-st .spin::before { content: "✻"; display: inline-block; color: var(--term-accent); font-size: 16px; animation: term-spin 1.2s steps(1) infinite; }
+.mini-st .still { position: relative; display: inline-flex; }
+.mini-st .still img { width: 24px; height: 24px; display: block; filter: drop-shadow(0 0 .6px var(--buddy-edge, rgba(0, 0, 0, .45))); }
+.mini-st .mk { position: absolute; right: -4px; bottom: -2px; width: 12px; height: 12px; border-radius: 50%; display: grid; place-items: center;
+  box-shadow: 0 0 0 1.5px var(--surface); color: #fff; font: 700 9px/1 system-ui, sans-serif; }
+.mini-st .mk.ask { background: var(--warning); }
+.mini-st .mk.err { background: var(--critical); }
+.mini-st .mk.bg { right: -2px; bottom: 0; width: 8px; height: 8px; background: var(--good); }
+.mini-st .n { display: flex; align-items: center; gap: 5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.mini-st .n:empty { display: none; }
+.mini-st .c { display: inline-flex; align-items: center; gap: 2px; color: var(--ink-2); }
+.mini-st .c.err { color: var(--critical); }
+.mini-st .chg-a { color: var(--term-ok); }
+.mini-st .chg-r { color: var(--term-err); }
+.mini-sh { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 10px 8px 10px 0; color: var(--ink-2); font-size: 12.5px; }
+.mini-sh > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ed-grip:hover, .ed-grip.on { background: color-mix(in srgb, var(--s1) 35%, transparent); }
+/* A task of apps only shown (07-panes.js's appsOnly): its apps' panels take the room, the actors' panes out of sight */
+.work.apps-only > .panes { display: none; }
+.work.apps-only > .top-row { flex: 1 1 0; }
+.work.apps-only > .top-row > .ed-grip { display: none; }

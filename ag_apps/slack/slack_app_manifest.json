@@ -1,0 +1,33 @@
+{
+  "_metadata": {"major_version": 1, "minor_version": 1},
+  "display_information": {
+    "name": "ag",
+    "description": "Shows your Slack in ag, and sends the replies you approve, as you.",
+    "background_color": "#2a78d6"
+  },
+  "oauth_config": {
+    "scopes": {
+      "user": [
+        "channels:history", "channels:read",
+        "groups:history", "groups:read",
+        "im:history", "im:read", "im:write",
+        "mpim:history", "mpim:read",
+        "users:read", "reactions:read",
+        "chat:write", "search:read"
+      ]
+    }
+  },
+  "settings": {
+    "event_subscriptions": {
+      "user_events": [
+        "message.channels", "message.groups", "message.im", "message.mpim",
+        "reaction_added", "reaction_removed",
+        "channel_left", "group_left", "member_joined_channel"
+      ]
+    },
+    "interactivity": {"is_enabled": false},
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": true,
+    "token_rotation_enabled": false
+  }
+}

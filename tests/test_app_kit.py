@@ -280,6 +280,9 @@ class NotesApp(App):
             raise AppError("no", 409)
         return ToolResult.error(f"{tool}?")
 
+    def sleep(self, instance):
+        self.host.tell_panel(instance, {"slept": True})
+
     def request(self, instance, method, path, query, body):
         if path == "count":
             return Response.json({"n": len(self.host.read(instance, ["notes.added"])), "echo": body.decode()})
@@ -308,6 +311,11 @@ class RemoteTest(unittest.TestCase):
         r = self.app.request(self.i, "GET", "count", {}, b"hello")
         self.assertEqual((r.status, json.loads(r.body)), (200, {"n": 1, "echo": "hello"}))
         self.assertEqual(self.app.request(None, "GET", "nope", {}, b"").body, b"\xff\x00raw")   # bytes kept
+
+    def test_an_instance_put_to_sleep_through_http(self):
+        self.app.sleep(self.i)
+        self.assertEqual(self.host.told, [("i1", {"slept": True})])
+        App.sleep(App(), self.i)                                  # an app with nothing running for it: nothing to do
 
     def test_refusals_come_back_as_app_errors(self):
         self.assertTrue(self.app.call(self.i, "what", {}, Caller()).is_error)

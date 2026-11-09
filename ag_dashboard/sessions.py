@@ -25,9 +25,10 @@ ones it started:
                      whether a process runs (no /proc: macOS); 0 when none has
     role             what the session is for, besides its messages: "coordinator", its gatherer's gatherer agent
                      (coordination.py), run with that role's instructions added to its harness's own on every run
-                     (`instructions`); or, as JSON, {"<name>": key}: the actor of an app (apps.py) -- a DocWriter's
-                     {"docwriter": key}, a Browser's {"browser": key} -- started with its tools and instructions
-                     (`extra_args`); NULL, an actor like any other
+                     (`instructions`); or, as JSON, {"app": name, "key": instance}: the actor an app started with
+                     it (app_agents.py), attached to it -- its tools and instructions given by the tool gateway
+                     (`extra_args`) -- or {"<name>": key}, one from before the app was one (adopted: app_agents.py's
+                     `adopt_all`); NULL, an actor like any other
 
 The agent is one long-running process, `ag --gatherer G claude -p --input-format stream-json
 --output-format stream-json ...`: each message is a line on its stdin, a turn, and each turn
@@ -463,26 +464,20 @@ def instructions(s: dict) -> Optional[str]:
 
 
 def extra_args(s: dict) -> List[str]:
-    """What a session's harness is started with besides its own options, as its `role` says -- an app's actor
-    (apps.py): its tools and instructions (the app's `launch_args`); any other, the tools of its gatherer's apps
-    (tool_gateway.py's `launch_args`: [] where none is on)."""
-    if not str(s.get("role") or "").startswith("{"):
-        from . import tool_gateway
-        return tool_gateway.launch_args(s)
-    from . import apps                          # here: the apps use this module
-    return next((got for got in (a.launch_args(s) for a in apps.APPS) if got), [])
+    """What a session's harness is started with besides its own options: what the tool gateway gives it
+    (tool_gateway.py's `launch_args`: its gatherer's apps' tools, those of the apps it is attached to, their
+    instructions and guard)."""
+    from . import tool_gateway                  # here: the gateway uses this module
+    return tool_gateway.launch_args(s)
 
 
 def known_role(role: str) -> bool:
-    """Whether `role` is one a session may have: one of ROLES, or an app's actor's ({"<name>": key}, apps.py)."""
+    """Whether `role` is one a session may have: one of ROLES, or an app's actor's (app_agents.py's `role_of`): the
+    actor an app started, {"app": name, "key": instance}, or one from before it was an app, {"<name>": key}."""
     if role in ROLES:
         return True
-    try:
-        got = json.loads(role)
-    except (TypeError, ValueError):
-        return False
-    from . import apps
-    return isinstance(got, dict) and any(isinstance(got.get(a.name), str) for a in apps.APPS)
+    from . import app_agents
+    return app_agents.role_of({"role": role}) is not None
 
 
 def login_shell() -> str:
@@ -835,9 +830,7 @@ class Sessions:
         if model and not re.fullmatch(r"[A-Za-z0-9._:/@-]+", model):
             raise SessionError(f"model {model!r}: not a model's name")
         if role is not None and not known_role(role):
-            from . import apps
-            raise SessionError(f"role {role!r}: one of {', '.join(ROLES)}, or "
-                               + " or ".join(f"a {a.label}'s" for a in apps.APPS))
+            raise SessionError(f"role {role!r}: one of {', '.join(ROLES)}, or an app's actor's ({{\"app\": ..., \"key\": ...}})")
         session_id = str(uuid.uuid4())
         conn = self._db()
         try:
@@ -1331,8 +1324,9 @@ class Sessions:
                 if held is not None:
                     raise SessionError(f"the session is open in another process ({held['pid']}): close it there first")
                 row = self._row(session_id)
-                from . import apps                   # here: the apps use this module
-                tools = apps.tools_of(row) if prompt else []
+                from . import tool_gateway           # here: the gateway uses this module
+                tools = ([tool_gateway.endpoint(tool_gateway.actor_of(row))]
+                         if prompt and tool_gateway.served(row) else [])
                 t = self._start_terminal(row, cols, rows, fullscreen, None if tools else prompt)
                 if prompt:
                     t.typed = time.time()
@@ -1350,7 +1344,7 @@ class Sessions:
         """`text`, the first message of the terminal `t` just started for the session, typed into it once the harness has
         its tools: into its message box (`_at_box`) -- waited for while a dialog has the keys (a new folder's trust
         prompt), as a harness keeps a message from its command line behind one -- once each of the dashboard's MCP
-        servers it was given (`tools`, apps.py's `tools_of`) has listed them (mcp.py's `listed`) since the terminal
+        servers it was given (`tools`: the apps' gateway, tool_gateway.py's `served`) has listed them (mcp.py's `listed`) since the terminal
         started, TOOLS_TAKEN before; or TOOLS_WAIT after its box first showed (Claude Code connects its servers only once
         its folder is trusted). Claude Code and codex start a turn without waiting for their MCP servers, and keep the
         tools a turn starts with to its end: a message on the command line goes before the dashboard's servers have

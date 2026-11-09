@@ -15,6 +15,7 @@ A manifest that says something the host doesn't know is refused, not read past: 
 user before it is granted, or a key in the wrong place, is a ManifestError naming where it is. Standard library and
 ag.ag_interface only."""
 
+import json
 import os
 import re
 import tomllib
@@ -35,8 +36,13 @@ TOOL_NAME_MAX = 64
 #: The argument the host adds to every tool: which instance, for an agent attached to more than one of the app's.
 INSTANCE_ARG = "instance"
 
-#: How many instances of an app there are: one per gatherer, one per folder, one per git checkout, or any number.
-INSTANCES = ("one", "per-folder", "per-checkout", "many")
+#: How many instances of an app there are: one per gatherer, one per folder, one per git checkout, one per git
+#: repository (its worktrees share it), or any number.
+INSTANCES = ("one", "per-folder", "per-checkout", "per-repository", "many")
+#: Which agents are given an app's tools and instructions: every agent of a gatherer it is on, or only those attached
+#: to an instance of it when they start. An "attached" app's instructions go in the agent's own instructions (the
+#: harness's `instruction_args`), as an app's that came with its own agent's did; an "always" app's in its MCP server's.
+OFFERS = ("always", "attached")
 #: Who answers a tool's calls: the app's backend, or its open panel (the call waits for one to be open).
 HANDLED_BY = ("backend", "panel")
 #: The properties the host puts on every app event itself, which an app's event type does not declare: the app's name,
@@ -47,25 +53,52 @@ HOST_PROPERTY_NAMES = tuple(p.name for p in HOST_PROPERTIES)
 #: advice), so no policy changes for an app. An app's pollers output these only, as ag requires of any poller.
 CONTEXT_TYPES = ("context_stream", "environment_update")
 #: The records the host keeps of each app: an instance opened or closed, an agent attached or detached, a tool call it
-#: passed to the app. Records like the harness's: no policy groups them. An app reads its own; no app inserts them.
+#: passed to the app, and a notification it sent the user and its end (`notify` capability: NOTICE_TYPES). Records like
+#: the harness's: no policy groups them, and no agent is shown them. An app reads its own; no app inserts them.
 HOST_TYPES = (EventType("app_opened", HOST_PROPERTIES), EventType("app_closed", HOST_PROPERTIES),
               EventType("app_attached", HOST_PROPERTIES), EventType("app_detached", HOST_PROPERTIES),
-              EventType("app_call", HOST_PROPERTIES))
+              EventType("app_call", HOST_PROPERTIES), EventType("app_notified", HOST_PROPERTIES),
+              EventType("app_notice_settled", HOST_PROPERTIES))
 HOST_RECORDS = tuple(t.name for t in HOST_TYPES)
+#: A NOTIFICATION an app sends the user, as an agent's `asked` is: open until settled, as `ask_settled` settles that.
+#:     app_notified        {id, key, title, text, show, where}: where it is shown (SHOWS: "ag", a pop-up in the
+#:                         dashboard; "system", the computer's notification too) and where in the app a click on it
+#:                         takes the user (`where`, the app's own JSON, handed back to its panel); a newer one of the
+#:                         same `key` takes an open one's place
+#:     app_notice_settled  {id or key, how}: it no longer asks for the user -- "cleared" by the app, "dismissed" by the
+#:                         user -- every open one of that key, with a key
+#: Its instance closed settles all of its. Whether the user has seen it is the reader's, as an agent's FINISHED is
+#: (the dashboard's seen.py, the item "app:<instance id>").
+NOTICE_TYPES = ("app_notified", "app_notice_settled")
+SHOWS = ("ag", "system")
+NOTICE_TITLE_CHARS, NOTICE_TEXT_CHARS, NOTICE_KEY_CHARS = 120, 400, 120
+NOTICE_WHERE_BYTES = 4000       # the most JSON an app keeps with one for where a click takes the user
 #: The intents the host routes, and what each one carries.
 INTENTS = {
     "open-file": "path, line?, row_id?: a file to show",
     "open-url": "url: a web page to show",
-    "show-activity": "channel, turn: what an agent did in a turn",
     "explain-answer": "channel, turn: where an agent's answer came from",
     "use-history": "channel, rows: events of an agent's history picked by the user",
+    "run": "path: run (build, preview) the project of this file or folder, and show what it makes",
+    "locate": "path, line, column?: show where this place of a source is, in what was made from it",
 }
 #: What an app may ask of the host beyond its own events, tools and panel; each shown to the user before it is granted.
 CAPABILITIES = {
     "native_view": "a native web view over its panel, in the desktop app",
+    "message_agents": "sending messages to the agents attached to it, answering their questions and stopping their "
+                      "turns, as the user",
+    "transcript": "reading what the agents attached to it say and do (their transcript, as the dashboard shows it)",
+    "edit_guard": "refusing its agents' own edit tools on files it says it has open",
     "reads": "these event types of the gatherer besides its own: its agents' (tool_call, tool_output, ...)",
     "files": "reading files in its agents' folders",
     "commands": "running commands",
+    "docs": "the host's files shared live as they are edited (every page, and the file on disk, one more editor of "
+            "each), the actors' branches merged into them, and an actor's changes to a file (app_kit.docs)",
+    "actors": "seeing the gatherer's actors as its list shows them: their names, avatars, folders and what they are "
+              "doing",
+    "notify": "sending you notifications: in the dashboard's list and as pop-ups, and on this computer if you allow it",
+    "message_actors": "sending messages to any actor of its gatherer, answering what one asks, starting a new one with "
+                      "a message, and showing one -- as the user, from its panel, as Chat does",
 }
 
 
@@ -140,6 +173,13 @@ class Capabilities:
     reads: Tuple[str, ...] = ()
     files: bool = False
     commands: bool = False
+    message_agents: bool = False
+    transcript: bool = False
+    edit_guard: bool = False
+    docs: bool = False
+    actors: bool = False
+    notify: bool = False
+    message_actors: bool = False
 
     def asked(self) -> List[str]:
         """What it asks for, as the user is shown it before granting it."""
@@ -150,9 +190,32 @@ class Capabilities:
             said.append(f"reading these events of the gatherer: {', '.join(self.reads)}")
         if self.files:
             said.append(CAPABILITIES["files"])
-        if self.commands:
-            said.append(CAPABILITIES["commands"])
+        for k in ("commands", "message_agents", "transcript", "edit_guard", "docs", "actors", "notify", "message_actors"):
+            if getattr(self, k):
+                said.append(CAPABILITIES[k])
         return said
+
+
+@dataclass(frozen=True)
+class Asked:
+    """`[asked]`: what an agent was asked, as a list of actors and Chat show it, when the app writes its messages
+    (DocWriter's prompt, its document's state around the user's words; a line Notes sends, with a note on where it is
+    from): in a message holding `when`, the first group of `pattern` (a regular expression), else `otherwise`. A second
+    group, if the pattern has one, says where in the app the message came from (a page's title): Chat shows it, with
+    the app's label and mark, above the words. A third, which item in the app it is about (a Notes line's id): the
+    app's panel is told it, as what the actor is on now. The words may be read from anywhere in the message, by a
+    lookahead, so that the rest can come first: what the list keeps of a message is cut at 600 characters."""
+    when: str = ""
+    pattern: str = ""
+    otherwise: str = ""
+
+
+@dataclass(frozen=True)
+class Agent:
+    """`[agent]`: whether opening the app from a gatherer's menu starts a new agent attached to the new instance (not
+    the agent in focus attached), and the name it is given ({folder}: the instance's folder's name; {app}: its label)."""
+    start: bool = False
+    name: str = "{app} · {folder}"
 
 
 @dataclass(frozen=True)
@@ -163,7 +226,11 @@ class Manifest:
     version: str
     description: str = ""
     instances: str = "one"
+    offer: str = "always"
     instructions: str = ""
+    agent: "Agent" = field(default_factory=lambda: Agent())
+    asked: "Asked" = field(default_factory=lambda: Asked())
+    mark: Optional[str] = None                   # an SVG in its folder: on its menu entry, and on the agent it started
     backend: Backend = field(default_factory=Backend)
     panel: Optional[str] = None
     tools: Tuple[Tool, ...] = ()
@@ -203,7 +270,10 @@ class Manifest:
         """The manifest as JSON (the host's /api/apps, the remote protocol)."""
         return {
             "name": self.name, "label": self.label, "version": self.version, "description": self.description,
-            "instances": self.instances, "instructions": self.instructions,
+            "instances": self.instances, "offer": self.offer, "instructions": self.instructions,
+            "agent": {"start": self.agent.start, "name": self.agent.name},
+            "asked": {"when": self.asked.when, "pattern": self.asked.pattern, "otherwise": self.asked.otherwise},
+            "mark": bool(self.mark),
             "backend": {"python": self.backend.python, "command": list(self.backend.command)},
             "panel": self.panel,
             "tools": [{"name": t.name, "description": t.description, "input_schema": t.input_schema,
@@ -214,7 +284,13 @@ class Manifest:
             "pollers": [{"name": p.name, "class": p.cls, "file": p.file, "args": p.args} for p in self.pollers],
             "handles": [{"intent": h.intent, "types": list(h.types)} for h in self.handles],
             "capabilities": {"native_view": self.capabilities.native_view, "reads": list(self.capabilities.reads),
-                             "files": self.capabilities.files, "commands": self.capabilities.commands},
+                             "files": self.capabilities.files, "commands": self.capabilities.commands,
+                             "message_agents": self.capabilities.message_agents,
+                             "transcript": self.capabilities.transcript,
+                             "edit_guard": self.capabilities.edit_guard,
+                             "docs": self.capabilities.docs, "actors": self.capabilities.actors,
+                             "notify": self.capabilities.notify,
+                             "message_actors": self.capabilities.message_actors},
         }
 
 
@@ -252,9 +328,9 @@ def load(folder: str) -> Manifest:
 def parse(data: Dict[str, Any], folder: Optional[str] = None, where: str = FILE) -> Manifest:
     """The manifest the TOML's `data` says. With `folder`, the files it names are read from there and must exist."""
     r = _Reader(where)
-    _known(r, data, "", ("name", "label", "version", "description", "instances", "instructions",
-                         "instructions_file", "backend", "panel", "tools", "events", "pollers", "handles",
-                         "capabilities"))
+    _known(r, data, "", ("name", "label", "version", "description", "instances", "offer", "instructions",
+                         "instructions_file", "agent", "asked", "mark", "backend", "panel", "tools", "tools_file",
+                         "events", "pollers", "handles", "capabilities"))
     name = r.string(data, "name")
     if not NAME.match(name):
         r.fail("name", f"{name!r}: lowercase letters, digits and _, starting with a letter, at most 24")
@@ -262,6 +338,26 @@ def parse(data: Dict[str, Any], folder: Optional[str] = None, where: str = FILE)
     if instances not in INSTANCES:
         r.fail("instances", f"{instances!r}: one of {', '.join(INSTANCES)}")
 
+    offer = r.string(data, "offer", "always")
+    if offer not in OFFERS:
+        r.fail("offer", f"{offer!r}: one of {', '.join(OFFERS)}")
+    agent_d = data.get("agent", {})
+    _known(r, agent_d, "agent.", ("start", "name"))
+    agent = Agent(start=r.flag(agent_d, "start", "agent."), name=r.string(agent_d, "name", "{app} · {folder}", "agent."))
+    asked_d = data.get("asked", {})
+    _known(r, asked_d, "asked.", ("when", "pattern", "otherwise"))
+    asked = Asked(when=r.string(asked_d, "when", "", "asked."), pattern=r.string(asked_d, "pattern", "", "asked."),
+                  otherwise=r.string(asked_d, "otherwise", "", "asked."))
+    if asked.pattern:
+        try:
+            re.compile(asked.pattern)
+        except re.error as exc:
+            r.fail("asked.pattern", f"not a regular expression: {exc}")
+    mark = r.string(data, "mark", "") or None
+    if mark and folder is not None:
+        _inside(r, folder, mark, "mark")
+        if not os.path.isfile(os.path.join(folder, mark)):
+            r.fail("mark", f"{mark}: no such file")
     instructions = r.string(data, "instructions", "")
     ifile = r.string(data, "instructions_file", "")
     if instructions and ifile:
@@ -271,7 +367,17 @@ def parse(data: Dict[str, Any], folder: Optional[str] = None, where: str = FILE)
 
     backend = _backend(r, data.get("backend", {}))
     panel = _panel(r, data.get("panel"), folder)
-    tools = tuple(_tool(r, name, i, t) for i, t in enumerate(r.tables(data, "tools")))
+    listed = list(r.tables(data, "tools"))
+    tfile = r.string(data, "tools_file", "")
+    if tfile and folder is not None:                 # tools written by a build: a JSON list of [[tools]]' tables
+        try:
+            got = json.loads(_read_text(r, folder, tfile, "tools_file"))
+        except ValueError as exc:
+            r.fail("tools_file", f"{tfile}: not JSON ({exc})")
+        if not isinstance(got, list) or not all(isinstance(t, dict) for t in got):
+            r.fail("tools_file", f"{tfile}: a JSON list of tools, each {{name, description, input_schema, handled_by}}")
+        listed += got
+    tools = tuple(_tool(r, name, i, t) for i, t in enumerate(listed))
     seen = set()
     for i, t in enumerate(tools):
         if t.name in seen:
@@ -291,7 +397,8 @@ def parse(data: Dict[str, Any], folder: Optional[str] = None, where: str = FILE)
     if handles and panel is None:
         r.fail("handles", "an app handles intents in its panel, and it has no [panel]")
     return Manifest(name=name, label=r.string(data, "label", name), version=r.string(data, "version", "0"),
-                    description=r.string(data, "description", ""), instances=instances, instructions=instructions,
+                    description=r.string(data, "description", ""), instances=instances, offer=offer,
+                    instructions=instructions, agent=agent, asked=asked, mark=mark,
                     backend=backend, panel=panel, tools=tools, events=events, pollers=pollers, handles=handles,
                     capabilities=_capabilities(r, data.get("capabilities", {})), folder=folder)
 
@@ -475,4 +582,10 @@ def _capabilities(r: _Reader, d: Any) -> Capabilities:
     _known(r, d, "capabilities.", tuple(CAPABILITIES))
     reads = r.strings(d, "reads", at="capabilities.")
     return Capabilities(native_view=r.flag(d, "native_view", "capabilities."), reads=reads,
-                        files=r.flag(d, "files", "capabilities."), commands=r.flag(d, "commands", "capabilities."))
+                        files=r.flag(d, "files", "capabilities."), commands=r.flag(d, "commands", "capabilities."),
+                        message_agents=r.flag(d, "message_agents", "capabilities."),
+                        transcript=r.flag(d, "transcript", "capabilities."),
+                        edit_guard=r.flag(d, "edit_guard", "capabilities."),
+                        docs=r.flag(d, "docs", "capabilities."), actors=r.flag(d, "actors", "capabilities."),
+                        notify=r.flag(d, "notify", "capabilities."),
+                        message_actors=r.flag(d, "message_actors", "capabilities."))

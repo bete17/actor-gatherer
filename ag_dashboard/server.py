@@ -6,8 +6,8 @@ The POSTs are the only writes, and only to the dashboard's own tables and record
 runs (and the shells it opens), the gatherers `ag new` makes, the builds and model calls `ag home build` and `ag home complete`
 start, its own events `ag home insert` puts in (an actor's name), the harness's own store of a name
 (naming.py), the files a History extract is saved as (where Claude Code reads them, once the reader has
-seen them), ag's config.toml, and the files edited in the Editor panel (editor.py: under the directory the
-page names), the previews it keeps and runs (preview.py: the command a project's Execute button runs, in its checkout)
+seen them), ag's config.toml, and the files shared live as they are edited (livedocs.py: under the directory the
+page names), and what its apps run and keep (app_host.py: a project's preview runs, its Execute button's)
 -- besides the avatar the home gives an actor it has not seen before
 (avatars.py), kept in the dashboard's own table:
 the gatherers' databases are otherwise only read. They are taken from the dashboard's own page only
@@ -30,8 +30,8 @@ from typing import Optional
 
 import harness_kit
 
-from . import (actions, app_host, apps, avatars, branches, coordination, data, editor, folders, home, live, migrating,
-               page_build, preview, saved, sessions, tool_gateway)
+from . import (actions, app_agents, app_docs, app_host, avatars, branches, coordination, data, folders, home, live,
+               livedocs, migrating, page_build, saved, sessions, task_links, tool_gateway)
 
 STATIC, INDEX = page_build.STATIC, page_build.INDEX   # frontend/'s build (vite.config.ts), built by page_build.py
 BUILD = page_build.COMMAND
@@ -40,14 +40,13 @@ ASSET_TYPES = {".js": "text/javascript; charset=utf-8", ".css": "text/css; chars
 _VENDOR_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vendor")
 VENDOR = [os.path.join(_VENDOR_DIR, n) for n in ("marked.min.js", "purify.min.js")]
 TERMINAL = [os.path.join(_VENDOR_DIR, n) for n in ("xterm.js", "addon-fit.js", "addon-webgl.js", "xterm.css")]
-EDITOR = os.path.join(_VENDOR_DIR, "editor.js")
 _VENDOR_FILES = {"/vendor/" + os.path.basename(p): p for p in VENDOR + TERMINAL}
 LLM_SECONDS = 10.0          # how long the Gatherer's call log is reused before it is read again
 KEEPALIVE = 15.0            # the most a stream stays silent
 COALESCE = 0.03             # after a wake, how long to wait for the rest of a burst (a call stores many events)
 SHARED_SECONDS = 2.0        # a home read for one stream given to another woken by the same change: at most this old
 MAX_BODY = 30_000_000       # the largest request body taken: a message, or an image pasted into one (an app's
-                            # page's writes: its own, apps.py's `max_body`)
+                            # panel's, on its own origin: api/apps.py's APP_MAX_BODY)
 MAX_ALSO = 8                # the most other actors one stream follows (the page shows at most 4 panes)
 THREADS = 1000              # the most requests and stream waits at once, each in a thread, as http.server's had one each
 STOP_SECONDS = 2.0          # how long a stop waits for requests still being answered (its streams end at once)
@@ -155,34 +154,38 @@ class Server:
         self.hub.on_change = known.changed if known else None                                  # ag's notifications
         self.known = known
         self.sessions = sessions.Sessions(on_change=self.hub.ring)     # a session's state: its gatherer's streams
-        self.editors = editor.Editors()                                # the files open in the Editor panel
-        self.listener = self.fallback = self.rest = self.address_file = self.previews = None   # for server_close,
+        self.docs = livedocs.LiveDocs()                                # the files shared live (apps: app_docs.py)
+        self.listener = self.fallback = self.rest = self.address_file = None   # for server_close,
         self.app_host = None
-        self.apps = {}                                                                          # which a failed bind calls
         self.socket = self.app = self._uvicorn = self._done = self._failed = None
         self._lock = threading.Lock()
         self._shared, self._sharing = {"version": None, "at": 0.0, "value": None}, threading.Lock()
-        self.apps = {a.name: a.start(self.sessions) for a in apps.APPS}   # each app's running part, by its name
-        self.branches = branches.Branches(self.editors, self.sessions, self.hub.ring)   # the actors' own branches
+        self.branches = branches.Branches(self.docs, self.sessions, self.hub.ring)   # the actors' own branches
         self.crew = coordination.Coordination(self.sessions, self.hub.ring, watch=live_updates,   # actors' `ag actors`
-                                              branched=self.branches, apps=self.apps)
-        self.previews = preview.Runs()                                 # the projects' previews, run
+                                              branched=self.branches)
         self.keeps_actions = False
         try:
             self.socket = _bind(address)
             self.server_address = self.socket.getsockname()[:2]
             self.server_port = self.server_address[1]
             self.app_host = app_host.AppHost(self.server_port)        # the apps (app_kit's): their backends, events
+            self.app_host.docs = app_docs.HostDocs(self.docs, self.branches,
+                                                   lambda g: self.hub.ring(g, what="list"))
             self.hub.listen(self.app_host.rung)                       # and instances
             from . import app                                          # FastAPI: only once one serves
             self.app = app.create(self)
         except BaseException:
             self.server_close()
             raise
-        for a in apps.APPS:                                            # where their actors reach it
-            a.served_at(f"http://127.0.0.1:{self.server_port}")
         tool_gateway.HOST, tool_gateway.ORIGIN = self.app_host, f"http://127.0.0.1:{self.server_port}"   # the apps'
                                                                        # tools, for every session it starts
+        task_links.RING, task_links.SESSIONS = self.hub.ring, self.sessions   # a task's agents attached to its apps
+        self.app_host.loaded_then = task_links.on_load
+        self.app_host.attachable = task_links.attachable              # a gatherer's own agent: attached to no app
+        self.app_host.told = lambda g: self.hub.ring(g, what="list")  # an app's notifications: the home read again
+        if live_updates:                                              # an app's actors from before it was an app,
+            threading.Thread(target=app_agents.adopt_all, args=(self.sessions, self.app_host),   # attached to it
+                             name="ag-apps-adopt", daemon=True).start()
         self.keeps_actions = live_updates and not actions.ENABLED     # the reader's actions kept in the gatherers
         actions.ENABLED = actions.ENABLED or live_updates             # (actions.py), while it serves
         self.migrating = migrating.start(self.hub.ring) if live_updates else None   # an older gatherer's tables, once
@@ -218,8 +221,7 @@ class Server:
     def read_home(self) -> dict:
         """The home as the page gets it: with the sessions' state, and what a new session starts from -- the
         harnesses it can run on here (sessions.py's `available`); the shells open, and the user's home directory,
-        which the page shows their directories under as ~; what each app says of itself (apps.py's `home`: whether
-        one can be made here). A name held for a session's terminal is typed there once its turn is over
+        which the page shows their directories under as ~. A name held for a session's terminal is typed there once its turn is over
         (`rename_due`). Its agents as read before (data.py's `Kept`), where kept."""
         started = self.sessions
         got = data.home(started.list(), self.known)
@@ -228,9 +230,8 @@ class Server:
                                if a.get("turn_over") and a.get("status") not in (data.ASKING, data.RUNNING))
         return {**avatars.assign(got), "cwd": os.getcwd(), "permission_modes": list(sessions.PERMISSION_MODES),
                 "terminals": sessions.TERMINALS, "harnesses": sessions.available(), "shells": started.shells(),
-                "home_dir": os.path.expanduser("~"), "editor": editor.AVAILABLE,
-                "branches": self.branches.listed() if self.branches is not None else [],
-                **{k: v for a in apps.APPS for k, v in a.home(self.apps.get(a.name)).items()}}
+                "home_dir": os.path.expanduser("~"),
+                "branches": self.branches.listed() if self.branches is not None else []}
 
     def dialog(self, sid: str) -> Optional[dict]:
         """What a session's terminal -- the dashboard's -- shows asking the user now, where a message typed into it
@@ -301,12 +302,14 @@ class Server:
     def server_close(self) -> None:
         """Everything stopped: uvicorn (if it still serves), the parts, the socket, the sessions' agents and shells."""
         self._stop()
-        for part in (self.listener, self.fallback, self.rest, self.editors, self.crew, self.branches,
-                     *self.apps.values(), self.previews, self.app_host):
+        for part in (self.listener, self.fallback, self.rest, self.docs, self.crew, self.branches,
+                     self.app_host):
             if part is not None:
                 part.close()
         if self.keeps_actions:
             actions.ENABLED = False
+        if tool_gateway.HOST is self.app_host:          # the gateway's no longer: no session is given a closed host's
+            tool_gateway.HOST, tool_gateway.ORIGIN = None, ""
         if self.address_file:
             home.forget_address(self.address_file, sessions.DASHBOARD)
         if self.socket is not None:

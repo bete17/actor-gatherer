@@ -17,6 +17,13 @@ What it keeps, as events of the gatherer an instance was opened in (app_kit's HO
     app_attached  {by}: in the agent's channel
     app_detached  {by}
     app_call      {tool, ok}: a tool call it passed to the app, in the caller's channel (none: the user's)
+    app_notified  {id, key, title, text, show, where}: a notification the app sent the user (`notify`; app_kit's
+                  notices.py), open until
+    app_notice_settled  {id or key, how, by}: the app cleared it, or the user dismissed it (`settle_notice`)
+
+A notification is the user's, never an agent's: what the dashboard shows of an instance's open ones -- in its list, a
+pop-up -- it reads from these records (data.py's `app_notices`), as it reads an agent's status from its facts; the
+page told as each is written (`told`).
 
 A gatherer's are read once, the first time it is asked about (`_load`), and kept in memory after; what this host does
 is kept in memory at once and written behind, in order (`_write`). An app's own events and the context types it may
@@ -30,6 +37,7 @@ import importlib.util
 import json
 import os
 import queue
+import re
 import secrets
 import sqlite3
 import subprocess
@@ -44,11 +52,13 @@ from app_kit import App, AppError, Caller, Instance, Manifest, Response, ToolRes
 from . import home
 
 PATH_ENV = app_kit.finding.PATH_ENV
-WRITE_TRIES_SECONDS = 30.0      # a new gatherer has no database until its first call: its writes tried this long
+HELD_RETRY = 2.0                # a new gatherer has no database until its first call: its writes, held, tried this often
+HELD_MAX = 1000                 # the most writes held for one such gatherer: the oldest dropped past it
 PAGE_WAIT = 30.0                # seconds a tool its panel answers waits for a panel of the instance to be open
 TOOL_WAIT = 120.0               # and for the panel's answer
 READ_MAX = 2000
 NO_DATABASE = "no database for gatherer"
+TOLD = (*app_kit.NOTICE_TYPES, "app_closed")   # records that change what the page shows of the gatherer's apps
 
 
 def home_apps() -> str:
@@ -75,8 +85,8 @@ class _Sub:
     """A panel's following of an instance's events: what it reads, from which row on, and its queue of
     (name, value) for the stream (`api/apps.py`)."""
 
-    def __init__(self, app: str, instance: Instance, types: Tuple[str, ...], after: int):
-        self.app, self.instance, self.types, self.after = app, instance, types, after
+    def __init__(self, app: str, instance: Instance, types: Tuple[str, ...], after: int, messages: bool = True):
+        self.app, self.instance, self.types, self.after, self.messages = app, instance, types, after, messages
         self.queue: "queue.Queue" = queue.Queue()
         self.rung = True
 
@@ -92,12 +102,20 @@ class AppHost:
         self.instances: Dict[str, Instance] = {}
         self.attached: Dict[str, Set[str]] = {}                # an instance's id -> its agents' channels
         self.loaded: Set[str] = set()                          # the gatherers whose records were read
+        self.loaded_then: Optional[Callable[[str], None]] = None   # told each gatherer read (task_links.py's on_load)
+        # who may be attached, (gatherer, channel) -> bool: the server's (task_links.py's `attachable`: not a gatherer's
+        # own agent, which reaches every app attached to none); none set, anyone
+        self.attachable: Optional[Callable[[str, str], bool]] = None
         self.subs: List[_Sub] = []
         self.asked: Dict[str, dict] = {}                       # a call its panel answers, by its id: {done, result}
         self.page_wait, self.tool_wait = PAGE_WAIT, TOOL_WAIT
+        self.docs: Optional[app_kit.Docs] = None              # the dashboard's shared files (app_docs.py), once set
+        self.told: Optional[Callable[[str], None]] = None      # the page told a gatherer's notifications changed, as
+                                                               # written (the server's hub.ring)
         self.lock = threading.RLock()
         self._write_fn = write or _ag_insert
         self._writes: "queue.Queue" = queue.Queue()
+        self._held: Dict[str, List[tuple]] = {}               # a gatherer with no database yet: its writes, in order
         self._writer = threading.Thread(target=self._writing, name="app-host-writes", daemon=True)
         self._writer.start()
         self._rung: "queue.Queue" = queue.Queue()
@@ -167,7 +185,11 @@ class AppHost:
         return path
 
     def close(self) -> None:
-        """Every backend stopped, and what is left to write written."""
+        """Every backend stopped, and what is left to write written. Once: closed again, nothing more."""
+        with self.lock:
+            if getattr(self, "_closed", False):
+                return
+            self._closed = True
         for h in list(self.apps.values()):
             if h.app is not None:
                 try:
@@ -194,6 +216,12 @@ class AppHost:
         return {"apps": apps, "broken": broken, "instances": insts, "attached": attached}
 
     # -- instances
+
+    def instances_of(self, gatherer: str, app: Optional[str] = None) -> List[Instance]:
+        """The gatherer's open instances (of `app`), as they were opened."""
+        self._load(gatherer)
+        with self.lock:
+            return [i for i in self.instances.values() if i.gatherer == gatherer and (app is None or i.app == app)]
 
     def instance(self, gatherer: str, instance_id: str, app: Optional[str] = None) -> Instance:
         self._load(gatherer)
@@ -229,6 +257,83 @@ class AppHost:
         self._ring(made)
         return made
 
+    def adopt(self, name: str, gatherer: str, instance_id: str, folder: Optional[str], channel: str) -> Instance:
+        """An instance the app had before it was an app here -- its actor's stored role, {"<app>": key} -- kept as one
+        whose id is that key (its backend finds its own data by it: `open`'s args say `adopted`), the actor attached.
+        Once: the instance open already, only the attachment is made, if it is not."""
+        self._load(gatherer)
+        with self.lock:
+            i = self.instances.get(instance_id)
+        if i is None:
+            if not re.fullmatch(r"[0-9a-f]{16}", instance_id or ""):
+                raise AppError(f"{instance_id!r}: not an instance's id")
+            m = self.hosted(name).manifest
+            made = Instance(id=instance_id, app=name, gatherer=gatherer,
+                            folder=os.path.realpath(folder) if folder else None)
+            if m.backend.python or m.backend.command:
+                got = self.backend(name).open(made, {"adopted": True})
+                made = Instance(id=made.id, app=name, gatherer=gatherer, folder=made.folder, title=got.title,
+                                data=dict(got.data))
+            with self.lock:
+                self.instances[made.id] = made
+                self.attached.setdefault(made.id, set())
+            self._record(made, "app_opened", {"instance": made.to_dict(), "by": "adopted"})
+            i = made
+        elif i.app != name or i.gatherer != gatherer:
+            raise AppError(f"{instance_id}: an instance of {i.app} in {i.gatherer}", 409)
+        if channel:
+            self.attach(gatherer, i.id, channel, by="adopted")
+        return i
+
+    def native_link(self, send: Callable[[str], None], close: Callable[[], None]) -> Callable[[Optional[str]], None]:
+        """The ag desktop app connected (api/apps.py's /api/desktop; desktop.py): its link handed to each app that asks
+        `native_view` and runs inside the dashboard (App.native) -- each message the app sends tagged with its name
+        ("app"), so the desktop app keeps each app's pages apart; each message from the desktop app given to the app it
+        names (naming none, as a desktop app from before apps did: the only such app). Returns what takes each message
+        from the desktop app (None: the link gone)."""
+        takers: Dict[str, Callable[[Optional[str]], None]] = {}
+        for name, h in sorted(self.apps.items()):
+            m = h.manifest
+            if not m.capabilities.native_view or not m.backend.python:
+                continue
+            try:
+                took = self.backend(name).native(lambda text, n=name: send(_tagged(text, n)), close)
+            except Exception:  # noqa: BLE001 - an app that fails to take it goes without its native pages
+                took = None
+            if took is not None:
+                takers[name] = took
+
+        def got(text: Optional[str]) -> None:
+            if text is None:
+                for take in takers.values():
+                    take(None)
+                return
+            try:
+                name = json.loads(text).get("app")
+            except (ValueError, AttributeError):
+                return
+            if name is None and len(takers) == 1:
+                name = next(iter(takers))
+            take = takers.get(name)
+            if take is not None:
+                take(text)
+        return got
+
+    def guard(self, gatherer: str, channel: str, path: str) -> Optional[str]:
+        """Why the agent must not change `path` with its harness's own edit tools: the first refusal of an app it is
+        attached to whose manifest asks `edit_guard` (App.guard); None: it may."""
+        for i in self.attached_to(gatherer, channel):
+            h = self.hosted(i.app)
+            if not h.manifest.capabilities.edit_guard:
+                continue
+            try:
+                said = self.backend(i.app).guard(i, path, Caller(channel=channel, gatherer=gatherer))
+            except Exception:  # noqa: BLE001 - an app that fails to say lets the edit be
+                said = None
+            if said:
+                return str(said)
+        return None
+
     def close_instance(self, gatherer: str, instance_id: str, by: str = "user") -> None:
         i = self.instance(gatherer, instance_id)
         m = self.hosted(i.app).manifest
@@ -242,11 +347,21 @@ class AppHost:
         self._record(i, "app_closed", {"by": by})
         self._ring(i)
 
+    def sleep_instance(self, gatherer: str, instance_id: str) -> None:
+        """The instance put to sleep (its task closed: task_links.py): its backend lets go of what runs for it, the
+        instance kept open, its agents attached -- used again, it comes back as it was (App.sleep)."""
+        i = self.instance(gatherer, instance_id)
+        m = self.hosted(i.app).manifest
+        if m.backend.python or m.backend.command:
+            self.backend(i.app).sleep(i)
+
     def attach(self, gatherer: str, instance_id: str, channel: str, by: str = "user") -> None:
         """An agent attached to the instance: its tool calls go to it, and the app may tell it what it does."""
         i = self.instance(gatherer, instance_id)
         if not channel:
             raise AppError("attach: which agent (its channel)?")
+        if self.attachable is not None and not self.attachable(gatherer, channel):
+            raise AppError(f"{channel}: a gatherer's own agent is attached to no app: it reaches every one without", 403)
         with self.lock:
             if channel in self.attached.setdefault(i.id, set()):
                 return
@@ -268,6 +383,34 @@ class AppHost:
         if h.app is not None:
             h.app.detached(i, channel)
         self._ring(i)
+
+    # -- notifications to the user
+
+    def notify(self, name: str, instance: Instance, title: Any, text: Any = "", key: Any = None, show: Any = ("ag",),
+               where: Any = None) -> str:
+        """A notification of app `name`'s to the user (app_kit's Host.notify), for one whose manifest asks `notify`:
+        recorded in the instance's gatherer (`app_notified`), the page told once it is written. -> its id."""
+        m = self.hosted(name).manifest
+        if instance.app != name:
+            raise AppError(f"{instance.id}: not an instance of {name}", 403)
+        if not m.capabilities.notify:
+            raise AppError(f"{m.label} does not ask to send notifications (capabilities.notify)", 403)
+        made = app_kit.notices.made(title, text, key, show, where)
+        self._record(instance, "app_notified", made)
+        return made["id"]
+
+    def settle_notice(self, gatherer: str, instance_id: str, which: Any, by: str = "user",
+                      name: Optional[str] = None) -> None:
+        """The instance's open notification `which` (its id, or every one of that key) settled: dismissed by the user,
+        or cleared by its app (`name`, by "app")."""
+        i = self.instance(gatherer, instance_id, name)
+        how = "cleared" if by == "app" else "dismissed"
+        self._record(i, "app_notice_settled", {**app_kit.notices.settled(which, how), "by": by})
+
+    def panels_of(self, instance: Instance) -> int:
+        """How many panels of the instance are open: its streams that take its backend's messages."""
+        with self.lock:
+            return sum(1 for s in self.subs if s.instance.id == instance.id and s.messages)
 
     def agents_of(self, instance: Instance) -> List[str]:
         with self.lock:
@@ -345,17 +488,18 @@ class AppHost:
     # -- tools and the panel's own requests
 
     def call(self, name: str, instance: Instance, tool: str, args: dict, caller: Caller,
-             from_panel: bool = False) -> ToolResult:
+             from_panel: bool = False, reaches_all: bool = False) -> ToolResult:
         """A call of the app's tool, by an agent attached to the instance (or the user, through the panel:
-        `caller.channel` None), kept as `app_call`: to its backend, or -- a tool its panel answers -- to an open panel
-        of the instance (`ask_panel`). A refusal is an error result, as the agent reads it."""
+        `caller.channel` None; or, `reaches_all`, a gatherer's own agent, attached to none), kept as `app_call`: to its
+        backend, or -- a tool its panel answers -- to an open panel of the instance (`ask_panel`). A refusal is an error
+        result, as the agent reads it."""
         m = self.hosted(name).manifest
         t = m.tool(tool)
         if instance.app != name or t is None:
             return ToolResult.error(f"{tool}: not a tool of {m.label}")
         if t.handled_by == "panel" and from_panel:
             return ToolResult.error(f"{tool}: its panel answers it, not its backend")
-        if caller.channel is not None and caller.channel not in self.agents_of(instance):
+        if caller.channel is not None and not reaches_all and caller.channel not in self.agents_of(instance):
             return ToolResult.error(f"not attached to this {m.label}")
         try:
             got = self.ask_panel(name, instance, tool, dict(args or {}), caller) if t.handled_by == "panel" else \
@@ -373,7 +517,7 @@ class AppHost:
         `tool_wait` for its answer."""
         label = self.hosted(name).manifest.label
         end = time.time() + self.page_wait
-        while not any(s.instance.id == instance.id for s in list(self.subs)):
+        while not any(s.instance.id == instance.id and s.messages for s in list(self.subs)):
             if time.time() >= end:
                 return ToolResult.error(f"{tool}: {label}'s panel answers it, and none is open: ask the user to "
                                         f"open {label}")
@@ -408,14 +552,16 @@ class AppHost:
 
     # -- live
 
-    def subscribe(self, name: str, instance: Instance, types: Sequence[str], after: int = 0) -> Tuple[_Sub, Callable]:
-        """A panel following the instance: each new event of `types` as ("event", row), each message its backend
-        sends its panels as ("message", value), on the subscription's queue; and how to stop."""
+    def subscribe(self, name: str, instance: Instance, types: Sequence[str], after: int = 0,
+                  messages: bool = True) -> Tuple[_Sub, Callable]:
+        """A panel following the instance: each new event of `types` as ("event", row) and -- with `messages`: one
+        stream of a panel's has them, so a tool call reaches it once -- each message its backend sends its panels as
+        ("message", value), on the subscription's queue; and how to stop."""
         m = self.hosted(name).manifest
         refused = [t for t in types if not m.may_read(t)]
         if refused:
             raise AppError(f"{', '.join(refused)}: not event types {name} may read", 403)
-        sub = _Sub(name, instance, tuple(types), after)
+        sub = _Sub(name, instance, tuple(types), after, messages)
         with self.lock:
             self.subs.append(sub)
         self._rung.put(instance.gatherer)
@@ -428,7 +574,7 @@ class AppHost:
 
     def tell(self, instance: Instance, message: Any) -> None:
         with self.lock:
-            subs = [s for s in self.subs if s.instance.id == instance.id]
+            subs = [s for s in self.subs if s.instance.id == instance.id and s.messages]
         for s in subs:
             s.queue.put(("message", message))
 
@@ -477,33 +623,74 @@ class AppHost:
         self._writes.put((gatherer, properties, events, types))
 
     def flush(self, timeout: float = 30.0) -> None:
-        """Everything handed to be written, written (for tests, and before a read that needs it)."""
+        """Everything handed to be written, written (for tests, and before a read that needs it); at once, closed. A
+        write held for a gatherer with no database yet (`_writing`) is not waited for: it can't be read either."""
+        if not self._writer.is_alive():
+            return
         done = threading.Event()
         self._writes.put(done)
         done.wait(timeout)
 
     def _writing(self) -> None:
+        """The writes, in order, one at a time. A gatherer with no database yet (a new one, before its first agent's
+        first call) holds its writes -- the later ones behind the first, in order -- and they are tried again every
+        HELD_RETRY seconds once its database is there, never holding up another gatherer's writes, nor a flush."""
         while True:
-            item = self._writes.get()
+            try:
+                item = self._writes.get(timeout=HELD_RETRY if self._held else None)
+            except queue.Empty:
+                self._retry_held()
+                continue
             if item is None:
+                for gatherer, held in self._held.items():
+                    print(f"dashboard: apps' {len(held)} record(s) not kept in {gatherer}: it has no database yet",
+                          file=sys.stderr, flush=True)
                 return
             if isinstance(item, threading.Event):
                 item.set()
                 continue
-            gatherer, props, events, types = item
-            end = time.time() + WRITE_TRIES_SECONDS
-            while True:
-                try:
-                    self._write_fn(gatherer, props, events, types)
+            gatherer = item[0]
+            if gatherer in self._held:
+                self._hold(item)
+                self._retry_held()
+                continue
+            self._write_one(item)
+
+    def _write_one(self, item: tuple) -> bool:
+        """One write; False if its gatherer has no database yet (held, then)."""
+        gatherer, props, events, types = item
+        try:
+            self._write_fn(gatherer, props, events, types)
+        except Exception as exc:  # noqa: BLE001 - a lost record is a line in the log, never the reader's
+            if NO_DATABASE in str(exc):
+                self._hold(item)
+                return False
+            print(f"dashboard: apps' {', '.join(e['type'] for e in events)} not kept in {gatherer}: {exc}",
+                  file=sys.stderr, flush=True)
+        self.rung(gatherer)
+        if self.told is not None and any(e["type"] in TOLD for e in events):
+            try:
+                self.told(gatherer)
+            except Exception:  # noqa: BLE001 - the page reads it next time all the same
+                pass
+        return True
+
+    def _hold(self, item: tuple) -> None:
+        held = self._held.setdefault(item[0], [])
+        held.append(item)
+        if len(held) > HELD_MAX:
+            del held[0]
+
+    def _retry_held(self) -> None:
+        """Each gatherer's held writes, in order, once its database is there."""
+        for gatherer in list(self._held):
+            if not os.path.exists(home.db_path(gatherer)):
+                continue
+            held = self._held.pop(gatherer)
+            for n, item in enumerate(held):
+                if not self._write_one(item):                       # (held again: the rest after it, as they were)
+                    self._held[gatherer] = self._held.get(gatherer, []) + held[n + 1:]
                     break
-                except Exception as exc:  # noqa: BLE001 - a lost record is a line in the log, never the reader's
-                    if NO_DATABASE in str(exc) and time.time() < end:
-                        time.sleep(2)
-                        continue
-                    print(f"dashboard: apps' {', '.join(e['type'] for e in events)} not kept in {gatherer}: {exc}",
-                          file=sys.stderr, flush=True)
-                    break
-            self.rung(gatherer)
 
     def _load(self, gatherer: str) -> None:
         """The gatherer's apps' records read, once: its open instances and their agents."""
@@ -532,6 +719,20 @@ class AppHost:
                 if inst.app in self.apps:                          # an app no longer found: its instances wait for it
                     self.instances.setdefault(i, inst)
                     self.attached.setdefault(i, set()).update(attached.get(i, ()))
+        if self.loaded_then is not None:
+            try:
+                self.loaded_then(gatherer)
+            except Exception:  # noqa: BLE001 - what is told of it is not what reads it
+                pass
+
+
+def _tagged(text: str, app: str) -> str:
+    """A message of an app's to the desktop app, its name on it ("app")."""
+    try:
+        m = json.loads(text)
+    except ValueError:
+        return text
+    return json.dumps({**m, "app": app}) if isinstance(m, dict) else text
 
 
 class Bound(app_kit.Host):
@@ -563,6 +764,24 @@ class Bound(app_kit.Host):
         with self._host.lock:
             return [i for i in self._host.instances.values() if i.app == self._name]
 
+    def panels(self, instance):
+        return self._host.panels_of(self._own(instance))
+
+    def notify(self, instance, title, text="", key=None, show=("ag",), where=None):
+        return self._host.notify(self._name, self._own(instance), title, text, key, show, where)
+
+    def clear_notice(self, instance, which):
+        i = self._own(instance)
+        self._host.settle_notice(i.gatherer, i.id, which, by="app", name=self._name)
+
+    def docs(self):
+        m = self._host.hosted(self._name).manifest
+        if not m.capabilities.docs:
+            raise AppError(f"{self._name} does not ask for the host's shared files (capabilities.docs)", 403)
+        if self._host.docs is None:
+            raise AppError("this host has no shared files", 404)
+        return self._host.docs
+
     def instance_of(self, d: dict) -> Instance:
         """The instance an app in its own process names (remote.py's `host_ops`): one of its own, as the host has it."""
         return self._host.instance(str(d.get("gatherer") or ""), str(d.get("id") or ""), self._name)
@@ -575,6 +794,16 @@ def _instance_key(instances: str, folder: Optional[str]) -> Optional[str]:
     if instances == "one" or not folder:
         return None
     real = os.path.realpath(folder)
+    if instances == "per-repository":                  # a worktree's: its repository's, as its other worktrees'
+        try:
+            common = subprocess.run(["git", "-C", real, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                                    capture_output=True, text=True, timeout=5, stdin=subprocess.DEVNULL)
+            got = common.stdout.strip()
+            if common.returncode == 0 and got:
+                return os.path.realpath(os.path.dirname(got) if os.path.basename(got) == ".git" else got)
+        except (OSError, subprocess.SubprocessError):
+            pass
+        instances = "per-checkout"
     if instances == "per-checkout":
         try:
             top = subprocess.run(["git", "-C", real, "rev-parse", "--show-toplevel"], capture_output=True, text=True,

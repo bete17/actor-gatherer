@@ -53,15 +53,32 @@ async function tellSeen(looked) {
 // the change is rung.
 let homesTaken = 0;
 const homeSince = (asked) => homesTaken !== asked;
+// THE TASKS of each gatherer (05-agent-list.js's TASKS) come in a home, in the apps' list and in a change's answer, each
+// read on the server at its `now`: those of a gatherer read before the ones the page has (`tasksRead`, the server's
+// clock) not taken -- a home read before a change can come after the change's own answer
+const tasksRead = new Map();
+function newerTasks(had, got, at, only = null) {
+  const next = { ...(had || {}) };
+  for (const g of only ? [only] : new Set([...Object.keys(next), ...Object.keys(got || {})])) {
+    if ((at || 0) < (tasksRead.get(g) || 0)) continue;
+    tasksRead.set(g, at || 0);
+    if (got && got[g]) next[g] = got[g]; else delete next[g];
+  }
+  return next;
+}
 // Each actor's key, and what the reader has seen of a new home: what the server kept (everything, before
 // it kept any); the selected actor, while the page is visible.
 function takeHome(home) {
   homesTaken++;
+  if (state.home) home.tasks = newerTasks(state.home.tasks, home.tasks, home.now);
+  else newerTasks({}, home.tasks, home.now);
   window.agNext.home(home);                        // the new code's store has it too (src/bridge.ts)
   for (const g of home.gatherers) for (const a of g.agents) {
     a.key = key(g.name, a.channel);
-    if (dwKey(a)) a.last_user_message = dwAsked(a.last_user_message);
-    else if (bwKey(a)) a.last_user_message = bwStrip(a.last_user_message);
+    if (a.last_user_message) {                     // an app's words: the user's -- and what in the app they are about
+      a.asked_of = appAskedOf(a.last_user_message);
+      a.last_user_message = appAsked(a, a.last_user_message);
+    }
   }
   if (state.selected) {                              // a codex session renamed to its thread: followed there
     const g = home.gatherers.find((x) => x.name === state.selected[0]);
@@ -74,11 +91,15 @@ function takeHome(home) {
     }
   }
   takeSeen(home);
+  dropGone(home);                                    // apps' notifications dismissed here, not yet by the server
   state.home = home;
   markSeen();
-  dwTell();
-  bwTellScheme();
+  appsAtWork();                                      // apps' panels told their agents' states; held while they work
+  heedHome();                                        // what came to want the reader since: popped up (07-notices.js)
 }
+// An app is looked at as an actor is: its panel shown (not held out of sight) -- while the page is in FRONT of the reader,
+// not only visible, as what it notified them of is said on the computer until then (07-notices.js) -- its newest
+// notification then seen (05-agent-list.js's appStatusOf), kept as the item "app:<its id>"; the list drawn again for it.
 function markSeen() {
   if (SNAPSHOT || PANE || !state.home || document.visibilityState !== "visible") return;
   const looked = [];
@@ -88,7 +109,15 @@ function markSeen() {
     if (!a || !a.last || (seen.at[a.key] || 0) >= a.last) continue;
     seen.at[a.key] = a.last; looked.push([gname, c, a.last]);
   }
+  let apps = false;
+  for (const p of document.hasFocus() ? panes.apps : []) {
+    const g = !p.held && state.home.gatherers.find((x) => x.name === p.instance.gatherer), got = g && (g.apps || {})[p.instance.id];
+    const k = got && appKey(g.name, p.instance.id);
+    if (!got || !got.last || (seen.at[k] || 0) >= got.last) continue;
+    seen.at[k] = got.last; looked.push([g.name, appItem(p.instance.id), got.last]); apps = true;
+  }
   tellSeen(looked);
+  if (apps) renderAgents();
 }
 document.addEventListener("visibilitychange", () => { if (state.home && document.visibilityState === "visible") { markSeen(); renderAgents(); } });
 

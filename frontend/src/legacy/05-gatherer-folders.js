@@ -29,7 +29,8 @@ function fileGatherers(names, id) {
     for (const n of names) { if (id === null) delete tree.filed[n]; else tree.filed[n] = id; }
   });
 }
-// Gatherers selected (⌘+click on a Mac, else Ctrl+click) to drag into a folder at once; Esc, or a drop, clears it
+// Gatherers selected (⌘+click on a Mac, else Ctrl+click: either key, as for an actor opened beside, rather than one
+// guessed from the platform the browser names) to drag into a folder at once; Esc, or a drop, clears it
 const gPicks = new Set();
 function clearGPicks() { if (gPicks.size) { gPicks.clear(); renderAgents(); } }
 document.addEventListener("keydown", (ev) => {
@@ -41,7 +42,7 @@ function dragGatherer(row, g) {
   if (SNAPSHOT || !treeOf(GF).folders.length || (state.renaming && isAt([state.renaming.g, state.renaming.c], g.name, null))) return row;
   row.classList.toggle("picked", gPicks.has(g.name));
   row.addEventListener("click", (ev) => {           // captured: before its name's button folds it
-    if (!(MAC ? ev.metaKey : ev.ctrlKey) || ev.target.closest(".g-acts")) return;
+    if (!(ev.metaKey || ev.ctrlKey) || ev.target.closest(".g-acts")) return;
     ev.preventDefault(); ev.stopPropagation();
     if (!gPicks.delete(g.name)) gPicks.add(g.name);
     renderAgents();

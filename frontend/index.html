@@ -32,6 +32,12 @@
             <div><h4>Chat's earlier turns</h4>
               <div class="views" id="chat-earlier" role="group" aria-label="Chat's earlier turns">
                 <button type="button" data-earlier-pick="messages" title="Your messages only: a click on one shows the agent's replies">Messages only</button><button type="button" data-earlier-pick="whole" title="Each with the agent's replies: a click on your message folds them">Whole</button></div></div>
+            <div><h4>Notifications</h4>
+              <div class="views" id="notify-actors" role="group" aria-label="Actors waiting for you or stopped on an error">
+                <button type="button" data-heed="actors:on" title="A pop-up when an actor comes to wait for you, or stops on an error">Actors too</button><button type="button" data-heed="actors:off" title="Only apps' notifications">Apps only</button></div>
+              <div class="views" id="notify-system" role="group" aria-label="On this computer">
+                <button type="button" data-heed="system:on" title="When the dashboard isn't in front: the computer's own notification too">On this computer too</button><button type="button" data-heed="system:off" title="Only in the dashboard">In the dashboard only</button></div>
+              <div class="row" id="notify-leave"></div></div>
             <div><h4>Hook servers</h4><div class="servers" id="servers"></div></div>
           </div>
         </div>
@@ -45,7 +51,7 @@
     <div class="side-grip" id="side-grip" role="separator" aria-orientation="vertical" title="Drag to resize · double-click: the width it had first"></div>
   </div>
   <div class="work">
-  <section class="ed-top" id="ed-top" hidden aria-label="Editor"></section>
+  <div class="top-row" id="top-row"></div>
   <div class="panes" id="panes">
     <section class="pane" id="pane-here">
       <div class="pane-top"><div class="pane-head" id="pane-head">

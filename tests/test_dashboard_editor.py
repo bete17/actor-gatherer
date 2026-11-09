@@ -1,6 +1,7 @@
-"""The Editor panel's shared files (ag_dashboard/editor.py): each file open there one Yjs document (pycrdt), which
-every page editing it shares, with the file on disk one more of its editors -- what is written to the file merged in,
-around what the pages typed and did not save -- and the server's /api/edit/*, through which the pages share it."""
+"""The files shared live (ag_dashboard/livedocs.py), as the Editor app edits them: each file open one Yjs document
+(pycrdt), which every page editing it shares, with the file on disk one more of its editors -- what is written to the
+file merged in, around what the pages typed and did not save -- and the Editor app's /api/edit/* on its own origin,
+through which its panels share it (app_kit.docs, ag_dashboard/app_docs.py)."""
 import base64
 import json
 import os
@@ -18,7 +19,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from ag_dashboard import editor  # noqa: E402
+from ag_dashboard import livedocs  # noqa: E402
 
 try:
     from pycrdt import Doc, Text
@@ -49,7 +50,7 @@ class ChangeTest(unittest.TestCase):
     def check(self, old, new):
         doc = Doc()
         doc["t"] = text = Text(old)
-        editor.change(text, new)
+        livedocs.change(text, new)
         self.assertEqual(str(text), new)
 
     def test_it_makes_the_text_exactly_the_new_one(self):
@@ -72,7 +73,7 @@ class ChangeTest(unittest.TestCase):
         page.apply_update(base.get_update())
         disk.apply_update(base.get_update())
         page.get("text", type=Text).insert(len("one\ntw"), "(o)")
-        editor.change(disk.get("text", type=Text), "one\ntwo\nTHREE\n")
+        livedocs.change(disk.get("text", type=Text), "one\ntwo\nTHREE\n")
         page.apply_update(disk.get_update())
         self.assertEqual(str(page.get("text", type=Text)), "one\ntw(o)o\nTHREE\n")
 
@@ -83,7 +84,7 @@ class MergeTest(unittest.TestCase):
     BASE = "a\nb\nc\nd\ne\n"
 
     def check(self, mine, theirs, merged, conflicts=()):
-        text, found, _ = editor.merge(self.BASE, mine, theirs)
+        text, found, _ = livedocs.merge(self.BASE, mine, theirs)
         self.assertEqual(text, merged)
         self.assertEqual([(text[s:e], t) for s, e, _, t, _ in found], list(conflicts))
 
@@ -100,42 +101,42 @@ class MergeTest(unittest.TestCase):
         self.check(self.BASE + "mine\n", self.BASE + "theirs\n", self.BASE + "mine\n", [("mine\n", "theirs\n")])
 
     def test_lines_guarded_are_a_conflict_when_theirs_changes_them(self):
-        text, found, _ = editor.merge(self.BASE, self.BASE, "a\nB\nc\nd\nE\n", guard=[(1, 2)])
+        text, found, _ = livedocs.merge(self.BASE, self.BASE, "a\nB\nc\nd\nE\n", guard=[(1, 2)])
         self.assertEqual(text, "a\nb\nc\nd\nE\n")                       # unguarded: merged
         self.assertEqual([(text[s:e], t, zone) for s, e, _, t, zone in found], [("b\n", "B\n", True)])
 
     def test_lines_put_in_inside_a_guarded_range_are_a_conflict_at_its_edges_not(self):
-        inside = editor.merge(self.BASE, self.BASE, "a\nb\nNEW\nc\nd\ne\n", guard=[(1, 3)])
+        inside = livedocs.merge(self.BASE, self.BASE, "a\nb\nNEW\nc\nd\ne\n", guard=[(1, 3)])
         self.assertEqual(inside[0], self.BASE)
         self.assertEqual([(t, zone) for _, _, _, t, zone in inside[1]], [("NEW\n", True)])
         for theirs in ("a\nNEW\nb\nc\nd\ne\n", "a\nb\nc\nNEW\nd\ne\n"):   # just before it, just after it
-            self.assertEqual(editor.merge(self.BASE, self.BASE, theirs, guard=[(1, 3)])[:2], (theirs, []))
+            self.assertEqual(livedocs.merge(self.BASE, self.BASE, theirs, guard=[(1, 3)])[:2], (theirs, []))
 
     def test_a_change_beside_a_guarded_line_mine_changed_merges(self):
         mine = "a\nb\nMINE\nd\ne\n"                                        # mine's line 2, guarded
-        text, found, _ = editor.merge(self.BASE, mine, "a\nb\nc\nNEW\nd\ne\n", guard=[(2, 3)])
+        text, found, _ = livedocs.merge(self.BASE, mine, "a\nb\nc\nNEW\nd\ne\n", guard=[(2, 3)])
         self.assertEqual((text, found), ("a\nb\nMINE\nNEW\nd\ne\n", []))
-        text, found, _ = editor.merge(self.BASE, mine, "a\nb\nc\nd\nE\n", guard=[(2, 3)])
+        text, found, _ = livedocs.merge(self.BASE, mine, "a\nb\nc\nd\nE\n", guard=[(2, 3)])
         self.assertEqual((text, found), ("a\nb\nMINE\nd\nE\n", []))
 
     def test_a_guarded_line_is_found_after_lines_mine_put_in_before_it(self):
         mine = "a\nNEW1\nNEW2\nb\nc\nd\ne\n"                              # base's c is mine's line 4, guarded
-        text, found, _ = editor.merge(self.BASE, mine, "a\nb\nC\nd\ne\n", guard=[(1, 3), (4, 5)])
+        text, found, _ = livedocs.merge(self.BASE, mine, "a\nb\nC\nd\ne\n", guard=[(1, 3), (4, 5)])
         self.assertEqual([(text[s:e], t, zone) for s, e, _, t, zone in found], [("c\n", "C\n", True)])
 
     def test_guarded_lines_are_mine_s_not_base_s(self):
         mine = "TOP\n" + self.BASE                                          # a line put in here: base's line 1 is mine's 2
-        text, found, _ = editor.merge(self.BASE, mine, "a\nB\nc\nd\ne\n", guard=[(2, 3)])
+        text, found, _ = livedocs.merge(self.BASE, mine, "a\nB\nc\nd\ne\n", guard=[(2, 3)])
         self.assertEqual([(text[s:e], t) for s, e, _, t, _ in found], [("b\n", "B\n")])
 
     def test_it_counts_what_only_mine_has(self):
-        self.assertEqual(editor.merge(self.BASE, "a\nB\nc\nd\ne\n", self.BASE)[2], 1)
-        self.assertEqual(editor.merge(self.BASE, self.BASE, "a\nB\nc\nd\ne\n")[2], 0)
+        self.assertEqual(livedocs.merge(self.BASE, "a\nB\nc\nd\ne\n", self.BASE)[2], 1)
+        self.assertEqual(livedocs.merge(self.BASE, self.BASE, "a\nB\nc\nd\ne\n")[2], 0)
 
 
 @unittest.skipIf(Doc is None, "pycrdt is not installed")
-class RoomTest(unittest.TestCase):
-    """A file open for editing: what pages send, what the disk does, and what is saved."""
+class RoomBase(unittest.TestCase):
+    """A file open for editing, and pages' edits of it, by hand."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -143,7 +144,7 @@ class RoomTest(unittest.TestCase):
         self.root = os.path.realpath(self.tmp.name)
         self.path = os.path.join(self.root, "notes.py")
         self.write("def f():\n    return 1\n\nx = f()\n")
-        self.editors = editor.Editors(poll=3600)      # looked at by hand here (`check`)
+        self.editors = livedocs.LiveDocs(poll=3600)      # looked at by hand here (`check`)
         self.addCleanup(self.editors.close)
 
     def write(self, text: str) -> None:
@@ -167,6 +168,24 @@ class RoomTest(unittest.TestCase):
         before = doc.get_state()
         doc.get("text", type=Text).insert(at, what)
         room.edit(cid, doc.get_update(before))
+
+    def edit(self, room, cid, doc, old: str, new: str) -> None:
+        """A page's edit: `old`'s first appearance made `new`."""
+        text, before = doc.get("text", type=Text), doc.get_state()
+        at = len(str(text)[:str(text).index(old)].encode())
+        del text[at:at + len(old.encode())]
+        text.insert(at, new)
+        room.edit(cid, doc.get_update(before))
+
+    def sync(self, conn, doc) -> None:
+        """The page's copy, with what it was sent since (another's edits, an actor's, the disk's)."""
+        for name, v in drain(conn):
+            if name == "update":
+                doc.apply_update(base64.b64decode(v["update"]))
+
+
+class RoomTest(RoomBase):
+    """A file open for editing: what pages send, what the disk does, and what is saved."""
 
     def test_a_page_opens_the_file_as_it_is(self):
         room, conn, doc, text = self.open("p1")
@@ -203,14 +222,6 @@ class RoomTest(unittest.TestCase):
         room.save()
         self.assertEqual(self.disk(), merged)
         self.assertFalse(room.dirty)
-
-    def edit(self, room, cid, doc, old: str, new: str) -> None:
-        """A page's edit: `old`'s first appearance made `new`."""
-        text, before = doc.get("text", type=Text), doc.get_state()
-        at = len(str(text)[:str(text).index(old)].encode())
-        del text[at:at + len(old.encode())]
-        text.insert(at, new)
-        room.edit(cid, doc.get_update(before))
 
     def region(self, room, conflict: dict) -> str:
         """A conflict's lines, as the page finds them: its UTF-16 positions in the document."""
@@ -257,7 +268,7 @@ class RoomTest(unittest.TestCase):
         room.settle(c["id"], "mine")
         self.assertIn("return 3", str(room.text))
         self.assertTrue(room.dirty)                                      # the file has the actor's: a save writes mine
-        with self.assertRaisesRegex(editor.EditorError, "settled already"):
+        with self.assertRaisesRegex(livedocs.DocError, "settled already"):
             room.settle(c["id"], "theirs")
 
     def test_a_conflict_s_lines_move_with_edits_before_them(self):
@@ -274,7 +285,7 @@ class RoomTest(unittest.TestCase):
         room, conn, doc, text = self.open("p1")
         self.type(room, "p1", doc, len(str(text)), "y = 3\n")
         self.write("def f():\n    return 1\n\nx = f()\nz = 9\n")    # not looked at before the save
-        with self.assertRaisesRegex(editor.EditorError, "see the conflicts"):
+        with self.assertRaisesRegex(livedocs.DocError, "see the conflicts"):
             room.save()
         self.assertTrue(self.disk().endswith("z = 9\n"))               # the actor's line still there
         [c] = room.state()["conflicts"]
@@ -431,11 +442,11 @@ class RoomTest(unittest.TestCase):
         self.write("def f():\n    return 7\n\nx = f()\n")              # the actor again, while the box was open
         room.check()
         [c] = room.state()["conflicts"]
-        with self.assertRaisesRegex(editor.EditorError, "its lines changed again"):
+        with self.assertRaisesRegex(livedocs.DocError, "its lines changed again"):
             room.settle(c["id"], "edited", "    return 6 + 1\n", theirs="    return 6\n", mine="    return 5\n")
-        with self.assertRaisesRegex(editor.EditorError, "your lines changed"):
+        with self.assertRaisesRegex(livedocs.DocError, "your lines changed"):
             room.settle(c["id"], "edited", "    return 7 + 1\n", theirs="    return 7\n", mine="    return 4\n")
-        with self.assertRaisesRegex(editor.EditorError, "the lines, please"):
+        with self.assertRaisesRegex(livedocs.DocError, "the lines, please"):
             room.settle(c["id"], "edited")
         self.assertEqual(len(room.conflicts), 1)                         # still there, to look at again
         room.settle(c["id"], "edited", "", theirs="    return 7\n", mine="    return 5\n")   # all taken out
@@ -461,7 +472,7 @@ class RoomTest(unittest.TestCase):
         room.leave(conn)
         self.editors.look()
         self.assertTrue(room.zone)                                       # its stream may come back: kept a moment
-        room.idle_since -= editor.ZONE_GRACE + 1
+        room.idle_since -= livedocs.ZONE_GRACE + 1
         self.editors.look()
         self.assertEqual(room.zone, [])
 
@@ -508,7 +519,7 @@ class RoomTest(unittest.TestCase):
             fh.write("x\n")
         other, oc = self.editors.join(clean, self.root, "p2", 2)
         other.leave(oc)
-        with mock.patch.object(editor, "LINGER", 0.0):
+        with mock.patch.object(livedocs, "LINGER", 0.0):
             self.editors.poll = 0.01
             self.editors.stop.set()
             self.editors.thread.join()
@@ -533,19 +544,19 @@ class RoomTest(unittest.TestCase):
                            (os.path.join(self.root, "latin.txt"), "not UTF-8"),
                            (os.path.join(self.root, "none.txt"), "does not exist"), (self.root, "not a file"),
                            ("notes.py", "absolute")]:
-            with self.assertRaisesRegex(editor.EditorError, said):
+            with self.assertRaisesRegex(livedocs.DocError, said):
                 self.editors.join(path, self.root, "p", 1)
-        with mock.patch.object(editor, "MAX_BYTES", 10):
-            with self.assertRaisesRegex(editor.EditorError, "too large"):
+        with mock.patch.object(livedocs, "MAX_BYTES", 10):
+            with self.assertRaisesRegex(livedocs.DocError, "too large"):
                 self.editors.join(self.path, self.root, "p", 1)
 
     def test_a_new_file_or_folder_and_the_folders_above_it(self):
-        got = editor.create(os.path.join(self.root, "new.py"), self.root)
+        got = livedocs.create(os.path.join(self.root, "new.py"), self.root)
         self.assertEqual(got, {"path": os.path.join(self.root, "new.py"), "dir": False})
         self.assertEqual(os.path.getsize(got["path"]), 0)
-        got = editor.create(os.path.join(self.root, "pkg", "sub"), self.root, folder=True)
+        got = livedocs.create(os.path.join(self.root, "pkg", "sub"), self.root, folder=True)
         self.assertTrue(os.path.isdir(got["path"]) and got["dir"])
-        got = editor.create(os.path.join(self.root, "lib", "deep", "m.py"), self.root)   # "lib/deep/m.py": both made
+        got = livedocs.create(os.path.join(self.root, "lib", "deep", "m.py"), self.root)   # "lib/deep/m.py": both made
         self.assertTrue(os.path.isfile(got["path"]))
         self.assertTrue(os.path.isdir(os.path.join(self.root, "lib", "deep")))
 
@@ -557,14 +568,14 @@ class RoomTest(unittest.TestCase):
             if path.endswith("pkg/"):
                 os.makedirs(path)
                 said = "there already"
-            with self.assertRaisesRegex(editor.EditorError, said, msg=path):
-                editor.create(path, self.root)
+            with self.assertRaisesRegex(livedocs.DocError, said, msg=path):
+                livedocs.create(path, self.root)
         with open(self.path) as fh:                                      # what was there: left as it was
             self.assertTrue(fh.read())
 
     def test_a_link_out_of_the_root_is_refused(self):
         os.symlink("/etc/hosts", os.path.join(self.root, "hosts"))
-        with self.assertRaisesRegex(editor.EditorError, "not under"):
+        with self.assertRaisesRegex(livedocs.DocError, "not under"):
             self.editors.join(os.path.join(self.root, "hosts"), self.root, "p", 1)
 
     def test_the_listing(self):
@@ -573,20 +584,130 @@ class RoomTest(unittest.TestCase):
         os.makedirs(os.path.join(self.root, "node_modules"))
         with open(os.path.join(self.root, "a.txt"), "w") as fh:
             fh.write("a")
-        with open(os.path.join(self.root, ".x.py.123" + editor.TEMP), "w") as fh:
+        with open(os.path.join(self.root, ".x.py.123" + livedocs.TEMP), "w") as fh:
             fh.write("half written")
         room, conn, doc, text = self.open("p1")
         self.type(room, "p1", doc, 0, "#")
         got = self.editors.listing(self.root, self.root)
         self.assertEqual([e["name"] for e in got["entries"]], ["src", "a.txt", "notes.py"])
         notes = got["entries"][2]
-        self.assertEqual((notes["editors"], notes["dirty"]), (1, True))
-        self.assertEqual(got["entries"][1]["editors"], 0)
-        with self.assertRaisesRegex(editor.EditorError, "not under"):
+        self.assertEqual((notes["pages"], notes["dirty"]), (1, True))
+        self.assertEqual(got["entries"][1]["pages"], 0)
+        with self.assertRaisesRegex(livedocs.DocError, "not under"):
             self.editors.listing("/etc", self.root)
 
 
 @unittest.skipIf(Doc is None, "pycrdt is not installed")
+class PutTest(RoomBase):
+    """An actor's change put into a file open (Room.put), live or as proposals, and a page that asks about each change
+    on disk (Room.hold "ask")."""
+
+    BY = {"gatherer": "g", "channel": "c1", "via": "test"}
+
+    def put(self, room, old: str, new: str, how: str = "live", by=None):
+        seen = room.view((by or self.BY)["channel"] if how == "propose" else None)
+        self.assertIn(old, seen)
+        return room.put(seen, seen.replace(old, new, 1), by or self.BY, how)
+
+    def test_live_it_lands_at_once_in_its_hue_and_on_disk_without_what_was_not_saved(self):
+        room, conn, doc, text = self.open("p1")
+        self.type(room, "p1", doc, 0, "# typed, not saved\n")
+        got = self.put(room, "x = f()", "x = f() + 1")
+        self.assertEqual((got["landed"], got["held"], got["proposed"]), (1, [], []))
+        self.assertEqual(str(room.text), "# typed, not saved\ndef f():\n    return 1\n\nx = f() + 1\n")
+        self.assertEqual(self.disk(), "def f():\n    return 1\n\nx = f() + 1\n")    # its line only
+        self.assertTrue(room.dirty)
+        marks = room.state()["marks"]
+        self.assertEqual([(m["gatherer"], m["channel"]) for m in marks], [("g", "c1")])
+        raw = str(room.text)
+        self.assertEqual(raw[marks[0]["from"]:marks[0]["to"]], "x = f() + 1\n")
+        room.check()                                 # its own write is not a change on disk to merge
+        self.assertFalse(room.conflicts)
+
+    def test_live_a_change_to_lines_the_page_is_editing_is_held_for_it(self):
+        room, conn, doc, text = self.open("p1")
+        self.edit(room, "p1", doc, "return 1", "return 10")                 # in the conflict zone now
+        got = self.put(room, "    return 10\n", "    return 100\n")
+        self.assertEqual((got["landed"], len(got["held"])), (0, 1))
+        c = room.conflicts[got["held"][0]]
+        self.assertEqual((c.base, c.theirs, c.zone, c.agent["why"], c.agent["put"]),
+                         ("    return 10\n", "    return 100\n", True, "zone", True))
+        self.assertIn("return 10\n", str(room.text))
+        room.save()                                  # a save leaves it held: it is the actor's, not the disk's
+        self.assertIn(c.id, room.conflicts)
+        room.settle(c.id, "theirs")
+        self.assertIn("    return 100\n", str(room.text))
+        self.assertEqual(self.disk(), "def f():\n    return 100\n\nx = f()\n")
+
+    def test_proposed_nothing_changes_until_it_is_accepted_and_the_actor_builds_on_its_own(self):
+        room, conn, doc, text = self.open("p1")
+        was = self.disk()
+        got = self.put(room, "return 1", "return 2", "propose")
+        self.assertEqual(len(got["proposed"]), 1)
+        self.assertEqual((str(room.text), self.disk()), (was, was))
+        c = room.conflicts[got["proposed"][0]]
+        self.assertEqual((c.base, c.theirs, c.agent["why"]), ("    return 1\n", "    return 2\n", "approve"))
+        self.assertIn("return 2", room.view("c1"))                          # its own, in
+        self.assertNotIn("return 2", room.view("c2"))                       # another's, not
+        again = self.put(room, "return 2", "return 3", "propose")           # on its own: one proposal still
+        self.assertEqual(len(again["proposed"]), 1)
+        c = room.conflicts[again["proposed"][0]]
+        self.assertEqual((c.base, c.theirs), ("    return 1\n", "    return 3\n"))
+        self.put(room, "x = f()", "x = f() * 2", "propose")                 # another place: two
+        self.assertEqual(len([c for c in room.conflicts.values() if c.agent]), 2)
+        room.settle(c.id, "theirs")
+        self.assertEqual(self.disk(), "def f():\n    return 3\n\nx = f()\n")   # the one accepted, written
+        rest = next(c for c in room.conflicts.values() if c.agent)
+        room.settle(rest.id, "mine")
+        self.assertEqual(self.disk(), "def f():\n    return 3\n\nx = f()\n")
+        self.assertFalse(room.conflicts)
+
+    def test_a_proposal_over_lines_changed_since_is_not_accepted_as_it_was(self):
+        room, conn, doc, text = self.open("p1")
+        c = room.conflicts[self.put(room, "return 1", "return 2", "propose")["proposed"][0]]
+        self.edit(room, "p1", doc, "return 1", "return 7")
+        with self.assertRaisesRegex(livedocs.DocError, "changed since it was proposed"):
+            room.settle(c.id, "theirs")
+        room.settle(c.id, "mine")
+
+    def test_what_changed_meanwhile_is_merged_onto_and_refused_where_it_meets(self):
+        room, conn, doc, text = self.open("p1")
+        seen = room.view()
+        self.edit(room, "p1", doc, "x = f()", "y = f()")
+        room.put(seen, seen.replace("return 1", "return 5"), self.BY, "live")
+        self.assertEqual(str(room.text), "def f():\n    return 5\n\ny = f()\n")
+        self.sync(conn, doc)
+        self.assertEqual(str(text), str(room.text))   # the page has it as it landed
+        seen = room.view()
+        self.edit(room, "p1", doc, "return 5", "return 6")
+        with self.assertRaisesRegex(livedocs.DocError, "read it again"):
+            room.put(seen, seen.replace("return 5", "return 9"), self.BY, "live")
+
+    def test_a_page_that_asks_has_each_change_on_disk_asked_about_and_reject_puts_its_lines_back(self):
+        room, conn, doc, text = self.open("p1")
+        room.hold("p1", "ask")
+        self.assertTrue(room.state()["asking"])
+        self.write("def f():\n    return 2\n\nx = f()\n")            # not in the zone: still asked about
+        room.check()
+        (c,) = room.conflicts.values()
+        self.assertEqual((c.asked, c.zone, c.agent, c.theirs), (True, False, None, "    return 2\n"))
+        self.assertIn("return 1", str(room.text))
+        room.settle(c.id, "mine")
+        self.assertEqual(self.disk(), "def f():\n    return 1\n\nx = f()\n")    # put back on the file
+        self.write("def f():\n    return 3\n\nx = f()\n")
+        room.check()
+        (c,) = room.conflicts.values()
+        room.settle(c.id, "theirs")
+        self.assertEqual(str(room.text), "def f():\n    return 3\n\nx = f()\n")
+        room.hold("p1", "merge")                     # merged again, as before
+        self.write("def f():\n    return 4\n\nx = f()\n")
+        room.check()
+        self.assertFalse(room.conflicts)
+        self.assertIn("return 4", str(room.text))
+        with self.assertRaises(livedocs.DocError):
+            room.hold("p1", "sometimes")
+
+
 class WritersTest(unittest.TestCase):
     """Who changed each listed file, of the actors: what ag's hook found their tool calls did on disk (`file_touched`)."""
 
@@ -612,7 +733,7 @@ class WritersTest(unittest.TestCase):
         stamp = lambda ago: datetime.fromtimestamp(time.time() - ago, timezone.utc).isoformat()   # noqa: E731
         src = os.path.join(self.work, "src")
         conn.executemany("INSERT INTO events (inserted_at, event_type_id, payload_json, tokens, p_channel) VALUES (?, ?, ?, 0, ?)", [
-            (stamp(editor.RECENT + 600), 2, json.dumps({"call": "t5", "path": f"{src}/c.py", "how": "modified"}), "c3"),   # too long ago
+            (stamp(livedocs.RECENT + 600), 2, json.dumps({"call": "t5", "path": f"{src}/c.py", "how": "modified"}), "c3"),   # too long ago
             (stamp(300), 2, json.dumps({"call": "t1", "path": f"{src}/a.py", "how": "modified"}), "c1"),
             (stamp(60), 2, json.dumps({"call": "t2", "path": f"{src}/a.py", "how": "modified"}), "c1"),       # c1's latest
             (stamp(30), 2, json.dumps({"call": "t3", "path": f"{src}/a.py", "how": "modified"}), "c2"),       # a second actor on it
@@ -621,7 +742,7 @@ class WritersTest(unittest.TestCase):
             (stamp(10), 2, json.dumps({"call": "t6", "path": None, "how": None}), "c1")])                     # a call that touched no file
         conn.commit()
         conn.close()
-        self.editors = editor.Editors(poll=3600)
+        self.editors = livedocs.LiveDocs(poll=3600)
         self.addCleanup(self.editors.close)
 
     def test_a_file_changed_by_two_actors_lists_both_the_latest_first(self):
@@ -637,139 +758,10 @@ class WritersTest(unittest.TestCase):
         self.assertEqual([w["channel"] for w in got["src"]], ["c2", "c1"])
 
 
-def asked(text):
-    return ("user_message", {"role": "user", "content": [{"type": "text", "text": text}]})
-
-
-def bash(cid, command):
-    return ("tool_call", {"role": "assistant", "content": [{"type": "tool_use", "id": cid, "name": "Bash", "input": {"command": command}}]})
-
-
-class PlaceTest(unittest.TestCase):
-    """Where an actor's work is, the Editor opened from its pane shows: the folder holding all the files it changed
-    lately -- in its latest turn that changed any, and the last few minutes -- but not by git."""
-
-    def setUp(self):
-        import sqlite3
-        from ag_dashboard import files, home as dashboard_home
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        top = os.path.realpath(self.tmp.name)
-        self.saved, dashboard_home.HOME = dashboard_home.HOME, os.path.join(top, "home")
-        self.addCleanup(setattr, dashboard_home, "HOME", self.saved)
-        self.work, self.scratch, self.claude = (os.path.join(top, n) for n in ("work", "scratch", "claude"))
-        for d in ("src/app", "src/lib", "docs"):
-            os.makedirs(os.path.join(self.work, d))
-        # the test's own folder is in the system's temporary one: only `scratch` is, here
-        for patcher in (mock.patch.object(files, "TEMPORARY", (self.scratch,)), mock.patch.object(files, "HARNESS_FOLDERS", (self.claude,))):
-            patcher.start()
-            self.addCleanup(patcher.stop)
-        os.makedirs(os.path.join(dashboard_home.HOME, "gatherers", "g"))
-        self.conn = sqlite3.connect(os.path.join(dashboard_home.HOME, "gatherers", "g", "context.db"))
-        self.addCleanup(self.conn.close)
-        self.conn.executescript("""CREATE TABLE event_types (event_type_id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, created_at TEXT);
-            CREATE TABLE events (row_id INTEGER PRIMARY KEY, inserted_at TEXT NOT NULL, event_id TEXT, event_type_id INTEGER NOT NULL,
-              payload_json TEXT NOT NULL, tokens INTEGER NOT NULL, text TEXT, counted INTEGER, p_channel);""")
-
-    def add(self, channel: str, *events, ago: float = 3600.0) -> None:
-        """Events of `channel`, after those there, stored `ago` seconds back: (type, payload), each."""
-        from datetime import datetime, timezone
-        at = datetime.fromtimestamp(time.time() - ago, timezone.utc).isoformat()
-        for typ, payload in events:
-            got = self.conn.execute("SELECT event_type_id FROM event_types WHERE name = ?", (typ,)).fetchone()
-            tid = got[0] if got else self.conn.execute("INSERT INTO event_types (name) VALUES (?)", (typ,)).lastrowid
-            self.conn.execute("INSERT INTO events (inserted_at, event_type_id, payload_json, tokens, p_channel) VALUES (?, ?, ?, 0, ?)",
-                              (at, tid, json.dumps(payload), channel))
-        self.conn.commit()
-
-    def touched(self, channel: str, *changes, call: str = "t", ago: float = 3600.0) -> None:
-        """A call's changes, as ag's hook records them: (path, how), each."""
-        self.add(channel, *[("file_touched", {"call": call, "path": p, "how": how}) for p, how in changes], ago=ago)
-
-    def test_the_folder_holding_all_its_changes(self):
-        w = self.work
-        self.touched("c1", (f"{w}/src/app/a.py", "modified"), (f"{w}/src/lib/b.py", "created"), (f"{w}/src/lib/c.py", "deleted"),
-                     (f"{w}/docs/d.md", "read"), (f"{w}/docs/e.md", "hit"), (None, None))    # a read is no change
-        self.touched("c2", (f"{w}/docs/x.md", "modified"))                                   # another actor's
-        self.assertEqual(editor.place("g", "c1", w), os.path.join(w, "src"))
-        self.assertEqual(editor.place("g", "c2", w), os.path.join(w, "docs"))
-
-    def test_a_temporary_folder_ag_s_home_or_a_harness_s_own_is_not_the_work(self):
-        from ag_dashboard import home as dashboard_home
-        w = self.work
-        self.touched("c1", (f"{w}/src/app/a.py", "modified"), (f"{self.scratch}/notes.md", "created"),
-                     (f"{dashboard_home.HOME}/gatherers/g/context.db", "modified"),
-                     (f"{self.claude}/projects/-work/c1.jsonl", "modified"), (f"{self.claude}/projects/-work/memory/m.md", "created"))
-        self.assertEqual(editor.place("g", "c1", w), os.path.join(w, "src", "app"))
-
-    def test_under_its_working_directory_a_temporary_folder_is_its_work(self):
-        project = os.path.join(self.scratch, "project")
-        os.makedirs(os.path.join(project, "src"))
-        self.touched("c1", (f"{project}/src/a.py", "modified"), (f"{project}/README.md", "modified"),
-                     (f"{self.scratch}/other/notes.md", "created"))
-        self.assertEqual(editor.place("g", "c1", project), project)
-
-    def test_a_folder_since_removed_gives_the_nearest_still_there(self):
-        self.touched("c1", (f"{self.work}/src/gone/deeper/a.py", "deleted"))
-        self.assertEqual(editor.place("g", "c1", self.work), os.path.join(self.work, "src"))
-
-    def test_none_without_a_change_counted(self):
-        self.touched("c1", (f"{self.work}/src/app/a.py", "read"), (f"{self.scratch}/notes.md", "created"))
-        self.assertIsNone(editor.place("g", "c1", self.work))
-        self.assertIsNone(editor.place("g", "nobody", self.work))
-        self.assertIsNone(editor.place("no such gatherer", "c1", self.work))
-
-    def test_what_git_changed_is_not_its_work_but_what_the_command_names(self):
-        from ag_dashboard import files
-        w = self.work
-        self.add("c1", ("model_call", {"kind": "turn", "harness": "claude"}), asked("pull, then fix the docs"),
-                 bash("g1", f"cd {w} && git status --short; git pull -q origin main > docs/pull.log 2>&1"))
-        self.touched("c1", (f"{w}/src/app/a.py", "modified"), (f"{w}/src/lib/b.py", "created"), (f"{w}/docs/pull.log", "created"), call="g1")
-        self.add("c1", bash("b1", f"cd {w} && git status --short && sed -i '' 's/a/b/' docs/x.md"))   # git changing nothing
-        self.touched("c1", (f"{w}/docs/x.md", "modified"), call="b1")
-        self.assertEqual(files.lately_changed("g", "c1", w), [f"{w}/docs/pull.log", f"{w}/docs/x.md"])
-        self.assertEqual(editor.place("g", "c1", w), os.path.join(w, "docs"))
-
-    def test_a_change_no_call_names_is_not_its_work(self):
-        w = self.work
-        self.add("c1", ("file_touched", {"call": "e1", "path": f"{w}/docs/x.md", "how": "modified", "named": True}),
-                 ("file_touched", {"call": "b1", "path": f"{w}/src/app/a.py", "how": "modified", "named": False}))  # changed meanwhile
-        self.assertEqual(editor.place("g", "c1", w), os.path.join(w, "docs"))
-
-    def test_its_latest_turn_that_changed_files(self):
-        w = self.work
-        self.add("c1", asked("fix a"))
-        self.touched("c1", (f"{w}/src/app/a.py", "modified"), call="t1")
-        self.add("c1", asked("now b"))
-        self.touched("c1", (f"{w}/src/lib/b.py", "modified"), (f"{w}/src/lib/c.py", "created"), call="t2")
-        self.add("c1", asked("thanks"))                                                       # a turn that changed none
-        self.assertEqual(editor.place("g", "c1", w), os.path.join(w, "src", "lib"))
-
-    def test_and_what_it_changed_in_the_last_minutes(self):
-        w = self.work
-        self.add("c1", asked("write the docs"))
-        self.touched("c1", (f"{w}/docs/d.md", "created"), call="t1")                          # an hour ago
-        self.add("c1", asked("fix a"), ago=300)
-        self.touched("c1", (f"{w}/src/app/a.py", "modified"), call="t2", ago=290)
-        self.add("c1", asked("now b"), ago=60)
-        self.touched("c1", (f"{w}/src/lib/b.py", "modified"), call="t3", ago=50)
-        self.assertEqual(editor.place("g", "c1", w), os.path.join(w, "src"))
-
-    def test_the_page_asks_the_server(self):
-        from ag_dashboard import server
-        self.touched("c1", (f"{self.work}/src/app/a.py", "modified"), (f"{self.work}/src/lib/b.py", "modified"))
-        httpd = server.serve("127.0.0.1", 0, live_updates=False)
-        threading.Thread(target=httpd.serve_forever, daemon=True).start()
-        self.addCleanup(httpd.server_close)
-        self.addCleanup(httpd.shutdown)
-        q = urllib.parse.urlencode({"gatherer": "g", "channel": "c1", "cwd": self.work})
-        got = json.load(urllib.request.urlopen(f"http://127.0.0.1:{httpd.server_port}/api/edit/place?{q}", timeout=10))
-        self.assertEqual(got, {"dir": os.path.join(self.work, "src")})
-
-
 @unittest.skipIf(Doc is None, "pycrdt is not installed")
 class ServerTest(unittest.TestCase):
-    """The pages' side: a file opened by a stream, edited and saved by POSTs, through the dashboard's server."""
+    """The pages' side: a file opened by a stream, edited and saved by POSTs, through the dashboard's server -- the
+    Editor app's routes, on its own origin (editor.localhost), over the host's shared files."""
 
     def setUp(self):
         from ag_dashboard import home as dashboard_home, server
@@ -782,16 +774,21 @@ class ServerTest(unittest.TestCase):
         self.path = os.path.join(self.root, "a.md")
         with open(self.path, "w") as fh:
             fh.write("# Title\n\nBody.\n")
-        with mock.patch.object(editor, "POLL", 0.05):
+        with mock.patch.object(livedocs, "POLL", 0.05):
             self.httpd = server.serve("127.0.0.1", 0, live_updates=False)
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
         self.addCleanup(self.httpd.server_close)
         self.addCleanup(self.httpd.shutdown)
         self.url = f"http://127.0.0.1:{self.httpd.server_port}"
+        self.app = f"editor.localhost:{self.httpd.server_port}"
+
+    def get(self, path: str):
+        """A GET of the Editor app's, on its origin: the response."""
+        return urllib.request.urlopen(urllib.request.Request(self.url + path, headers={"Host": self.app}), timeout=10)
 
     def stream(self, conn: str, client: int) -> queue.Queue:
         q = urllib.parse.urlencode({"path": self.path, "root": self.root, "conn": conn, "client": client})
-        resp = urllib.request.urlopen(f"{self.url}/api/edit/stream?{q}", timeout=10)
+        resp = self.get(f"/api/edit/stream?{q}")
         self.addCleanup(resp.close)
         got = queue.Queue()
 
@@ -817,8 +814,10 @@ class ServerTest(unittest.TestCase):
                 return value
         self.fail(f"no {name}")
 
-    def post(self, path: str, body: dict, kind: str = "application/json"):
-        req = urllib.request.Request(self.url + path, data=json.dumps(body).encode(), headers={"Content-Type": kind})
+    def post(self, path: str, body: dict, own: bool = True):
+        """A POST of the Editor's panel (`own`: from its origin, as only its panel's are taken) -> its JSON."""
+        headers = {"Content-Type": "application/json", "Host": self.app, **({"Origin": f"http://{self.app}"} if own else {})}
+        req = urllib.request.Request(self.url + path, data=json.dumps(body).encode(), headers=headers)
         return json.load(urllib.request.urlopen(req, timeout=10))
 
     def test_two_pages_share_the_file_and_the_disk_s_changes(self):
@@ -848,38 +847,38 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(self.post("/api/edit/zone/clear", {"path": self.path, "root": self.root})["zone"], [])
 
     def test_the_listing_and_what_is_refused(self):
-        got = json.load(urllib.request.urlopen(
-            f"{self.url}/api/edit/list?{urllib.parse.urlencode({'dir': self.root, 'root': self.root})}", timeout=10))
+        got = json.load(self.get(f"/api/edit/list?{urllib.parse.urlencode({'dir': self.root, 'root': self.root})}"))
         self.assertEqual([e["name"] for e in got["entries"]], ["a.md"])
         with self.assertRaises(urllib.error.HTTPError) as no:
-            urllib.request.urlopen(f"{self.url}/api/edit/list?{urllib.parse.urlencode({'dir': '/etc', 'root': self.root})}", timeout=10)
+            self.get(f"/api/edit/list?{urllib.parse.urlencode({'dir': '/etc', 'root': self.root})}")
         self.assertEqual(no.exception.code, 400)
-        with self.assertRaises(urllib.error.HTTPError) as no:           # not the page's own: no JSON
-            self.post("/api/edit/save", {"path": self.path, "root": self.root}, kind="text/plain")
+        with self.assertRaises(urllib.error.HTTPError) as no:           # not its panel's own: from another origin
+            self.post("/api/edit/save", {"path": self.path, "root": self.root}, own=False)
         self.assertEqual(no.exception.code, 403)
         q = urllib.parse.urlencode({"path": "/etc/hosts", "root": self.root, "conn": "p", "client": 1})
-        with urllib.request.urlopen(f"{self.url}/api/edit/stream?{q}", timeout=10) as resp:
+        with self.get(f"/api/edit/stream?{q}") as resp:
             self.assertIn(b"event: failed", resp.read())
 
     def test_a_new_file_and_folder_made_by_the_page(self):
         made = self.post("/api/edit/create", {"path": os.path.join(self.root, "src", "b.py"), "root": self.root})
         self.assertEqual(made, {"path": os.path.join(self.root, "src", "b.py"), "dir": False})
         self.post("/api/edit/create", {"path": os.path.join(self.root, "docs"), "root": self.root, "dir": True})
-        got = json.load(urllib.request.urlopen(
-            f"{self.url}/api/edit/list?{urllib.parse.urlencode({'dir': self.root, 'root': self.root})}", timeout=10))
+        got = json.load(self.get(f"/api/edit/list?{urllib.parse.urlencode({'dir': self.root, 'root': self.root})}"))
         self.assertEqual([e["name"] for e in got["entries"]], ["docs", "src", "a.md"])
         with self.assertRaises(urllib.error.HTTPError) as no:           # there already
             self.post("/api/edit/create", {"path": self.path, "root": self.root})
         self.assertEqual(no.exception.code, 400)
-        with self.assertRaises(urllib.error.HTTPError) as no:           # not the page's own: no JSON
-            self.post("/api/edit/create", {"path": os.path.join(self.root, "c.py"), "root": self.root}, kind="text/plain")
+        with self.assertRaises(urllib.error.HTTPError) as no:           # not its panel's own: from another origin
+            self.post("/api/edit/create", {"path": os.path.join(self.root, "c.py"), "root": self.root}, own=False)
         self.assertEqual(no.exception.code, 403)
         self.assertFalse(os.path.exists(os.path.join(self.root, "c.py")))
 
-    def test_the_editor_is_served_and_said_to_be_there(self):
-        with urllib.request.urlopen(f"{self.url}/vendor/editor.js", timeout=10) as resp:
+    def test_the_editor_is_served_on_the_app_s_origin_not_the_dashboard_s(self):
+        with self.get("/vendor/editor.js") as resp:
             self.assertIn(b"agEditor", resp.read())
-        self.assertTrue(json.load(urllib.request.urlopen(f"{self.url}/api/home", timeout=10))["editor"])
+        with self.assertRaises(urllib.error.HTTPError) as no:
+            urllib.request.urlopen(f"{self.url}/vendor/editor.js", timeout=10)
+        self.assertEqual(no.exception.code, 404)
 
 
 if __name__ == "__main__":

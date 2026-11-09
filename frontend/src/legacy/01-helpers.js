@@ -111,27 +111,9 @@ function actorLogo(a) {
   const svg = SNAPSHOT && a.avatar && (SNAPSHOT.avatars || {})[a.avatar];
   const src = !a.avatar ? null : SNAPSHOT ? svg && "data:image/svg+xml," + encodeURIComponent(svg) : `/avatars/${a.avatar}.svg`;
   if (!src) return harnessLogo(a.harness);
-  const dw = !!dwKey(a), bw = !dw && !!bwKey(a);
-  return el("span", { class: "logo avatar" + (dw ? " dw" : bw ? " dw bw" : "") }, el("img", { src, alt: "", draggable: "false" }),
-    dw ? docwriterBadge() : bw ? browserBadge() : null, harnessBadge(a.harness));
-}
-// A Browser's actor's mark on its avatar: a globe, on blue.
-function browserBadge() {
-  const svg = svgEl("svg", { viewBox: "0 0 24 24", class: "dw-badge", role: "img", "aria-label": "Browser" });
-  const title = svgEl("title"); title.textContent = "Browser";
-  svg.append(title, svgEl("circle", { cx: 12, cy: 12, r: 12, fill: "#2563EB" }),
-    svgEl("path", { d: ICONS.globe, transform: "translate(4 4)", fill: "none", stroke: "#fff", "stroke-width": 1.5,
-      "stroke-linecap": "round", "stroke-linejoin": "round" }));
-  return svg;
-}
-// A DocWriter's actor's mark on its avatar: DocWriter's quill, on its violet.
-function docwriterBadge() {
-  const svg = svgEl("svg", { viewBox: "0 0 24 24", class: "dw-badge", role: "img", "aria-label": "DocWriter" });
-  const title = svgEl("title"); title.textContent = "DocWriter";
-  svg.append(title, svgEl("circle", { cx: 12, cy: 12, r: 12, fill: "#7C3AED" }),
-    svgEl("path", { d: ICONS.quill, transform: "translate(4 4)", fill: "none", stroke: "#fff", "stroke-width": 1.7,
-      "stroke-linecap": "round", "stroke-linejoin": "round" }));
-  return svg;
+  const mark = appMark(a);                            // an app's actor: its app's mark (19-app-actors.js)
+  return el("span", { class: "logo avatar" + (mark ? " dw" : "") }, el("img", { src, alt: "", draggable: "false" }),
+    mark, harnessBadge(a.harness));
 }
 // The words an actor at work says, in its avatar's hue (avatars/README.md's hues, assets/src/avatars/kit.py's
 // shades): its dark shade on a light page, halfway from its main shade to its light one on a dark page.
@@ -396,6 +378,10 @@ const ICONS = {
   list: "M5.75 4h7.75M5.75 8h7.75M5.75 12h7.75M2.5 4h.01M2.5 8h.01M2.5 12h.01",
   page: "M4.25 1.75h5l3 3v9a.5.5 0 0 1-.5.5h-7.5a.5.5 0 0 1-.5-.5v-11.5a.5.5 0 0 1 .5-.5zM9 1.75v3.25h3.25M5.75 8.25h4.5M5.75 11h4.5",
   layers: "M8 2.25l6 3-6 3-6-3zM2 8l6 3 6-3M2 10.75l6 3 6-3",
+  // an app (app_kit's): four tiles
+  app: "M3.5 2.5h3a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-3a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1zM9.5 2.5h3a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-3"
+    + "a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1zM3.5 8.5h3a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-3a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1zM9.5 8.5h3"
+    + "a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-3a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1z",
   panel: "M3.25 2.75h9.5a1.5 1.5 0 0 1 1.5 1.5v7.5a1.5 1.5 0 0 1-1.5 1.5h-9.5a1.5 1.5 0 0 1-1.5-1.5v-7.5a1.5 1.5 0 0 1 1.5-1.5zM9.75 2.75v10.5",
   sidebar: "M3.25 2.75h9.5a1.5 1.5 0 0 1 1.5 1.5v7.5a1.5 1.5 0 0 1-1.5 1.5h-9.5a1.5 1.5 0 0 1-1.5-1.5v-7.5a1.5 1.5 0 0 1 1.5-1.5zM6.25 2.75v10.5",
   pulse: "M1.5 8.5h2.75l1.75-4.25 2.5 7.5 2-5.5 1.25 2.25h2.75",   // what runs in the background: alive
@@ -428,15 +414,8 @@ const ICONS = {
   play: "M5 3.25v9.5L12.75 8z",                                        // run: the Editor's preview
   minimize: "M4 5.5 8 9.5l4-4M3 12.75h10",                             // the chat minimized under the Editor: down to a line
   restore: "M4 10.5 8 6.5l4 4M3 3.25h10",                              // and shown again: up from it
+  takeOut: "M9 2.75h3.25v10.5H9M10.25 8H3m2.5-2.75L2.75 8l2.75 2.75",  // out of its task: an arrow leaving a box
 };
-// A speech bubble: the actor can be messaged from the page; struck through, it could be but another
-// process has it open.
-function chatIcon(held) {
-  const svg = strokeIcon(ICONS.bubble, 13);
-  svg.setAttribute("stroke-width", 1.5);
-  if (held) svg.append(svgEl("line", { x1: 2, y1: 14, x2: 14, y2: 2 }));
-  return svg;
-}
 // A circled cross: end the dashboard's own idle agent for a session, which then shows Closed.
 function closeIcon() {
   const svg = svgEl("svg", { viewBox: "0 0 16 16", width: 12, height: 12, "aria-hidden": "true", fill: "none", stroke: "currentColor",

@@ -33,6 +33,7 @@ dashboard = [                     # the dashboard (`ag`, `ag dashboard`): what a
     "uvicorn>=0.54",         # what runs it (ag_dashboard/server.py)
     "sse-starlette>=3.6",    # its streams, the page's server-sent events (ag_dashboard/api/common.py's `Events`)
     "wsproto>=1.2",          # those streams over one WebSocket per page, not a connection each (ag_dashboard/api/ws.py)
+    "slack_sdk>=3.33",       # its Slack app: the user's Slack, read and sent with their own Slack app's tokens (ag_apps/slack/)
 ]
 codex = ["openai-codex>=0.163"]   # codex/<model> as the Gatherer's LLM, on your Codex login (CLIClient)
 
@@ -46,7 +47,7 @@ ag = "ag.cli.main:main"   # run a harness with the context manager
 ag-dashboard = "ag_dashboard.__main__:main"   # the dashboard alone (also `ag dashboard`)
 
 [tool.setuptools.packages.find]
-include = ["ag*", "harness_kit*", "app_kit*"]
+include = ["ag*", "harness_kit*", "app_kit*", "ag_apps*"]
 
 [tool.setuptools.package-data]
 # what runs from the installed package besides Python: ag's harness entries, and the TypeScript
@@ -54,4 +55,6 @@ include = ["ag*", "harness_kit*", "app_kit*"]
 # dashboard's page and its actors' avatars and what they say
 ag = ["cli/harnesses.toml", "integrations/**/*.ts"]
 harness_kit = ["marks/*.svg"]
-ag_dashboard = ["static/*", "static/assets/*", "gatherer_agent.md", "vendor/*", "examples/*.js", "avatars/*/*.svg", "avatars/hello.toml"]
+app_kit = ["js/*.js", "DESIGN.md"]
+ag_apps = ["*/app.toml", "*/tools.json", "*/slack_app_manifest.json", "*/instructions.md", "*/mark.svg", "*/panel/*", "*/panel/**/*"]
+ag_dashboard = ["static/*", "static/assets/*", "gatherer_agent.md", "vendor/*", "vendor/pdfjs/**/*", "examples/*.js", "avatars/*/*.svg", "avatars/hello.toml"]

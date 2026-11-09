@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Notes</title>
+<link rel="stylesheet" href="panel.css">
+</head>
+<body>
+<div id="app" class="nt">
+  <aside id="side" class="side" aria-label="Pages">
+    <div class="side-top">
+      <input id="find" class="find" type="search" placeholder="Search" aria-label="Search the pages" autocomplete="off">
+      <button id="new-page" class="icon-btn" type="button" title="New page" aria-label="New page"></button>
+    </div>
+    <nav id="tree" class="tree" role="tree" aria-label="Pages"></nav>
+    <div class="side-foot">
+      <button id="trash-btn" class="side-btn" type="button" aria-expanded="false"></button>
+      <div id="trash" class="trash" hidden></div>
+    </div>
+  </aside>
+  <main class="main">
+    <div class="bar">
+      <button id="side-toggle" class="icon-btn" type="button" title="Show or hide the pages" aria-label="Show or hide the pages"></button>
+      <nav id="crumbs" class="crumbs" aria-label="Where this page is"></nav>
+      <span id="who" class="who" aria-live="polite"></span>
+      <span id="saved" class="saved" aria-live="polite"></span>
+    </div>
+    <div id="scroll" class="scroll">
+      <div id="banner" class="banner" hidden></div>
+      <article id="page" class="page" hidden>
+        <div class="pg-head">
+          <div class="pg-tools"><button id="add-icon" class="pg-tool" type="button">Add icon</button></div>
+          <button id="icon" class="pg-icon" type="button" title="Change the icon" hidden></button>
+          <h1 id="title" class="pg-title" contenteditable="plaintext-only" spellcheck="true" data-ph="Untitled" aria-label="Title"></h1>
+        </div>
+        <div id="blocks" class="blocks"></div>
+        <div id="below" class="below" title="Click to add a block"></div>
+      </article>
+      <section id="agents-page" class="page agents-page" aria-label="Agents" hidden></section>
+      <div id="empty" class="empty" hidden>
+        <div class="empty-mark" aria-hidden="true"></div>
+        <p class="empty-h">No pages yet</p>
+        <p class="empty-note">Keep to-dos, lists and notes here. Your agents can read them, and add to them when you ask.</p>
+        <button id="empty-new" class="primary" type="button">New page</button>
+      </div>
+    </div>
+  </main>
+  <aside id="convo" class="convo" aria-label="The conversation about a line" hidden></aside>
+  <div id="pop" class="pop" hidden></div>
+  <div id="drop" class="drop" hidden></div>
+</div>
+<script src="/_ag/lib/purify.min.js"></script>
+<script src="/_ag/app.js"></script>
+<script src="panel.js"></script>
+</body>
+</html>

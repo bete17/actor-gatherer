@@ -193,19 +193,17 @@ function sideBar(files, cmds, info) {
   const acts = barActs();
   return acts ? el("div", { class: "fl-barbox" }, acts, bar) : bar;
 }
-// With the Editor open above the panes, a pane's head is put in its Chat view's folded bar, at the other end from the
-// numbers, as small icons -- which view, the Editor at this actor's folder, Details, and (panes side by side) the
-// pane's close -- and the head itself hidden (.pane:has(.fl-acts)), its room the chat's.
+// With a panel open above the panes (the top row), a pane's head is put in its Chat view's folded bar, at the other end
+// from the numbers, as small icons -- which view, Details, and (panes side by side) the pane's close -- and the head
+// itself hidden (.pane:has(.fl-acts)), its room the chat's.
 function barActs() {
-  if (SNAPSHOT || !edShown()) return null;
+  if (SNAPSHOT || !topShown()) return null;
   const now = chatView().id;
   const act = (label, title, icon, onclick, pressed = null, cls = "") => el("button", { type: "button", class: `fl-act ${cls}`.trim(),
     title, "aria-label": label, "aria-pressed": pressed === null ? null : pressed ? "true" : "false", onclick }, icon);
   return el("div", { class: "fl-acts", role: "group", "aria-label": "This pane" },
     ...offeredViews().filter((v) => !v.more || v.id === now).map((v) =>
       act(v.name, v.description || v.name, v.icon ? strokeIcon(v.icon, 14) : v.name.slice(0, 1), () => setChatView(v.id), v.id === now)),
-    act("Editor", "Editor: this actor's work in it -- the folder holding the files it changed lately, else its working directory",
-      strokeIcon(ICONS.code, 14), edAtActor),
     act("Details", "Details: what ag saw and did for this actor, and the history's other views", strokeIcon(ICONS.panel, 14),
       () => setDetails(!state.details), !!state.details),
     act("Minimize the chat", MIN_TIP, strokeIcon(ICONS.minimize, 14), () => setChatMin(true)),
@@ -559,7 +557,7 @@ const mySends = () => { const k = state.selected && key(...state.selected); retu
 const AT_WORK = ["opening", "working", "asking"];
 // A message as the user typed it, to match what was sent with what is stored (the server gives the user's words as
 // typed: harness_kit's): "!echo hi" the same as "! echo hi".
-const typedAs = (text) => bwStrip(String(text ?? "")).trim().replace(/^!\s*/, "! ");
+const typedAs = (text) => String(text ?? "").trim().replace(/^!\s*/, "! ");
 // whether two say the same: their start, as a stored message is clipped
 const sameWords = (a, b) => typedAs(a).slice(0, 200) === typedAs(b).slice(0, 200);
 state.chatSend = async () => false;                    // the message box's send, as the latest draw made it (chatCard)
@@ -647,7 +645,7 @@ function talkFeed(info, session, writable, held, afresh) {
 const CHAT_HOST = Object.freeze({
   atWork, atRest, greeting, callView, callLabel, bareAvatar, hueInk, envelope, typedAs, sameWords, icons: ICONS, beside: BESIDE_KEY,
   crewFace: (a, coordinator) => crewFace(a, coordinator ? MANAGER : null),
-  appWords: (text) => BW_BLOCK.test(text) ? bwWords(text) : null,
+  appWords: (text) => appWordsOf(text),
   redraw: () => keepingPlace(renderMain), foldSide, setFilesTurn, setChatView,
   interruptOver: () => { state.interrupting = null; },
 });
