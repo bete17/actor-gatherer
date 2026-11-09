@@ -193,6 +193,9 @@ def host_ops(host: Host, instance_of: Callable[[dict], Instance]) -> Dict[str, C
         "tell": lambda b: host.tell_panel(instance_of(b["instance"]), dict(b["message"])) or {},
         "instances": lambda b: {"instances": [i.to_dict() for i in host.instances()]},
         "panels": lambda b: {"panels": host.panels(instance_of(b["instance"]))},
+        "notify": lambda b: {"id": host.notify(instance_of(b["instance"]), b["title"], b.get("text") or "",
+                                               b.get("key"), b.get("show") or ("ag",), b.get("where"))},
+        "clear_notice": lambda b: host.clear_notice(instance_of(b["instance"]), b["which"]) or {},
     }
 
 
@@ -269,6 +272,15 @@ class RemoteHost(Host):
 
     def panels(self, instance: Instance) -> int:
         return int(self._op("panels", {"instance": instance.to_dict()})["panels"])
+
+    def notify(self, instance: Instance, title: str, text: str = "", key: Optional[str] = None,
+               show: Sequence[str] = ("ag",), where: Any = None) -> str:
+        return str(self._op("notify", {"instance": instance.to_dict(), "title": title, "text": text, "key": key,
+                                       "show": list(show) if not isinstance(show, str) else [show],
+                                       "where": where})["id"])
+
+    def clear_notice(self, instance: Instance, which: str) -> None:
+        self._op("clear_notice", {"instance": instance.to_dict(), "which": which})
 
 
 def app_ops(app: App) -> Dict[str, Callable[[dict], Optional[dict]]]:

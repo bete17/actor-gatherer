@@ -17,6 +17,13 @@ What it keeps, as events of the gatherer an instance was opened in (app_kit's HO
     app_attached  {by}: in the agent's channel
     app_detached  {by}
     app_call      {tool, ok}: a tool call it passed to the app, in the caller's channel (none: the user's)
+    app_notified  {id, key, title, text, show, where}: a notification the app sent the user (`notify`; app_kit's
+                  notices.py), open until
+    app_notice_settled  {id or key, how, by}: the app cleared it, or the user dismissed it (`settle_notice`)
+
+A notification is the user's, never an agent's: what the dashboard shows of an instance's open ones -- in its list, a
+pop-up -- it reads from these records (data.py's `app_notices`), as it reads an agent's status from its facts; the
+page told as each is written (`told`).
 
 A gatherer's are read once, the first time it is asked about (`_load`), and kept in memory after; what this host does
 is kept in memory at once and written behind, in order (`_write`). An app's own events and the context types it may
@@ -51,6 +58,7 @@ PAGE_WAIT = 30.0                # seconds a tool its panel answers waits for a p
 TOOL_WAIT = 120.0               # and for the panel's answer
 READ_MAX = 2000
 NO_DATABASE = "no database for gatherer"
+TOLD = (*app_kit.NOTICE_TYPES, "app_closed")   # records that change what the page shows of the gatherer's apps
 
 
 def home_apps() -> str:
@@ -102,6 +110,8 @@ class AppHost:
         self.asked: Dict[str, dict] = {}                       # a call its panel answers, by its id: {done, result}
         self.page_wait, self.tool_wait = PAGE_WAIT, TOOL_WAIT
         self.docs: Optional[app_kit.Docs] = None              # the dashboard's shared files (app_docs.py), once set
+        self.told: Optional[Callable[[str], None]] = None      # the page told a gatherer's notifications changed, as
+                                                               # written (the server's hub.ring)
         self.lock = threading.RLock()
         self._write_fn = write or _ag_insert
         self._writes: "queue.Queue" = queue.Queue()
@@ -374,6 +384,29 @@ class AppHost:
             h.app.detached(i, channel)
         self._ring(i)
 
+    # -- notifications to the user
+
+    def notify(self, name: str, instance: Instance, title: Any, text: Any = "", key: Any = None, show: Any = ("ag",),
+               where: Any = None) -> str:
+        """A notification of app `name`'s to the user (app_kit's Host.notify), for one whose manifest asks `notify`:
+        recorded in the instance's gatherer (`app_notified`), the page told once it is written. -> its id."""
+        m = self.hosted(name).manifest
+        if instance.app != name:
+            raise AppError(f"{instance.id}: not an instance of {name}", 403)
+        if not m.capabilities.notify:
+            raise AppError(f"{m.label} does not ask to send notifications (capabilities.notify)", 403)
+        made = app_kit.notices.made(title, text, key, show, where)
+        self._record(instance, "app_notified", made)
+        return made["id"]
+
+    def settle_notice(self, gatherer: str, instance_id: str, which: Any, by: str = "user",
+                      name: Optional[str] = None) -> None:
+        """The instance's open notification `which` (its id, or every one of that key) settled: dismissed by the user,
+        or cleared by its app (`name`, by "app")."""
+        i = self.instance(gatherer, instance_id, name)
+        how = "cleared" if by == "app" else "dismissed"
+        self._record(i, "app_notice_settled", {**app_kit.notices.settled(which, how), "by": by})
+
     def panels_of(self, instance: Instance) -> int:
         """How many panels of the instance are open: its streams that take its backend's messages."""
         with self.lock:
@@ -635,6 +668,11 @@ class AppHost:
             print(f"dashboard: apps' {', '.join(e['type'] for e in events)} not kept in {gatherer}: {exc}",
                   file=sys.stderr, flush=True)
         self.rung(gatherer)
+        if self.told is not None and any(e["type"] in TOLD for e in events):
+            try:
+                self.told(gatherer)
+            except Exception:  # noqa: BLE001 - the page reads it next time all the same
+                pass
         return True
 
     def _hold(self, item: tuple) -> None:
@@ -728,6 +766,13 @@ class Bound(app_kit.Host):
 
     def panels(self, instance):
         return self._host.panels_of(self._own(instance))
+
+    def notify(self, instance, title, text="", key=None, show=("ag",), where=None):
+        return self._host.notify(self._name, self._own(instance), title, text, key, show, where)
+
+    def clear_notice(self, instance, which):
+        i = self._own(instance)
+        self._host.settle_notice(i.gatherer, i.id, which, by="app", name=self._name)
 
     def docs(self):
         m = self._host.hosted(self._name).manifest

@@ -9,3 +9,4 @@ import "./css/06-terminal.css";
 import "./css/07-top.css";
 import "./css/08-docwriter.css";
 import "./css/11-files-view.css";
+import "./css/12-notices.css";

@@ -14,6 +14,7 @@ function topMount() {
 let topWas = null;
 function topChanged() {
   if (PANE || SNAPSHOT) return;
+  markSeen();                                        // an app's panel shown: its notifications seen
   const now = topShown();
   if (!now && state.chatMin) keepMin(false);
   for (const p of panes.others) p.call("toprow", now);

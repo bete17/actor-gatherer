@@ -17,10 +17,10 @@ ag or of the dashboard (tests/test_app_kit.py).
                   serve / main / RemoteHost (the app's)
 """
 
-from . import docs, events, finding  # noqa: F401
+from . import docs, events, finding, notices  # noqa: F401
 from .backend import App, AppError, Caller, Host, Instance, Response, ToolResult  # noqa: F401 - the package's API
 from .manifest import (CAPABILITIES, CONTEXT_TYPES, HOST_PROPERTIES, HOST_RECORDS, HOST_TYPES, INSTANCES, OFFERS,  # noqa: F401
-                       INTENTS, Agent, Backend, Capabilities, Handles, Manifest, ManifestError, PollerDef, Tool, load, parse,
-                       split_tool_name, tool_name)
+                       INTENTS, NOTICE_TYPES, SHOWS, Agent, Backend, Capabilities, Handles, Manifest, ManifestError,
+                       PollerDef, Tool, load, parse, split_tool_name, tool_name)
 from .events import context_stream, environment_update  # noqa: F401
 from .docs import Docs, Joined  # noqa: F401

@@ -181,6 +181,14 @@ ipcMain.on("ag:dialog", (event, d: Dialog) => {
 ipcMain.on("ag:focus", (event) => {
   if (win && event.sender === win.webContents) win.webContents.focus();
 });
+// The dashboard's page asking for its window in front: one of its notifications clicked (the page's own, the system's).
+ipcMain.on("ag:raise", (event) => {
+  if (!win || event.sender !== win.webContents) return;
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+  app.focus({ steal: true });
+});
 
 app.whenReady().then(open);
 app.on("before-quit", () => (quitting = true)); // Cmd+Q: the window closes, its pages with it (the Browsers pause)

@@ -38,6 +38,13 @@ Everything goes through the page around it, by postMessage, which checks it agai
                                                          drawn over `el` (but what takes no pointer) covers it: the page
                                                          is then a still picture, drawn in el's own <img> (its first)
     ag.native.release()                                  the keys back from the native page, to the panel
+    ag.notices.send({title, text?, key?, show?, where?}) a notification to the user (capability notify): the dashboard
+                                                         lists it until they look at this instance, pops it up there,
+                                                         and -- show ["system"] -- on their computer too; a newer one of
+                                                         the same key takes its place -> its id
+    ag.notices.clear(idOrKey)                            one of its own (or every one of a key) no longer asking for them
+    ag.notices.onOpen(cb)                                cb(where, id): the user clicked one of this instance's -- the
+                                                         panel shown, `where` as it was sent (given once it connects)
     ag.onMessage(cb)                                     what the app's backend tells its panels
     ag.api(path, init?)                                  its backend's own routes, on its own origin (no bridge)
     ag.close()                                           its pane closed
@@ -212,6 +219,14 @@ Esc, and keys with Ctrl or ⌘ the panel leaves unhandled, go on to the page, as
     selection: { get current() { return selection; }, on(cb) { listeners.selection.push(cb); } },
     actors: { get current() { return actors; }, on(cb) { listeners.actors.push(cb); } },
     theme: { get current() { return theme; }, on(cb) { listeners.theme.push(cb); } },
+    notices: {
+      send: (n) => send("notices.send", { ...(n || {}) }),
+      clear: (which) => send("notices.clear", { which: String(which || "") }),
+      onOpen(cb) {
+        if (!listeners.intent.has("notice")) listeners.intent.set("notice", []);
+        listeners.intent.get("notice").push((d) => cb(d && d.where, d && d.id));
+      },
+    },
     onMessage(cb) { listeners.message.push(cb); },
     api(path, init) {
       const q = new URLSearchParams({ gatherer: info.gatherer, instance: info.instance });

@@ -186,6 +186,34 @@ def apps_insert(srv: Parts, body: Body) -> Response:
         return _failed(exc)
 
 
+@router.post("/api/apps/notify")
+def apps_notify(srv: Parts, body: Body) -> Response:
+    """A notification the app's panel sends the user (app_kit's Host.notify), checked as its backend's is -> {id}."""
+    try:
+        name, gatherer, instance = _need(body, "app", "gatherer", "instance")
+        h = _host(srv)
+        return answer({"id": h.notify(name, h.instance(gatherer, instance, name), body.get("title"), body.get("text"),
+                                      body.get("key"), body.get("show") or ("ag",), body.get("where"))})
+    except AppError as exc:
+        return _failed(exc)
+
+
+@router.post("/api/apps/notices/settle")
+def apps_notice_settle(srv: Parts, body: Body) -> Response:
+    """An instance's open notification (`which`: its id, or its key) settled: `by` "user", dismissed from the list or a
+    pop-up; "app", cleared by its panel (`app` then names it, and it may clear only its own)."""
+    try:
+        gatherer, instance, which = _need(body, "gatherer", "instance", "which")
+        by = "app" if body.get("by") == "app" else "user"
+        name = body.get("app") if by == "app" else None
+        if by == "app" and not (isinstance(name, str) and name):
+            raise AppError("app: required")
+        _host(srv).settle_notice(gatherer, instance, which, by=by, name=name)
+        return answer({})
+    except AppError as exc:
+        return _failed(exc)
+
+
 @router.post("/api/apps/call")
 def apps_call(srv: Parts, body: Body) -> Response:
     """A tool of the app called by the user, from its panel: the backend's answer, as MCP gives one."""

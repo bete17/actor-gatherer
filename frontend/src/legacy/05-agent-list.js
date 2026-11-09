@@ -148,7 +148,7 @@ const openIn = (g, id) => actorsWithin(g, id).filter((a) => inPane(g, a));
 // What a folder holds, its folders' too: how many actors wait on the reader, stopped on an error, run, are idle; how
 // many are open, saved (closed), closed
 function folderTally(g, id) {
-  const t = { asking: 0, error: 0, running: 0, idle: 0, open: 0, saved: 0, closed: 0 };
+  const t = { asking: 0, error: 0, notified: appsNotified(g, id), running: 0, idle: 0, open: 0, saved: 0, closed: 0 };
   for (const a of actorsWithin(g, id)) {
     const group = groupOf(g, a);
     if (group === "Saved") t.saved++; else if (group === "Closed") t.closed++; else t.open++;
@@ -396,7 +396,9 @@ function boxGroups(g, id) {
 function gathererCounts(g) {
   const n = (group) => g.agents.filter((a) => groupOf(g, a) === group).length, of = plural(g.agents.length, "actor");
   const count = (k, cls, what) => k ? el("span", { class: "count" + cls, title: `${k} of ${of} ${what}` }, el("i", { "aria-hidden": "true" }), String(k)) : null;
+  const told = appsNotified(g);
   return [count(n("Waiting for you"), " asking", "waiting for you"), count(n("Error"), " error", "stopped on an error"),
+    told ? el("span", { class: "count notified", title: `${plural(told, "app")} with a notification you haven't seen` }, el("i", { "aria-hidden": "true" }), String(told)) : null,
     count(n("Running"), "", "running")].filter(Boolean);
 }
 function renderAgents() {
@@ -591,12 +593,43 @@ const keptAs = (g, k) => isAppItem(k) ? k : ((a) => a ? taskedAs(g.name, a) || f
 const taskMembers = (g, id) => g.agents.filter((a) => taskOf(g.name, a) === id);
 // its actors not closed: the one waiting on the reader first, then one stopped on an error, at work, done, the latest
 // used; its LEAD the first of them -- none open, the latest used of all -- whose state its row says
-const LEAD_RANK = { "Waiting for you": 0, Error: 1, Running: 2, Background: 3, Finished: 4, Idle: 5 };
+const LEAD_RANK = { "Waiting for you": 0, Error: 1, Notification: 2, Running: 3, Background: 4, Finished: 5, Idle: 6 };
 function taskActors(g, id) {
   const rank = (a) => LEAD_RANK[groupOf(g, a)] ?? 9;
   return taskMembers(g, id).filter((a) => rank(a) < 9).sort((x, y) => rank(x) - rank(y) || (y.last || 0) - (x.last || 0));
 }
 const taskLead = (g, id) => taskActors(g, id)[0] || taskMembers(g, id).sort((x, y) => (y.last || 0) - (x.last || 0))[0] || null;
+// AN ITEM'S STATUS, an app's as an actor's (statusOf): worked out by the server from what was recorded of it, on every
+// read of the home -- an app's from the notifications its app sent the user and has not cleared, nor they dismissed
+// (data.py's `app_notices`: a gatherer's `apps`, {instance: {app, notices, last}}) -- and what the reader has seen of
+// it (04-seen.js: an app's panel shown, as an actor's pane): one sent since they last looked, NOTIFIED, as an actor
+// done since is FINISHED. Each said as [its class, its word], and ranked among an actor's (LEAD_RANK) where they are
+// counted together: a task's row, a folder's and a gatherer's counts.
+const NOTIFIED = ["notified", "Notification"];
+const appKey = (gname, id) => key(gname, appItem(id));
+// its notifications open, newest first: none, []
+function appNotices(gname, id) {
+  const g = state.home && state.home.gatherers.find((x) => x.name === gname), got = g && (g.apps || {})[id];
+  return got ? [...(got.notices || [])].reverse() : [];
+}
+function appStatusOf(gname, id) {
+  const g = state.home && state.home.gatherers.find((x) => x.name === gname), got = g && (g.apps || {})[id];
+  return got && got.last && got.last > (seen.at[appKey(gname, id)] || 0) ? NOTIFIED : null;
+}
+// a task's state, as its row says it: its most pressing item's -- its lead actor's, or a notification of one of its apps,
+// where that ranks first -- else, of apps only, "Apps"; nothing in it, closed
+function taskStatus(g, id) {
+  const lead = taskLead(g, id), apps = taskApps(g, id), told = apps.some((o) => appStatusOf(g.name, o.id));
+  if (told && !(lead && (LEAD_RANK[groupOf(g, lead)] ?? 9) < LEAD_RANK.Notification)) return NOTIFIED;
+  return lead ? statusOf(lead) : apps.length ? ["idle", "Apps"] : ["closed", "Closed"];
+}
+// how many apps of a gatherer (`inside`: in folder `inside`, its folders' too) have a notification the reader has not seen
+const appsNotified = (g, inside = undefined) => gathererApps(g.name).filter((o) => {
+  if (!appStatusOf(g.name, o.id)) return false;
+  if (inside === undefined) return true;
+  const f = appFolder(g.name, o.id);
+  return f !== null && within(g.name, f, inside);
+}).length;
 const actorTitle = (a) => (a.name && a.name.text) || (a.last_user_message ? firstLine(a.last_user_message, 120) : "No message yet");
 const appTitle = (o) => o.title ? `${o.app.label} · ${o.title}` : o.app.label;
 // its items: its actors' channels, then its apps' (those open)
@@ -696,7 +729,7 @@ function taskFaces(g, id) {
 // list. Pressed: opened (openTask). Dragged: all in it; an item dropped on it, put in it.
 function taskRow(g, t, group) {
   const all = taskMembers(g, t.id), apps = taskApps(g, t.id), lead = taskLead(g, t.id);
-  const [cls, label] = lead ? statusOf(lead) : apps.length ? ["idle", "Apps"] : ["closed", "Closed"];
+  const [cls, label] = taskStatus(g, t.id);
   const name = taskName(g, t), first = lead ? lead.channel : apps.length ? appItem(apps[0].id) : null;
   // the task of what is selected: marked
   const current = selectedTask() === `${g.name}\u0000t${t.id}`;
@@ -758,11 +791,12 @@ async function closeTask(gname, id) {
 // row, put in its task, as an item dropped on it is put in one with it.
 function appRow(g, o) {
   const chosen = appSelected() === o.id, shown = !chosen && panes.apps.some((p) => !p.held && p.instance.id === o.id), k = appItem(o.id);
+  const told = appStatusOf(g.name, o.id), last = told && appNotices(g.name, o.id)[0];
   const row = el("button", { class: "agent app-row", type: "button", "aria-current": chosen ? "true" : "false", "data-key": `${g.name}/${k}`,
-    "data-group": OPEN, ...(shown ? { "data-open": "true" } : {}),
-    ...(HOVERS.matches ? {} : { title: `${appTitle(o)}${o.folder ? `\n${o.folder}` : ""}${SNAPSHOT ? "" : `\n${BESIDE_KEY}+click: beside the ones shown`}` }),
-    onclick: (ev) => selectApp(g.name, o, ev) },
-  el("span", { class: "dot-none", "aria-hidden": "true" }),
+    "data-group": OPEN, ...(shown ? { "data-open": "true" } : {}), "data-card": appKey(g.name, o.id),
+    ...(HOVERS.matches ? {} : { title: `${appTitle(o)}${last ? `\n${last.title}` : ""}${o.folder ? `\n${o.folder}` : ""}${SNAPSHOT ? "" : `\n${BESIDE_KEY}+click: beside the ones shown`}` }),
+    onclick: (ev) => { cardHide(ev); selectApp(g.name, o, ev); } },
+  told ? el("span", { class: `dot ${told[0]}`, "aria-label": told[1] }) : el("span", { class: "dot-none", "aria-hidden": "true" }),
   el("div", {},
     el("div", { class: "name", text: o.title || o.app.label }),
     rowActs(addButton(g, k), SNAPSHOT ? null : rowButton("close-btn", { title: `Close ${o.app.label}: the app closed`, "aria-label": `Close ${o.app.label}` },
@@ -1131,7 +1165,9 @@ const folderAct = (cls, title, icon, fn) => el("button", { class: `act folder-ac
 // on its line in the list (idle), how many are idle, a grey dot as an idle actor's
 function tallyChips(t, of, idle = false) {
   const count = (k, cls, what) => k ? el("span", { class: "count" + cls, title: `${k} of ${of} ${what}` }, el("i", { "aria-hidden": "true" }), String(k)) : null;
-  return [count(t.asking, " asking", "waiting for you"), count(t.error, " error", "stopped on an error"), count(t.running, "", "running"),
+  const told = t.notified ? el("span", { class: "count notified", title: `${plural(t.notified, "app")} with a notification you haven't seen` },
+    el("i", { "aria-hidden": "true" }), String(t.notified)) : null;
+  return [count(t.asking, " asking", "waiting for you"), count(t.error, " error", "stopped on an error"), told, count(t.running, "", "running"),
     idle ? count(t.idle, " idle", "idle") : null].filter(Boolean);
 }
 const folderSays = (f, t) => `${f.name}: ${plural(t.open, "actor")} open${t.saved ? `, ${t.saved} saved` : ""}${t.closed ? `, ${t.closed} closed` : ""}`

@@ -24,6 +24,7 @@
 <h1>Notepad</h1>
 <ul id="notes"></ul>
 <form id="add"><input id="text" placeholder="A note" autocomplete="off"><button>Add</button></form>
+<p><button id="remind" type="button" title="A notification in 5 seconds, from the notepad's backend: close its panel or leave the page meanwhile">Remind me in 5 s</button> <small id="reminding"></small></p>
 <dl>
   <dt>agents</dt><dd id="agents">none</dd>
   <dt>in focus</dt><dd id="focus">none</dd>
@@ -70,6 +71,13 @@
   theme(ag.theme.current); ag.theme.on(theme);
   ag.onMessage((m) => { $("said").textContent = m && m.said ? m.said : JSON.stringify(m); });
   ag.intents.on("open-file", (d) => { $("intent").textContent = `open-file ${d.path}`; });
+  ag.notices.onOpen((where) => { $("intent").textContent = `notice ${JSON.stringify(where)}`; });
+  $("remind").addEventListener("click", async () => {
+    const text = $("text").value.trim() || (document.querySelector("li:last-child") || {}).firstChild?.textContent || "";
+    await ag.api(`remind?after=5&text=${encodeURIComponent(text)}`, { method: "POST" });
+    $("reminding").textContent = "in 5 s…";
+    setTimeout(() => { $("reminding").textContent = ""; }, 5000);
+  });
   document.body.dataset.ready = "1";
 })();
 </script>

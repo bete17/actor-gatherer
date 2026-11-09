@@ -3,7 +3,7 @@
     App         what an app's backend subclasses: open and close instances, answer tool calls and its panel's own
                 requests, hear of agents attached. Every method has a default (`call`'s refuses every tool)
     Host        what the host gives an app: insert and read events, the agents of an instance, a message to its
-                panels, the app's own folder
+                panels, the app's own folder, a notification to the user
     Instance    one opened copy of an app: the host makes its id; the app may set its title and data
     Caller      who made a tool call: an agent (its channel), or the user through the panel
     ToolResult  a tool call's answer, as MCP's `tools/call` gives one
@@ -184,6 +184,19 @@ class Host(ABC):
         """The host's files shared live (app_kit.docs), for an app whose manifest asks `docs`, run in the host's
         process; AppError otherwise."""
         raise AppError("the host's shared files are not given to this app", 403)
+
+    def notify(self, instance: Instance, title: str, text: str = "", key: Optional[str] = None,
+               show: Sequence[str] = ("ag",), where: Any = None) -> str:
+        """A notification to the user, for an app whose manifest asks `notify` (manifest.NOTICE_TYPES): `title`, a line
+        of `text`; shown in the dashboard's list until the user looks at the instance, and as a pop-up there ("ag")
+        and, with "system", on the computer too; `where` (JSON) handed back to the panel as the user clicks it
+        (the SDK's `ag.notices.onOpen`). A newer one of the same `key` takes the open one's place. -> its id."""
+        raise AppError("this host takes no notifications", 403)
+
+    def clear_notice(self, instance: Instance, which: str) -> None:
+        """The instance's open notification `which` -- its id, or every one of that key -- no longer asking for the
+        user."""
+        raise AppError("this host takes no notifications", 403)
 
 
 class App:
