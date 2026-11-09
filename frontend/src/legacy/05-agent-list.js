@@ -1481,7 +1481,7 @@ function dropOn(n, g, id, open) {
     d.later = false;                                 // drawn by the move, next
     endDrag();
     if (d.folder !== null) { moveFolder(g.name, d.folder, id); return; }
-    if (d.gs) { fileGatherers(d.gs.filter((name) => gfOf(name) !== id), id); return; }
+    if (d.gs) { gPicks.clear(); fileGatherers(d.gs.filter((name) => gfOf(name) !== id), id); return; }
     const items = withTasks(now, d.cs).filter((c) => (isAppItem(c) || !!actorOf(now, c)) && itemFolder(now, c) !== id);
     if (d.cs.length > 1) clearPicks(false);
     fileItems(g.name, items, id);

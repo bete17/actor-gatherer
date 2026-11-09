@@ -213,11 +213,10 @@ button:disabled { opacity: .5; cursor: default; }
 .gf-kids > .folder-line, .gf-kids > .gatherer > .gatherer-row { margin-left: 4px; }
 .gf-kids > .gatherer > .g-kids { margin-left: 13px; }
 .gf-kids > .agent { margin-left: 4px; width: calc(100% - 12px); }
-.gf-kids.peek { border-left-style: dashed; }
 .gatherer-row.dragging { opacity: .45; }
 /* SELECTING several actors (Shift+click): tinted in its own colour, not the blue of the one shown; from two, a check on
    each one's avatar and a bar under the list */
-.agent.picked, .agent.picked:hover { background: color-mix(in srgb, var(--pick) 15%, transparent);
+.agent.picked, .agent.picked:hover, .gatherer-row.picked, .gatherer-row.picked:hover { background: color-mix(in srgb, var(--pick) 15%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--pick) 55%, transparent); }
 .agent .avatar .pick { position: absolute; left: -5px; top: -5px; width: 15px; height: 15px; border-radius: 50%; display: flex; align-items: center;
   justify-content: center; background: var(--pick); box-shadow: 0 0 0 1.5px var(--side); color: #fff; cursor: pointer; }
