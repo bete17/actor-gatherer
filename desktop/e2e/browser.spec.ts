@@ -107,16 +107,16 @@ const panel = (page: Page): FrameLocator => page.frameLocator("#top-row .app-pan
 /** The panel's frame itself, to run a script in. */
 const panelFrame = (page: Page) => page.frames().find((f) => f.url().startsWith(`http://browser.localhost:${port}/`))!;
 /** The Browser's panel closed (its × in the top row: the Browser stays open), and opened again: its actor shown, and --
- * a panel closed in a task staying closed (frontend's 07-panes.js, TASKS) -- the Browser selected from its line in the
- * list, under its actor. */
+ * a panel closed in a task staying closed (frontend's 07-panes.js, TASKS) -- the Browser selected from its task's card. */
 const closePanel = (page: Page) => page.locator("#top-row .app-pane[data-app=browser] .app-close").click();
 const openPanel = async (page: Page) => {
   const row = page.locator(".agent:not(.coordinator)").first();
   await row.click();
   if (!(await panel(page).locator(".bw-stage").isVisible())) {
-    const caret = row.locator(".t-caret");
-    if ((await caret.getAttribute("aria-expanded")) === "false") await caret.click();
-    await page.locator("#agents .t-kids .t-app-line .t-app-open").first().click();
+    await page.mouse.move(0, 0);
+    await row.hover();
+    await page.locator("#actor-card.live .c-app-row .c-row").first().click();
+    await page.mouse.move(0, 0);
   }
   await expect(panel(page).locator(".bw-stage")).toBeVisible();
 };

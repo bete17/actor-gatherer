@@ -41,6 +41,14 @@ async function addNotepad(page: Page, row: ReturnType<Page["locator"]>) {
   await page.locator(".row-menu[role=menu] [role=menuitem] .nm", { hasText: /^Notepad$/ }).click();
 }
 const taskRow = (page: Page) => page.locator("#agents button.agent.task");
+// a task's card -- what is in it, listed (a group: not in the list) -- its row hovered, the pointer come from off the list
+async function cardOf(page: Page, row: ReturnType<Page["locator"]>) {
+  await page.mouse.move(0, 0);
+  await row.hover();
+  const card = page.locator("#actor-card.live");
+  await expect(card).toBeVisible();
+  return card;
+}
 
 test("a task is one row, its actors' faces at its right; opened, its actors side by side; its card takes one out", async ({
   page,
@@ -129,7 +137,7 @@ test("a task opened again is as it was left: an actor's pane closed in it stays 
   await expect(panes).toHaveCount(1);
 });
 
-test("a task opened in the list shows its actors, to save or close, and its apps, each closed from there", async ({
+test("a task's card lists its actors and its apps; one taken out is a row of its own, closed from there", async ({
   page,
 }) => {
   await taskHome(page, true);
@@ -138,20 +146,19 @@ test("a task opened in the list shows its actors, to save or close, and its apps
   await addNotepad(page, row);
   await expect(page.locator("#top-row > .app-pane[data-app=notepad]")).toHaveCount(1);
   await expect(row.locator(".t-faces .t-app")).toHaveCount(1); // the app's mark among its faces
-  await row.locator(".t-caret").click();
-  await expect(row.locator(".t-caret")).toHaveAttribute("aria-expanded", "true");
-  const kids = page.locator("#agents .t-kids");
-  await expect(kids.locator("button.agent")).toHaveCount(2); // its actors, each its own row
-  await expect(kids.locator("button.agent .save-btn")).toHaveCount(2);
-  for (const r of await kids.locator("button.agent").all()) await expect(r.locator(".a-face .t-app")).toHaveCount(0); // its face alone
-  const app = kids.locator(".t-app-line", { hasText: "Notepad" });
-  await expect(app).toHaveCount(1);
-  await expect(app).toHaveAttribute("aria-current", "true"); // its panel above the panes: marked
-  await app.hover();
-  await app.locator(".t-app-close").click(); // closed: its panel gone, and its line
+  await expect(row.locator(".t-caret")).toHaveCount(0); // a group, not a folder: nothing opened in the list
+  const card = await cardOf(page, row);
+  await expect(card.locator(".c-task-row:not(.c-app-row)")).toHaveCount(2); // its actors
+  await expect(card.locator(".c-app-row", { hasText: "Notepad" })).toHaveCount(1); // and its app
+  await card.locator(".c-app-row .take-out").click(); // out of the task: an app of its own
+  const own = page.locator("#agents button.agent.app-row");
+  await expect(own).toHaveCount(1);
+  await expect(row.locator(".t-faces .t-app")).toHaveCount(0);
+  await page.mouse.move(0, 0);
+  await own.hover();
+  await own.locator(".close-btn").click(); // closed: its row gone, and its panel
+  await expect(own).toHaveCount(0);
   await expect(page.locator("#top-row > .app-pane[data-app=notepad]")).toHaveCount(0);
-  await expect(app).toHaveCount(0);
-  await expect(row.locator(".t-faces .t-app")).toHaveCount(0); // out of the task
 });
 
 test("an app's panel closed in a task stays closed when the task is opened again", async ({ page }) => {
@@ -196,14 +203,13 @@ test("in the folded rail, a task is one tile: its actors' faces grouped in the r
   await expect(page.locator("#panes > .pane")).toHaveCount(2);
 });
 
-test("an app added to an actor on its own makes a task of the two: its row opens to them, its rail tile has both", async ({
+test("an app added to an actor on its own makes a task of the two: its card lists both, its rail tile has both", async ({
   page,
 }) => {
   await taskHome(page, false);
   await open(page);
   const claude = page.locator("#agents button.agent:not(.task)", { hasText: CLAUDE });
   await claude.click();
-  await expect(claude.locator(".t-caret")).toHaveCount(0); // on its own: nothing to open it to
   await addNotepad(page, claude);
   const notes = page.locator("#top-row > .app-pane[data-app=notepad]");
   await expect(notes).toHaveCount(1);
@@ -212,15 +218,16 @@ test("an app added to an actor on its own makes a task of the two: its row opens
   await expect(row.locator(".name")).toHaveText(CLAUDE); // named by its actor
   await expect(row.locator(".t-faces .t-face")).toHaveCount(1);
   await expect(row.locator(".t-faces .t-app")).toHaveCount(1);
-  await row.locator(".t-caret").click(); // opened: Claude, and Notepad a line of its own
-  const line = page.locator("#agents .t-kids .t-app-line", { hasText: "Notepad" });
-  await expect(page.locator("#agents .t-kids button.agent", { hasText: CLAUDE })).toHaveCount(1);
-  await expect(line).toHaveAttribute("aria-current", "true");
-  await notes.locator(".app-close").click(); // its panel closed: the app still in it, the line not marked
-  await expect(line).toHaveAttribute("aria-current", "false");
-  await line.locator(".t-app-open").click(); // selected: its panel back
+  const card = await cardOf(page, row); // its card: Claude, and Notepad
+  await expect(card.locator(".c-task-row:not(.c-app-row)", { hasText: CLAUDE })).toHaveCount(1);
+  await expect(card.locator(".c-app-row", { hasText: "Notepad" })).toHaveCount(1);
+  await page.mouse.move(0, 0);
+  await notes.locator(".app-close").click(); // its panel closed: the app still in it
+  await expect(notes).toHaveCount(0);
+  await expect(row.locator(".t-faces .t-app")).toHaveCount(1);
+  await (await cardOf(page, row)).locator(".c-app-row .c-row").click(); // selected from its card: its panel back
   await expect(notes).toHaveCount(1);
-  await expect(line).toHaveAttribute("aria-current", "true");
+  await expect(notes).toHaveClass(/focused/);
 
   await page.locator("#agents .lb-fold").click(); // in the rail: one tile, Claude's face and the app's mark beside it
   const tile = page.locator("#rail .r-task");
@@ -257,7 +264,9 @@ test("a task's card lists its apps: one selected by a click, taken out by its ×
   await row.hover();
   await card.locator(".c-app-row", { hasText: "Notepad" }).locator(".take-out").click(); // out of the task: gone from the card
   await expect(card.locator(".c-app-row")).toHaveCount(0);
-  await expect(page.locator("#agents button.agent.app-row", { hasText: "Notepad" })).toHaveCount(1); // an app of its own
+  const own = page.locator("#agents button.agent.app-row"); // an app of its own
+  await expect(own).toHaveCount(1);
+  await expect(own.locator(".app-face")).toHaveAttribute("title", /^Notepad/);
   await expect(row.locator(".t-faces .t-app")).toHaveCount(0);
 });
 
@@ -299,7 +308,7 @@ test("an app in no task is a row of its own, its face lined up with the actors';
   const app = page.locator("#agents button.agent.app-row");
   await expect(app).toHaveCount(1);
   await expect(app.locator(".name")).toHaveText("Shopping list");
-  await expect(app.locator(".meta")).toContainText("Notepad");
+  await expect(app.locator(".app-face")).toHaveAttribute("title", "Notepad · Shopping list"); // its kind: on its face
   const faces = page.locator("#agents button.agent .a-face > .logo");
   await expect(faces).toHaveCount(3);
   const xs = await Promise.all([0, 1, 2].map(async (n) => Math.round((await faces.nth(n).boundingBox())!.x)));
@@ -390,30 +399,66 @@ test("an app is selected as an actor is: one thing selected, the panes below lef
   await claude.click();
   await addNotepad(page, claude);
   await expect(notes).toHaveClass(/focused/); // added: selected
-  const task = taskRow(page),
-    kid = page.locator("#agents .t-kids button.agent", { hasText: CLAUDE });
-  await task.locator(".t-caret").click();
-  await expect(kid).toHaveAttribute("aria-current", "false"); // the actor not, while it is
-  await expect(panes.and(page.locator(".focused"))).toHaveCount(0);
-  await kid.click(); // the actor: selected again, the app not
-  await expect(kid).toHaveAttribute("aria-current", "true");
+  const task = taskRow(page);
+  const app = async () => (await cardOf(page, task)).locator(".c-app-row .c-row");
+  await expect(task).toHaveAttribute("aria-current", "true"); // its task's row
+  await expect(panes.and(page.locator(".focused"))).toHaveCount(0); // the actor's pane not, while it is
+  await (await cardOf(page, task)).locator(".c-task-row:not(.c-app-row) .c-row").click(); // the actor: selected again
+  await expect(panes.and(page.locator(".focused"))).toHaveCount(1);
   await expect(notes).not.toHaveClass(/focused/);
-  const line = page.locator("#agents .t-kids .t-app-line", { hasText: "Notepad" });
-  await expect(line).toHaveAttribute("data-open", "true"); // shown, not selected
-  await line.locator(".t-app-open").click(); // selected: filled, its panel marked, the pane below as it was
-  await expect(line).toHaveAttribute("aria-current", "true");
+  await (await app()).click(); // the app: selected, its panel marked, the pane below as it was
   await expect(notes).toHaveClass(/focused/);
   await expect(panes).toHaveCount(1);
+  await page.mouse.move(0, 0);
   await codex.click(); // another task: Claude's Notepad goes
   await expect(notes).toHaveCount(0);
-  await line.locator(".t-app-open").click(); // Claude's app selected from Codex's task: Claude's task entered, it selected
+  await (await app()).click(); // Claude's app selected from Codex's task: Claude's task entered, it selected
   await expect(notes).toHaveCount(1);
   await expect(notes).toHaveClass(/focused/);
-  await expect(kid).toHaveAttribute("data-open", "true"); // Claude below it, shown
+  await expect(task).toHaveAttribute("aria-current", "true");
+  await page.mouse.move(0, 0);
   await codex.click();
   await expect(notes).toHaveCount(0);
-  await line.locator(".t-app-open").click({ modifiers: [beside] }); // ⌘: beside, no task entered
+  await (await app()).click({ modifiers: [beside] }); // ⌘: beside, no task entered
   await expect(notes).toHaveCount(1);
   await expect(notes).toHaveClass(/focused/);
   await expect(page.locator("#agents button.agent[data-open=true]", { hasText: CODEX })).toHaveCount(1); // Codex still below
+});
+
+test("a row's buttons show over its face while it is hovered, its face alone at rest", async ({ page }) => {
+  await taskHome(page, false);
+  await open(page);
+  const row = page.locator("#agents button.agent:not(.task)", { hasText: CLAUDE });
+  const acts = row.locator(".a-acts"),
+    face = row.locator(".a-face");
+  await page.mouse.move(0, 0);
+  await expect(acts).toHaveCSS("opacity", "0"); // at rest: its face alone
+  await expect(face).toHaveCSS("visibility", "visible");
+  await row.hover();
+  await expect(acts).toHaveCSS("opacity", "1"); // hovered: its buttons, where its face was
+  await expect(face).toHaveCSS("visibility", "hidden");
+  const [a, f] = [(await acts.boundingBox())!, (await face.boundingBox())!];
+  expect(Math.abs(a.x + a.width - (f.x + f.width))).toBeLessThan(2); // over it, at the row's right edge
+  expect(a.y).toBeLessThan(f.y + f.height);
+  await expect(acts.locator(".task-add")).toBeVisible();
+  await expect(acts.locator(".save-btn")).toBeVisible();
+});
+
+test("a row is one line; a click on the actor shown shows it, a double-click on its name names it", async ({
+  page,
+}) => {
+  await taskHome(page, false);
+  await open(page);
+  const row = page.locator("#agents button.agent:not(.task)", { hasText: CLAUDE });
+  await row.click();
+  await expect(row).toHaveAttribute("aria-current", "true");
+  await expect(row.locator(".meta")).toHaveCount(0); // one line: its state, its name, its face
+  expect((await row.boundingBox())!.height).toBeLessThan(44);
+  await row.click(); // the one shown, clicked again: shown, not named
+  await expect(page.locator("#agents input.name-box")).toHaveCount(0);
+  await row.locator(".name").dblclick(); // its name double-clicked: a box to name it in
+  const box = page.locator("#agents input.name-box");
+  await expect(box).toBeFocused();
+  await page.keyboard.press("Escape"); // left as it was
+  await expect(box).toHaveCount(0);
 });

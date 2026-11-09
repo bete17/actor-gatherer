@@ -415,14 +415,6 @@ const ICONS = {
   minimize: "M4 5.5 8 9.5l4-4M3 12.75h10",                             // the chat minimized under the Editor: down to a line
   restore: "M4 10.5 8 6.5l4 4M3 3.25h10",                              // and shown again: up from it
 };
-// A speech bubble: the actor can be messaged from the page; struck through, it could be but another
-// process has it open.
-function chatIcon(held) {
-  const svg = strokeIcon(ICONS.bubble, 13);
-  svg.setAttribute("stroke-width", 1.5);
-  if (held) svg.append(svgEl("line", { x1: 2, y1: 14, x2: 14, y2: 2 }));
-  return svg;
-}
 // A circled cross: end the dashboard's own idle agent for a session, which then shows Closed.
 function closeIcon() {
   const svg = svgEl("svg", { viewBox: "0 0 16 16", width: 12, height: 12, "aria-hidden": "true", fill: "none", stroke: "currentColor",

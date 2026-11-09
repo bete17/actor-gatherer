@@ -502,7 +502,7 @@ const CARD_ON_THE_WAY = 250;
 // the click opened, for as long as the pointer rests
 function cardHide(ev = null) {
   clearTimeout(hover.timer);
-  if (ev && "clientX" in ev) hover.still = `${ev.clientX},${ev.clientY}`;
+  if (ev && "clientX" in ev) hover.still = [ev.clientX, ev.clientY];
   hover.from = null; hover.key = null; hover.shown = false;
   cardEdit = null; cardInput = null;
   if (folderClosing && folderClosing.from === "card") folderClosing = null;
@@ -566,13 +566,13 @@ function cardDraw() {
 }
 // a path's end, where it tells one actor's from another's: its worktree, its project
 const tail = (t, n) => t.length > n ? "…" + t.slice(-(n - 1)) : t;
-// `shown`: the one shown, in the list, whose name is renamed by clicking it -- said at its foot
+// `shown`: the one shown, in the list, whose name is renamed by double-clicking it -- said at its foot
 function actorCard(g, a, shown = false) {
   const [cls, label] = statusOf(a), nm = railName(a), size = a.real_tokens ?? a.sent_tokens;
   const env = envelope(a.last_user_message), asked = env ? crewLine(env) : a.last_user_message;
   const bg = a.background || [], dir = cwdOf(a);
   const hint = [SNAPSHOT ? "Click to show it" : `Click to show it · ${BESIDE_KEY}+click: beside the one shown`];
-  if (shown && !SNAPSHOT) hint.splice(0, 1, `${nameNote(g, a).trim() ? `${nameNote(g, a).trim()} · ` : ""}Click its name (or F2) to ${a.name && a.name.text ? "rename" : "name"} it`);
+  if (shown && !SNAPSHOT) hint.splice(0, 1, `${nameNote(g, a).trim() ? `${nameNote(g, a).trim()} · ` : ""}Double-click its name (or F2) to ${a.name && a.name.text ? "rename" : "name"} it`);
   return [
     el("div", { class: "c-who" }, plainFace(a),
       el("div", { class: "tx" }, el("div", { class: "c-nm" + (nm.cls ? ` ${nm.cls}` : ""), text: nm.text }),
@@ -757,13 +757,14 @@ for (const from of Object.keys(HOVER_FROM)) {
   const box = document.getElementById(from);
   box.addEventListener("pointerover", (ev) => {
     if (ev.pointerType === "touch") return;
-    if (hover.still === `${ev.clientX},${ev.clientY}`) return;   // at rest where a click put the card away
+    // at rest where a click put the card away (a few pixels: a click's place and a pointer event's are not given alike)
+    if (hover.still && Math.abs(ev.clientX - hover.still[0]) < 4 && Math.abs(ev.clientY - hover.still[1]) < 4) return;
     hover.still = null;
     hover.keys = false;
     const at = ev.target.closest("[data-card]");
-    hoverTo(from, at && !ev.target.closest(".save-btn, .close-btn, .chat-icon, .branchline, .f-acts, .pick") ? at.dataset.card : null);
+    hoverTo(from, at && !ev.target.closest(".save-btn, .close-btn, .branchline, .f-acts, .pick") ? at.dataset.card : null);
   });
-  box.addEventListener("pointerleave", () => hoverTo(from, null));
+  box.addEventListener("pointerleave", () => { hover.still = null; hoverTo(from, null); });   // gone and back: a card again
   box.addEventListener("focusin", (ev) => {
     const at = ev.target.closest("[data-card]");
     if (at && ev.target === at && at.matches(":focus-visible")) { hover.shown = true; hover.keys = true; hoverTo(from, at.dataset.card); }

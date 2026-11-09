@@ -514,20 +514,17 @@ const crewLine = (env) => env.from === "update" ? `${env.name || `Actor ${crewId
 const isCoordinator = (a) => !!a && a.role === "coordinator";
 // An actor is a TASK too (07-panes.js's taskKey): its row says how it stands at its left, its state in a word on its
 // meta line (none, idle), and shows its face at its right.
-const TASK_SAYS = { "Waiting for you": ["asking", "Asks you"], Error: ["error", "Stopped on an error"], Running: ["running", "Working"],
-  Background: ["running", "In the background"], Finished: ["finished", "Done"] };
-// `kid`: one of a task's, listed under it opened in the list -- dragged alone (into another task), its face only
-function agentRow(g, a, group, kid = false) {
-  const [cls, label] = statusOf(a), says = TASK_SAYS[groupOf(g, a)];
+function agentRow(g, a, group) {
+  const [cls, label] = statusOf(a);
   const pk = picked(g, a);
   const current = !appSelected() && !appsOnly && isAt(focusedActor(), g.name, a.channel);   // an app selected: it is, not the actor
   const open = !current && !appsOnly && openActors().some((sel) => isAt(sel, g.name, a.channel));   // (out of sight: not)
-  const size = a.real_tokens ?? a.sent_tokens;
   const naming = !!state.renaming && isAt([state.renaming.g, state.renaming.c], g.name, a.channel);
   const named = a.name && a.name.text;
-  // its top line -- its name, else what it was last asked -- clicked once it is the one shown: named there
-  const nameIt = SNAPSHOT || !current ? {} : { ...(HOVERS.matches ? {} : { title: `${nameNote(g, a)}Click to ${named ? "rename" : "name"} it` }),
-    onclick: (ev) => { if (ev.metaKey || ev.ctrlKey || ev.shiftKey) return; ev.stopPropagation(); startRename(g, a); } };
+  // its name -- else what it was last asked -- double-clicked once it is the one shown (or F2): named there. Not a single
+  // click: the row is its name alone, and a click on the row shown shows it (its task laid out again, if it was not)
+  const nameIt = SNAPSHOT || !current ? {} : { ...(HOVERS.matches ? {} : { title: `${nameNote(g, a)}Double-click to ${named ? "rename" : "name"} it` }),
+    ondblclick: (ev) => { if (ev.metaKey || ev.ctrlKey || ev.shiftKey) return; ev.stopPropagation(); startRename(g, a); } };
   const env = envelope(a.last_user_message);         // a message from another actor: who from, and its words
   const asked = env ? crewLine(env) : a.last_user_message;
   const row = el(naming ? "div" : "button", { class: "agent" + (naming ? " renaming" : "") + (isCoordinator(a) ? " coordinator" : "") + (pk ? " picked" : ""),
@@ -551,17 +548,12 @@ function agentRow(g, a, group, kid = false) {
       // the whole page, the monitor's card)
       naming ? nameBox() : el("div", { class: "name" + (named ? "" : asked ? " unnamed" : " none"), ...nameIt,
         text: named || (asked ? firstLine(asked, 200) : isCoordinator(a) ? "Coordinates this gatherer's actors" : "No message yet") }),
-      el("div", { class: "meta" }, el("span", { class: "says" }, ...(says ? [el("b", { class: says[0], text: says[1] }), " · "] : []),
-        [size !== null && size !== undefined ? `${compact(size)} tokens` : null, ago(a.last)].filter(Boolean).join(" · ")),
-        addButton(g, a.channel), saveButton(g, a), closeButton(g, a),
-        !hasChat(a) ? null : a.chattable === false
-          ? el("span", { class: "chat-icon held", title: "Open in another process: close it there to chat here" }, chatIcon(true))
-          : el("span", { class: "chat-icon", title: a.session ? "Chat: started from the dashboard" : "Chat: can be messaged from the dashboard" }, chatIcon(false))),
+      rowActs(addButton(g, a.channel), saveButton(g, a), closeButton(g, a)),
       branchChip(g, a),
       (a.background || []).length ? el("div", { class: "bgline", title: a.background.map((t) => `${TASK_KINDS[t.kind] || t.kind}: ${t.label || t.id}`).join("\n") },
         `${a.background.length} in background · ${a.background.map((t) => t.label || t.id).join(", ")}`) : null),
     el("span", { class: "a-face" }, pickMark(g, a, plainFace(a))));
-  return naming || isCoordinator(a) ? row : dropOnItem(dragRow(row, g, a, kid), g, a.channel);
+  return naming || isCoordinator(a) ? row : dropOnItem(dragRow(row, g, a), g, a.channel);
 }
 // TASKS (tasks.py, `home.tasks`: {gatherer: {tasks: [{id, name}], tasked: {item: task id}}}): what the reader works with
 // at once -- actors and apps alike, its ITEMS: an actor by its channel, an app's instance by "app:<its id>" (appItem) --
@@ -627,7 +619,7 @@ function taskRows(g, id, group) {
   if (tasksDrawn.has(k)) return [];
   tasksDrawn.add(k);
   const t = taskById(g.name, id);
-  return [taskRow(g, t, group), ...(tasksOpen.has(k) ? [taskKids(g, t)] : [])];
+  return [taskRow(g, t, group)];
 }
 // The apps of a box (folder `id`, null: the gatherer's top) as rows of their own, after its open actors (boxRows): each
 // in no task (appRow), and each task of apps only (no actor's rows draws it) -- where they are filed (appFolder)
@@ -699,26 +691,16 @@ function taskFaces(g, id) {
   if (apps) out.push(apps);
   return out;
 }
-// Tasks opened in the list (its caret), kept in this browser: under its row, what is in it -- each actor its own row, to
-// save or close, and each app a line, shown or closed from there
-const TASKS_OPEN_KEY = "ag-dashboard-tasks-open";
-const tasksOpen = (() => { try { return new Set(JSON.parse(localStorage.getItem(TASKS_OPEN_KEY)) || []); } catch (e) { return new Set(); } })();
-function toggleTask(gname, id, k = `${gname}\u0000${id}`) {
-  if (!tasksOpen.delete(k)) tasksOpen.add(k);
-  try { localStorage.setItem(TASKS_OPEN_KEY, JSON.stringify([...tasksOpen])); } catch (e) { /* this page only */ }
-  renderAgents();
-}
-// A task's row: as an actor's -- its lead's state at its left, its name, its lead's state in a word and what it is at,
-// its "+" -- its actors' faces and its apps' marks at its right, its caret at its left edge. Pressed: opened (openTask);
-// hovered, its card. Opened in the list (tasksOpen): what is in it under it (taskKids). Dragged: all in it; an item
-// dropped on it, put in it.
+// A task's row: as an actor's -- its lead's state at its left, its name -- its actors' faces and its apps' marks at its
+// right, its "+" over them hovered. A group, not a folder: what is in it is listed in its card (hovered), not in the
+// list. Pressed: opened (openTask). Dragged: all in it; an item dropped on it, put in it.
 function taskRow(g, t, group) {
-  const all = taskMembers(g, t.id), apps = taskApps(g, t.id), lead = taskLead(g, t.id), opened = tasksOpen.has(`${g.name}\u0000${t.id}`);
-  const [cls, label] = lead ? statusOf(lead) : apps.length ? ["idle", "Apps"] : ["closed", "Closed"], says = lead ? TASK_SAYS[groupOf(g, lead)] : null;
+  const all = taskMembers(g, t.id), apps = taskApps(g, t.id), lead = taskLead(g, t.id);
+  const [cls, label] = lead ? statusOf(lead) : apps.length ? ["idle", "Apps"] : ["closed", "Closed"];
   const name = taskName(g, t), first = lead ? lead.channel : apps.length ? appItem(apps[0].id) : null;
-  // the task of what is selected: marked -- opened in the list, the item in it is instead
-  const current = !opened && selectedTask() === `${g.name}\u0000t${t.id}`;
-  const open = !opened && !current && (all.some((a) => openActors().some((s) => isAt(s, g.name, a.channel)))
+  // the task of what is selected: marked
+  const current = selectedTask() === `${g.name}\u0000t${t.id}`;
+  const open = !current && (all.some((a) => openActors().some((s) => isAt(s, g.name, a.channel)))
     || apps.some((o) => panes.apps.some((p) => !p.held && p.instance.id === o.id)));
   const what = [all.length ? plural(all.length, "actor") : null, apps.length ? plural(apps.length, "app") : null].filter(Boolean).join(", ");
   const row = el("button", { class: "agent task", type: "button", "aria-current": current ? "true" : "false", "data-key": `${g.name}/task:${t.id}`,
@@ -727,36 +709,12 @@ function taskRow(g, t, group) {
     // pressed, its card put away (as the rail's tile does): a live card stays while the pointer is on the row, over the
     // panels the task opens
     onclick: (ev) => { cardHide(ev); openTask(g.name, t.id, null, ev); } },
-  rowButton("t-caret", { "aria-expanded": opened ? "true" : "false", title: opened ? "Fold it" : "Show what is in it: its actors and apps",
-    "aria-label": `${opened ? "Fold" : "Show what is in"} ${name}` }, () => toggleTask(g.name, t.id), el("span", { class: "caret", "aria-hidden": "true", text: "▶" })),
   el("span", { class: `dot ${cls}`, "aria-label": label, style: `--spin-at: -${Date.now() % 1200}ms` }),
   el("div", {},
     el("div", { class: "name", text: name }),
-    el("div", { class: "meta" }, el("span", { class: "says" }, ...(says ? [el("b", { class: says[0], text: says[1] }), " · "] : []),
-      !lead ? (apps.length ? apps.map((o) => o.app.label).join(", ") : "Nothing in it") : says ? actorTitle(lead) : `${actorTitle(lead)} · ${ago(lead.last)}`),
-    first ? addButton(g, first) : null)),
+    rowActs(first ? addButton(g, first) : null)),
   el("span", { class: "t-faces" }, ...taskFaces(g, t.id)));
   return first ? dropOnItem(dragItems(row, g, () => taskItems(g, t.id)), g, first) : row;
-}
-// what is in a task opened in the list: its actors -- not closed first, as its row has them, then the closed -- each its
-// own row; then its apps (appLine)
-function taskKids(g, t) {
-  const open = taskActors(g, t.id), closed = taskMembers(g, t.id).filter((a) => !open.includes(a)).sort((x, y) => (y.last || 0) - (x.last || 0));
-  return el("div", { class: "f-kids t-kids" }, ...[...open, ...closed].map((a) => agentRow(g, a, groupOf(g, a), true)),
-    ...taskApps(g, t.id).map((o) => appLine(g, o)));
-}
-// An app of a task, as a line in the list: pressed, selected (selectApp) -- the line marked while its panel is above the
-// panes -- its × closing it (closeApp); dragged alone, onto another item's row: put in its task
-function appLine(g, o) {
-  const shown = panes.apps.some((p) => !p.held && p.instance.id === o.id), chosen = appSelected() === o.id;
-  return dragItems(el("div", { class: "t-app-line", "data-key": `${g.name}/${appItem(o.id)}`, "aria-current": chosen ? "true" : "false",
-    ...(shown && !chosen ? { "data-open": "true" } : {}) },
-    el("button", { class: "t-app-open", type: "button",
-      title: `${appTitle(o)}: select it -- its panel above the panes${SNAPSHOT ? "" : ` · ${BESIDE_KEY}+click: beside the ones shown`}`,
-      onclick: (ev) => selectApp(g.name, o, ev) },
-    appMarkOf(o), el("span", { class: "nm", text: o.app.label }), o.title ? el("span", { class: "at", text: o.title }) : null),
-    SNAPSHOT ? null : el("button", { class: "act t-app-close", type: "button", title: `Close ${o.app.label}: the app closed, its agents detached`,
-      "aria-label": `Close ${o.app.label}`, onclick: () => closeApp(g.name, o) }, closeIcon())), g, () => [appItem(o.id)]);
 }
 // An app in no task, a task of its own: its row, as an actor's -- what it shows (its title, else its kind) and its kind
 // under it, its "+" and its × (closeApp), its face at its right. Pressed: selected (selectApp); dragged onto another item's
@@ -770,9 +728,8 @@ function appRow(g, o) {
   el("span", { class: "dot-none", "aria-hidden": "true" }),
   el("div", {},
     el("div", { class: "name", text: o.title || o.app.label }),
-    el("div", { class: "meta" }, el("span", { class: "says" }, o.title ? o.app.label : "An app"),
-      addButton(g, k), SNAPSHOT ? null : rowButton("close-btn", { title: `Close ${o.app.label}: the app closed`, "aria-label": `Close ${o.app.label}` },
-        () => closeApp(g.name, o), closeIcon()))),
+    rowActs(addButton(g, k), SNAPSHOT ? null : rowButton("close-btn", { title: `Close ${o.app.label}: the app closed`, "aria-label": `Close ${o.app.label}` },
+      () => closeApp(g.name, o), closeIcon()))),
   el("span", { class: "a-face" }, appFace(o)));
   return dropOnItem(dragItems(row, g, () => [k]), g, k);
 }
@@ -961,6 +918,8 @@ async function joinTask(gname, k, items) {
   readApps(gname, true);
   renderAgents();
 }
+// A row's buttons ("+", bookmark, ×), one group -- shown over its face while it is hovered (04-list.css); none: nothing
+const rowActs = (...bs) => bs.some(Boolean) ? el("span", { class: "a-acts" }, ...bs) : null;
 // A selected actor's check, on its avatar, once two or more are selected: a click on it leaves it out
 function pickMark(g, a, logo) {
   if (!picked(g, a) || picks.cs.size < 2 || !(logo instanceof HTMLElement)) return logo;
@@ -1120,7 +1079,7 @@ function foldRows(g, id, name, list) {
       : name === "Saved" ? `${shown ? "Hide" : "Show"} the saved actors that are closed: kept here, apart from the closed ones, till unsaved`
       : `${shown ? "Hide" : "Show"} the closed ${kids.length ? "folders and actors" : "actors"}`,
     onclick: () => toggleFold(name, k) },
-    `${shown ? "▾" : "▸"} `, name === "Saved" ? el("span", { class: "fold-mark", "aria-hidden": "true" }, saveIcon(true)) : null,
+    `${shown ? "▾" : "▸"} `,
     shells ? plural(list.length, "terminal") : name === "Closed" ? closedSays(g, id, list.length) : `${list.length} ${name.toLowerCase()}`);
   if (shells) return [line, ...(shown ? list.map((s) => shellRow(g, s)) : [])];
   if (shown) return [line, ...kids.flatMap((f) => folderRows(g, f)), ...list.flatMap((a) => rowsOf(g, a, name))];
@@ -1334,13 +1293,13 @@ function markDragged() {
   for (const n of document.querySelectorAll("#rail .r-actor[data-card]")) if (cards.has(n.dataset.card)) n.classList.add("dragging");
 }
 // An actor's row dragged: the selection, if it is in it; else it -- one of a task, the task: all in it, which are in one
-// place -- but `kid`, listed under its task opened: it alone (into another task; into a folder, its task with it, canDrop)
-function dragRow(row, g, a, kid = false) {
+// place
+function dragRow(row, g, a) {
   if (SNAPSHOT || isCoordinator(a)) return row;
   return dragItems(row, g, () => {
     if (picked(g, a) && picks.cs.size > 1) return [...picks.cs];
     const id = taskOf(g.name, a);
-    return id === null || kid ? [a.channel] : taskItems(g, id);
+    return id === null ? [a.channel] : taskItems(g, id);
   });
 }
 // a row dragged: the items `cs()` says (actors' channels, apps' "app:<id>")
@@ -1471,9 +1430,9 @@ function shellRow(g, s) {
       el("div", { class: "name", text: where.split("/").filter(Boolean).pop() || where }),
       el("div", { class: "asked", text: where }),
       el("div", { class: "meta" }, el("span", { text: `Terminal · opened ${ago(s.since)}` }),
-        el("span", { class: "close-btn", role: "button", tabindex: "0", title: "Terminate: end the shell, and whatever runs in it",
+        rowActs(el("span", { class: "close-btn", role: "button", tabindex: "0", title: "Terminate: end the shell, and whatever runs in it",
           "aria-label": "Terminate the terminal", onclick: close,
-          onkeydown: (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); close(ev); } } }, closeIcon()))));
+          onkeydown: (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); close(ev); } } }, closeIcon())))));
 }
 const shellLogo = () => el("span", { class: "logo shell-logo", "aria-hidden": "true" }, strokeIcon(ICONS.terminal, 18));
 async function closeShell(s) {
