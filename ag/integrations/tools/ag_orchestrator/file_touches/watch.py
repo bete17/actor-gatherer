@@ -239,13 +239,19 @@ class _Inotify:
                 pass
 
     def _read(self) -> None:
+        # poll, not select: select takes no descriptor numbered FD_SETSIZE (1024) or more, and a process holding
+        # that many (a dashboard's sockets and files) gave this one past it -- its reader stopped at once, nothing
+        # it watched ever reported
+        poller = select.poll()
+        poller.register(self.fd, select.POLLIN)
         while not self.closed:
             try:
-                ready, _, _ = select.select([self.fd], [], [], 1.0)
-                if not ready:
+                if not poller.poll(1000):
                     continue
                 data = os.read(self.fd, 1 << 16)
-            except (OSError, ValueError):
+            except (OSError, ValueError) as exc:
+                if not self.closed:
+                    self.log(f"file changes are no longer watched: {exc!r}")
                 return
             at = 0
             while at + EVENT.size <= len(data):

@@ -253,6 +253,31 @@ class WatchTest(unittest.TestCase):
         w.watch(big)
         self.assertTrue(until(lambda: w.status[os.path.realpath(big)].startswith("too big")))
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "inotify: Linux")
+    def test_a_watcher_given_a_descriptor_past_1024_still_reports(self):
+        import resource
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        want = 1200
+        if soft < want:
+            if hard != resource.RLIM_INFINITY and hard < want:
+                self.skipTest("too few file descriptors allowed")
+            resource.setrlimit(resource.RLIMIT_NOFILE, (want, hard))
+            self.addCleanup(resource.setrlimit, resource.RLIMIT_NOFILE, (soft, hard))
+        held = []                                                   # a process holding many: a dashboard's sockets
+        self.addCleanup(lambda: [os.close(fd) for fd in held])
+        while not held or held[-1] < 1100:
+            held.append(os.open(os.devnull, os.O_RDONLY))
+        w = watch.Watcher()
+        self.addCleanup(w.close)
+        d = os.path.join(self.d, "src")
+        w.watch(d)
+        self.assertGreater(w.backend.fd, 1024)
+        self.assertEqual(until(lambda: w.status.get(os.path.realpath(d))), "watched")
+        t0 = time.time()
+        f = os.path.join(d, "late.py")
+        write(f, "x\n")
+        self.assertEqual(until(lambda: w.between(t0, time.time())), {f: "created"})
+
 
 class Server:
     """The context manager's server, as the hooks see it: answers what it is asked, recording it."""
