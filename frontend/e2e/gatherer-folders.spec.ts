@@ -88,6 +88,26 @@ test("keeps gatherers in folders of their own: made from the list's head, filled
   }
 });
 
+test("gatherers selected with Cmd/Ctrl+click are dragged into a folder together", async ({ page }) => {
+  await gfPost(page, { do: "new", name: "Work" });
+  try {
+    await open(page);
+    const gRow = page.locator("#agents .gatherer-row", { hasText: GATHERER });
+    const name = gRow.locator("button.name");
+    await gRow.locator(".gname").click({ modifiers: ["ControlOrMeta"] });
+    await expect(gRow).toHaveClass(/\bpicked\b/);
+    await expect(name).toHaveAttribute("aria-expanded", "true"); // selected, not folded
+    await page.keyboard.press("Escape");
+    await expect(gRow).not.toHaveClass(/\bpicked\b/);
+    await gRow.locator(".gname").click({ modifiers: ["ControlOrMeta"] });
+    await gRow.dragTo(page.locator("#agents .gf-line", { hasText: "Work" }));
+    await expect(page.locator("#agents .gf-kids .gatherer-row", { hasText: GATHERER })).toBeVisible();
+    await expect(page.locator("#agents .gatherer-row.picked")).toHaveCount(0); // the drop clears the selection
+  } finally {
+    await noGathererFolders(page);
+  }
+});
+
 test("in the rail, a folder of gatherers holds its gatherers, folds and opens", async ({ page }) => {
   const work = (await (await gfPost(page, { do: "new", name: "Work" })).json()).made as number;
   await gfPost(page, { do: "file", gatherers: [GATHERER], folder: work });

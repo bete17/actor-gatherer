@@ -33,11 +33,25 @@ function fileGatherers(names, id) {
     for (const n of names) { if (id === null) delete tree.filed[n]; else tree.filed[n] = id; }
   });
 }
+// Gatherers selected (⌘+click on a Mac, else Ctrl+click) to drag into a folder at once; Esc, or a drop, clears it
+const gPicks = new Set();
+function clearGPicks() { if (gPicks.size) { gPicks.clear(); renderAgents(); } }
+document.addEventListener("keydown", (ev) => {
+  if (ev.key !== "Escape" || !gPicks.size || ev.defaultPrevented || (ev.target.closest && ev.target.closest("input, textarea, [contenteditable], .xterm"))) return;
+  clearGPicks();
+});
 // A gatherer's row, made to drag into a folder of gatherers: once there is one, and not while its name is typed
 function dragGatherer(row, g) {
   if (SNAPSHOT || !treeOf(GF).folders.length || (state.renaming && isAt([state.renaming.g, state.renaming.c], g.name, null))) return row;
+  row.classList.toggle("picked", gPicks.has(g.name));
+  row.addEventListener("click", (ev) => {           // captured: before its name's button folds it
+    if (!(MAC ? ev.metaKey : ev.ctrlKey) || ev.target.closest(".g-acts")) return;
+    ev.preventDefault(); ev.stopPropagation();
+    if (!gPicks.delete(g.name)) gPicks.add(g.name);
+    renderAgents();
+  }, true);
   row.draggable = true;
-  row.addEventListener("dragstart", (ev) => startDrag(ev, GFS, { gs: [g.name] }));
+  row.addEventListener("dragstart", (ev) => startDrag(ev, GFS, { gs: gPicks.has(g.name) ? [...gPicks] : [g.name] }));
   row.addEventListener("dragend", endDrag);
   return row;
 }

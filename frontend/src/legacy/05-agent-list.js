@@ -987,7 +987,7 @@ function dropOn(n, g, id, open) {
     d.later = false;                                 // drawn by the move, next
     endDrag();
     if (d.folder !== null) { moveFolder(g.name, d.folder, id); return; }
-    if (d.gs) { fileGatherers(d.gs.filter((name) => gfOf(name) !== id), id); return; }
+    if (d.gs) { gPicks.clear(); fileGatherers(d.gs.filter((name) => gfOf(name) !== id), id); return; }
     const actors = d.cs.map((c) => now.agents.find((x) => x.channel === c)).filter((a) => a && folderOf(g.name, a) !== id);
     if (d.cs.length > 1) clearPicks(false);
     fileActors(g.name, actors, id);
