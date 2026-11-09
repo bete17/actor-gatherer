@@ -28,11 +28,29 @@ class ManifestTest(unittest.TestCase):
     def test_it_loads_as_an_app_every_agent_is_offered(self):
         m = app_kit.load(FOLDER)
         self.assertEqual((m.name, m.label, m.instances, m.offer), ("notes", "Notes", "one", "always"))
-        self.assertEqual([t.mcp("notes")["name"] for t in m.tools], ["notes_read", "notes_add", "notes_change"])
+        self.assertEqual([t.mcp("notes")["name"] for t in m.tools],
+                         ["notes_read", "notes_add", "notes_change", "notes_report"])
         self.assertEqual(m.backend.python, "backend:NotesApp")
         self.assertTrue(os.path.isfile(os.path.join(FOLDER, m.mark)))
         self.assertTrue(os.path.isfile(os.path.join(FOLDER, "panel", "index.html")))
         self.assertIn("notes_read", m.instructions)
+        self.assertIn("notes_report", m.instructions)
+        self.assertIn("write it on the page itself with notes_add", m.instructions)     # a report is not on the page
+        self.assertTrue(m.capabilities.actors and m.capabilities.message_actors)
+
+    def test_a_line_it_sent_is_read_back_as_the_users_words_and_its_page(self):
+        import re
+        m = app_kit.load(FOLDER)
+        for text, words, page in (
+                ('(From my Notes, page "Report (week)", block abc12345. When you\'re done, report back there with '
+                 'notes_report, in one to three lines.)\n\nAdd CSV export\n\nDates in ISO.',
+                 "Add CSV export\n\nDates in ISO.", "Report (week)"),
+                ('(A reply in my Notes, page "Say \\"hi\\"", block abc12345. Report back there with notes_report when '
+                 'you\'re done.)\n\nAlso the date', "Also the date", 'Say \\"hi\\"'),
+                ('(From my Notes, page "P", block abc12345.) Two lines, made one', "Two lines, made one", "P")):
+            with self.subTest(text=text):
+                self.assertIn(m.asked.when, text)                                  # (the list's copy: lines made one)
+                self.assertEqual(re.match(m.asked.pattern, text).groups(), (words, page, "abc12345"))
 
 
 class BookBase(unittest.TestCase):
@@ -138,6 +156,69 @@ class NotebookTest(BookBase):
         book = nb.Notebook(self.path)
         self.assertEqual(book.state(), {"version": 0, "pages": []})
         self.assertTrue([f for f in os.listdir(self.dir) if f.startswith("g.json.unreadable-")])
+
+
+class SentTest(BookBase):
+    """A block sent to an agent says who it went to and when; its thread holds the user's replies and the agent's
+    reports."""
+
+    def test_a_block_says_who_it_went_to_and_keeps_it_as_it_is_typed_in_and_retyped(self):
+        self.page(blocks=[block("aaaaaa01", "todo", "ship it")])
+        self.book.apply([{"op": "block.put", "page": "pagepage",
+                          "block": {"id": "aaaaaa01", "to": "1f2e3d4c-aaaa-bbbb", "sent": 1700000000}}])
+        b = self.book.page("pagepage")["blocks"][0]
+        self.assertEqual((b["to"], b["sent"]), ("1f2e3d4c-aaaa-bbbb", 1700000000.0))
+        self.assertNotIn("extra", b)
+        self.book.apply([{"op": "block.put", "page": "pagepage",
+                          "block": {"id": "aaaaaa01", "extra": "in <b>ISO</b><script>"}}])
+        self.assertEqual(self.book.page("pagepage")["blocks"][0]["extra"], "in <b>ISO</b>")
+        self.book.apply([{"op": "block.put", "page": "pagepage", "block": {"id": "aaaaaa01", "text": "ship it now"}},
+                         {"op": "block.put", "page": "pagepage", "block": {"id": "aaaaaa01", "type": "bullet"}}])
+        b = self.book.page("pagepage")["blocks"][0]
+        self.assertEqual((b["type"], b["text"], b["to"]), ("bullet", "ship it now", "1f2e3d4c-aaaa-bbbb"))
+        self.book.apply([{"op": "block.put", "page": "pagepage", "block": {"id": "aaaaaa01", "to": ""}}])
+        b = self.book.page("pagepage")["blocks"][0]
+        self.assertFalse({"to", "sent", "extra"} & set(b))          # who it went to, and with what: forgotten
+        for bad in ({"to": "no spaces here"}, {"to": 7}, {"to": "abc123", "sent": "now"}):
+            with self.subTest(bad=bad), self.assertRaises(nb.NotebookError):
+                self.book.apply([{"op": "block.put", "page": "pagepage", "block": {"id": "aaaaaa01", **bad}}])
+
+    def test_its_thread_takes_lines_in_order_each_once_and_goes_with_it(self):
+        self.page(blocks=[block("aaaaaa01", "todo", "ship it", to="chan-1"), block("aaaaaa02", text="other")])
+        line = {"id": "line0001", "by": "user", "text": "also <b>this</b><script>x</script>"}
+        v, done = self.book.apply([{"op": "thread.add", "page": "pagepage", "block": "aaaaaa01", "line": line},
+                                   {"op": "thread.add", "page": "pagepage", "block": "aaaaaa01", "line": line},
+                                   {"op": "thread.add", "page": "pagepage", "block": "aaaaaa01",
+                                    "line": {"id": "line0002", "by": "agent:chan-1", "text": "done", "done": True}},
+                                   {"op": "thread.add", "page": "pagepage", "block": "zzzzzz99", "line": line}])
+        self.assertEqual(len(done), 2)                                            # sent again, or no block: skipped
+        thread = self.book.page("pagepage")["blocks"][0]["thread"]
+        self.assertEqual([(x["id"], x["by"], x["text"]) for x in thread],
+                         [("line0001", "user", "also <b>this</b>"), ("line0002", "agent:chan-1", "done")])
+        self.assertTrue(thread[1]["done"] and all(isinstance(x["at"], float) for x in thread))
+        self.book.apply([{"op": "block.put", "page": "pagepage", "block": {"id": "aaaaaa01", "text": "ship"}},
+                         {"op": "block.move", "page": "pagepage", "block": "aaaaaa01", "after": "aaaaaa02"}])
+        self.assertEqual(len(self.book.page("pagepage")["blocks"][1]["thread"]), 2)
+        for bad in ({"id": "line0003", "by": "someone", "text": "x"}, {"id": "line0003", "by": "user", "text": " "},
+                    {"id": "x", "by": "user", "text": "x"}):
+            with self.subTest(bad=bad), self.assertRaises(nb.NotebookError):
+                self.book.apply([{"op": "thread.add", "page": "pagepage", "block": "aaaaaa01", "line": bad}])
+        self.book.apply([{"op": "block.delete", "page": "pagepage", "block": "aaaaaa01"}])
+        self.assertIsNone(self.book.block("aaaaaa01"))
+
+    def test_an_agent_reads_who_a_block_went_to_and_its_thread_apart_from_the_blocks(self):
+        page = self.page(blocks=[block("aaaaaa01", "todo", "ship it", to="chan-1", extra="today",
+                                       thread=[{"id": "line0001", "by": "user", "text": "and <b>fast</b>"},
+                                               {"id": "line0002", "by": "agent:chan-1", "text": "on it"}]),
+                                 block("aaaaaa02", "agents")])
+        md = self.book.markdown(page, "chan-1")
+        self.assertIn("[aaaaaa01] - [ ] ship it\n[aaaaaa02] (a table of the gatherer's actors", md)
+        self.assertIn("- [aaaaaa01] sent to actor chan-1 (you), with: today\n    the user: and **fast**\n"
+                      "    actor chan-1 (you): on it", md)
+        self.assertNotIn("(you)", self.book.markdown(page, "chan-2"))
+        self.assertNotIn("to", self.book.page("pagepage")["blocks"][1])         # an agents block goes to no one
+        self.book.apply([{"op": "block.put", "page": "pagepage", "block": {"id": "aaaaaa02", "to": "chan-1"}}])
+        self.assertNotIn("to", self.book.page("pagepage")["blocks"][1])
 
 
 class MarkdownTest(unittest.TestCase):
@@ -276,6 +357,52 @@ class BackendTest(unittest.TestCase):
         err, text = self.call("change", page="Child")             # nothing to change
         self.assertTrue(err)
         self.assertIn("a `block` to change", text)
+
+    def sent_block(self, text="ship it", type="todo"):
+        self.ask("POST", "ops", {"by": "p-one", "ops": [
+            {"op": "page.new", "page": {"id": "pagepage", "title": "Plans"},
+             "blocks": [block("aaaaaa01", type, text, to="chan-1", sent=1700000000)]}]})
+
+    def test_an_agent_reports_back_on_a_block_it_was_sent_and_ticks_it(self):
+        self.sent_block()
+        err, text = self.call("report", block="aaaaaa01", text="Did it: **branch** `ship-it`.\nTests pass.")
+        self.assertFalse(err)
+        self.assertEqual(text, "Reported under the block on “Plans”: the user sees it there.")
+        err, text = self.call("report", block="aaaaaa01", text="All done.", done=True)
+        self.assertIn("and ticked it", text)
+        b = self.app.book(self.inst.gatherer).block("aaaaaa01")[1]
+        self.assertTrue(b["checked"])
+        self.assertEqual([(x["by"], x["text"], x.get("done", False)) for x in b["thread"]],
+                         [("agent:chan-1", "Did it: <b>branch</b> <code>ship-it</code>.<br>Tests pass.", False),
+                          ("agent:chan-1", "All done.", True)])
+        told = self.host.told[-1]
+        self.assertEqual((told["by"], told["agent"], [o["op"] for o in told["ops"]]),
+                         ("agent:chan-1", "chan-1", ["thread.add", "block.put"]))
+        err, text = self.call("report", block="aaaaaa01", text="Again.", done=True)
+        self.assertNotIn("ticked", text)                                          # ticked already
+        self.assertIn("    actor chan-1 (you): All done.", self.call("read", page="Plans")[1])
+
+    def test_an_agent_is_told_what_is_wrong_with_its_report(self):
+        self.sent_block()
+        for args, says in (({"block": "zzzzzz99", "text": "x"}, "no block 'zzzzzz99'"),
+                           ({"block": "aaaaaa01", "text": "  "}, "one to three lines"),
+                           ({"block": "aaaaaa01", "text": "x" * 2000}, "too long for a report")):
+            with self.subTest(args=args):
+                err, text = self.call("report", **args)
+                self.assertTrue(err)
+                self.assertIn(says, text)
+        self.assertNotIn("thread", self.app.book(self.inst.gatherer).block("aaaaaa01")[1])
+
+    def test_a_line_a_panel_adds_is_the_users(self):
+        self.sent_block()
+        status, got = self.ask("POST", "ops", {"by": "p-one", "ops": [{"op": "thread.add", "page": "pagepage",
+                                                                         "block": "aaaaaa01", "line": {
+                                                                             "id": "line0001", "by": "agent:chan-1",
+                                                                             "text": "I did it", "at": 5}}]})
+        self.assertEqual(status, 200)
+        line = self.app.book(self.inst.gatherer).block("aaaaaa01")[1]["thread"][0]
+        self.assertEqual(line["by"], "user")
+        self.assertGreater(line["at"], 1_700_000_000)                              # written now, not when it says
 
     def test_the_panel_reads_the_notebook_and_changes_it(self):
         status, got = self.ask("GET", "state")

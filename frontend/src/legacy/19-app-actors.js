@@ -26,25 +26,41 @@ function appMark(info) {
   return el("img", { class: "dw-badge", src: `/apps/mark/${encodeURIComponent(app.name)}.svg`, alt: app.label, title: app.label,
     draggable: "false" });
 }
-// A message an app's page wrote (one holding an app's [asked] `when`: DocWriter's prompt, a Browser's message from
-// before it was an app), shown in Chat by the user's words alone: the first group of its `pattern`; null, any other.
-function appWordsOf(text) {
+// The app that wrote a message (one holding its [asked] `when`: DocWriter's prompt, a Browser's message from before it
+// was an app, a line Notes sent), and its `pattern`'s match: {app, m}; null for any other message.
+function appWrote(text) {
   if (typeof text !== "string" || PANE || SNAPSHOT || !window.agNext) return null;
   for (const app of window.agNext.apps.found()) {
     const a = app.asked;
-    if (!a || !a.when || !a.pattern || !text.includes(a.when)) continue;
+    if (!a || !a.when || !text.includes(a.when)) continue;
     let m = null;
-    try { m = text.match(new RegExp(a.pattern)); } catch (e) { continue; }
-    if (m && m[1]) return el("span", { class: "tx" }, m[1]);
+    try { m = a.pattern ? text.match(new RegExp(a.pattern)) : null; } catch (e) { continue; }
+    return { app, m };
   }
   return null;
 }
-// What an app's actor was asked, as the list shows it: in a message holding the manifest's `when`, the first group of
-// its `pattern`, else its `otherwise`; any other message as it is.
+// What in an app such a message is about (its pattern's third group: a Notes line): {app, item}; null for none.
+function appAskedOf(text) {
+  const got = appWrote(text), m = got && got.m;
+  return m && m[3] ? { app: got.app.name, item: m[3] } : null;
+}
+// Such a message shown in Chat by the user's words alone: the first group of its `pattern` -- under where in the app it
+// came from, with the app's mark, when the pattern has a second group (a Notes page's title); null, any other.
+function appWordsOf(text) {
+  const got = appWrote(text), m = got && got.m;
+  if (!m || !m[1]) return null;
+  if (!m[2]) return el("span", { class: "tx" }, m[1]);
+  const app = got.app;
+  return el("span", { class: "tx app-said" },
+    el("span", { class: "app-from" },
+      app.mark ? el("img", { src: `/apps/mark/${encodeURIComponent(app.name)}.svg`, alt: "", draggable: "false" }) : null,
+      `From ${app.label} · ${m[2].replace(/\\(.)/g, "$1")}`),
+    el("span", { class: "app-words" }, m[1]));
+}
+// What an actor was asked, as the list shows it: in a message an app wrote (its [asked] `when`), the first group of its
+// `pattern`, else its `otherwise`; any other message as it is.
 function appAsked(info, text) {
-  const app = appOfActor(info), a = app && app.asked;
-  if (!text || !a || !a.when || !text.includes(a.when)) return text;
-  let m = null;
-  try { m = a.pattern ? text.match(new RegExp(a.pattern)) : null; } catch (e) { /* the manifest's pattern: checked when read */ }
-  return (m && m[1]) || a.otherwise || text;
+  const got = text ? appWrote(text) : null;
+  if (!got) return text;
+  return (got.m && got.m[1]) || got.app.asked.otherwise || text;
 }

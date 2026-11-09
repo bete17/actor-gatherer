@@ -75,7 +75,10 @@ function takeHome(home) {
   window.agNext.home(home);                        // the new code's store has it too (src/bridge.ts)
   for (const g of home.gatherers) for (const a of g.agents) {
     a.key = key(g.name, a.channel);
-    if (appRole(a)) a.last_user_message = appAsked(a, a.last_user_message);
+    if (a.last_user_message) {                     // an app's words: the user's -- and what in the app they are about
+      a.asked_of = appAskedOf(a.last_user_message);
+      a.last_user_message = appAsked(a, a.last_user_message);
+    }
   }
   if (state.selected) {                              // a codex session renamed to its thread: followed there
     const g = home.gatherers.find((x) => x.name === state.selected[0]);

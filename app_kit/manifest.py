@@ -97,6 +97,8 @@ CAPABILITIES = {
     "actors": "seeing the gatherer's actors as its list shows them: their names, avatars, folders and what they are "
               "doing",
     "notify": "sending you notifications: in the dashboard's list and as pop-ups, and on this computer if you allow it",
+    "message_actors": "sending messages to any actor of its gatherer, answering what one asks, starting a new one with "
+                      "a message, and showing one -- as the user, from its panel, as Chat does",
 }
 
 
@@ -177,6 +179,7 @@ class Capabilities:
     docs: bool = False
     actors: bool = False
     notify: bool = False
+    message_actors: bool = False
 
     def asked(self) -> List[str]:
         """What it asks for, as the user is shown it before granting it."""
@@ -187,7 +190,7 @@ class Capabilities:
             said.append(f"reading these events of the gatherer: {', '.join(self.reads)}")
         if self.files:
             said.append(CAPABILITIES["files"])
-        for k in ("commands", "message_agents", "transcript", "edit_guard", "docs", "actors", "notify"):
+        for k in ("commands", "message_agents", "transcript", "edit_guard", "docs", "actors", "notify", "message_actors"):
             if getattr(self, k):
                 said.append(CAPABILITIES[k])
         return said
@@ -195,9 +198,13 @@ class Capabilities:
 
 @dataclass(frozen=True)
 class Asked:
-    """`[asked]`: what an agent the app started was asked, as a list of actors shows it, when the app writes its
-    messages (DocWriter's prompt, its document's state around the user's words): in a message holding `when`, the
-    first group of `pattern` (a regular expression), else `otherwise`."""
+    """`[asked]`: what an agent was asked, as a list of actors and Chat show it, when the app writes its messages
+    (DocWriter's prompt, its document's state around the user's words; a line Notes sends, with a note on where it is
+    from): in a message holding `when`, the first group of `pattern` (a regular expression), else `otherwise`. A second
+    group, if the pattern has one, says where in the app the message came from (a page's title): Chat shows it, with
+    the app's label and mark, above the words. A third, which item in the app it is about (a Notes line's id): the
+    app's panel is told it, as what the actor is on now. The words may be read from anywhere in the message, by a
+    lookahead, so that the rest can come first: what the list keeps of a message is cut at 600 characters."""
     when: str = ""
     pattern: str = ""
     otherwise: str = ""
@@ -282,7 +289,8 @@ class Manifest:
                              "transcript": self.capabilities.transcript,
                              "edit_guard": self.capabilities.edit_guard,
                              "docs": self.capabilities.docs, "actors": self.capabilities.actors,
-                             "notify": self.capabilities.notify},
+                             "notify": self.capabilities.notify,
+                             "message_actors": self.capabilities.message_actors},
         }
 
 
@@ -579,4 +587,5 @@ def _capabilities(r: _Reader, d: Any) -> Capabilities:
                         transcript=r.flag(d, "transcript", "capabilities."),
                         edit_guard=r.flag(d, "edit_guard", "capabilities."),
                         docs=r.flag(d, "docs", "capabilities."), actors=r.flag(d, "actors", "capabilities."),
-                        notify=r.flag(d, "notify", "capabilities."))
+                        notify=r.flag(d, "notify", "capabilities."),
+                        message_actors=r.flag(d, "message_actors", "capabilities."))

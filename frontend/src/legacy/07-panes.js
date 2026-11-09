@@ -479,17 +479,32 @@ function topGutter(p) {
 // An actor of the home (its gatherer, its channel), as the page has it now; a codex actor's thread it was renamed to.
 const appActor = (g, c) => {
   const gg = state.home && state.home.gatherers.find((x) => x.name === g);
-  return (gg && gg.agents.find((a) => a.channel === c || a.started_as === c)) || null;
+  return (gg && gg.agents.find((a) => a.channel === c || a.started_as === c || (a.session && a.session.started_as === c))) || null;
 };
-// The actors as the list has them, for a panel that asks (the SDK's ag.actors): each one's name, avatar, hue, folder and
-// status -- what an app shows of an actor -- by gatherer; and the dashboard's own folder and the home folder.
+// The actors as the list has them, for a panel that asks (the SDK's ag.actors): each one's name, avatar, hue, folder,
+// status -- what an app shows of an actor -- and what it asks the user, by gatherer; the harnesses a new one can start
+// on here; and the dashboard's own folder and the home folder.
 function appActors() {
   const h = state.home;
-  if (!h) return { gatherers: [], home_dir: "", cwd: "" };
+  if (!h) return { gatherers: [], home_dir: "", cwd: "", harnesses: [] };
   return { home_dir: h.home_dir || "", cwd: h.cwd || "",
-    gatherers: h.gatherers.map((g) => ({ name: g.name, agents: g.agents.map((a) => ({ channel: a.channel, name: a.name || null,
-      last_user_message: firstLine(a.last_user_message || "", 200), avatar: a.avatar || null, avatar_hue: a.avatar_hue || null,
-      cwd: a.cwd || null, last: a.last || 0, status: statusOf(a) })) })) };
+    harnesses: startable().map((x) => ({ name: x, label: harnessName(x) })),
+    gatherers: h.gatherers.map((g) => ({ name: g.name, start_cwd: startCwd(g) || null, agents: g.agents.map((a) => appActorSaid(g, a)) })) };
+}
+// An actor as a panel is told of it: as appActors says. What it asks: as Chat shows it (askingNote), less what only
+// Chat draws (a permission's input, a dialog's screen), and whether its answer can be given from the page (askWhere).
+// What its latest message is about, when an app wrote it (`asked_of`: the app, and the item its [asked] pattern's third
+// group names -- a Notes line): the item it is on now.
+function appActorSaid(g, a) {
+  const ask = a.status === "asking" || (a.status === "running" && a.asking && a.asking.async) ? a.asking : null;
+  const { input, view, lines, ...said } = ask || {};
+  return { channel: a.channel, started_as: (a.session && a.session.started_as) || null, name: a.name || null,
+    last_user_message: firstLine(appAsked(a, a.last_user_message || ""), 200), avatar: a.avatar || null,
+    avatar_hue: a.avatar_hue || null, cwd: cwdOf(a) || null, last: a.last || 0, status: statusOf(a),
+    harness: a.harness || null, role: a.role || null, saved: !!savedAs(g.name, a), turn_over: !!a.turn_over,
+    asked_of: a.asked_of || appAskedOf(a.last_user_message || ""),        // (read before the apps were: from it now)
+    recap: a.recap && a.recap.text ? { text: a.recap.text, at: a.recap.at } : null,
+    asking: ask ? { ...said, id: askKey(ask) } : null, answerable: !!ask && askWhere(a, ask).here };
 }
 // What a panel is told of an attached agent (the SDK's agents.state), as DocWriter's page was told its actor's.
 function appAgentState(g, c) {
@@ -511,6 +526,34 @@ function appInterrupt(g, c) {
   const sid = appSessionOf(g, c);
   return sid ? post("/api/terminal/input", { session_id: sid, data: "\u001b" }) : Promise.resolve(null);
 }
+// A message to any actor of a gatherer, as Chat sends one (an app asking message_actors): "gatherer", its gatherer agent,
+// started first if it has none, as its button starts it (openCoordinator). -> {channel}, the actor's.
+async function appSendActor(g, c, text) {
+  const gg = state.home && state.home.gatherers.find((x) => x.name === g);
+  if (!gg) throw new Error(`no gatherer ${g}`);
+  const a = c === "gatherer" ? gg.agents.find(isCoordinator) : appActor(g, c);
+  if (a) { await appSend(g, a.channel, text); return { channel: a.channel }; }
+  if (c !== "gatherer") throw new Error(`${c}: not an actor of ${g}`);
+  const s = await post("/api/coordinator", { gatherer: g, cwd: startCwd(gg), harness: startable()[0] || "" });
+  await post("/api/send", { session_id: s.session_id, text });
+  loadHome();
+  return { channel: s.session_id };
+}
+// A new actor of a gatherer, started on `harness` in `folder` with `text` its first message (an app asking
+// message_actors): listed, not shown -- the reader stays where they are. -> {channel}.
+async function appStartActor(g, harness, folder, text) {
+  if (!startable().includes(harness)) throw new Error(`${harness ? harnessName(harness) : "No harness"} can't start an actor here`);
+  if (!folder) throw new Error("which folder it works in");
+  const s = await post("/api/sessions", { gatherer: g, cwd: folder, harness });
+  await post("/api/send", { session_id: s.session_id, text });
+  loadHome();
+  return { channel: s.session_id };
+}
+// An actor of a gatherer shown in the pane in focus, in Chat (an app asking message_actors).
+function appShowActor(g, c) {
+  const a = appActor(g, c);
+  return a ? show(g, a.channel, CHAT_VIEWS.has("files") ? "files" : null) : null;
+}
 // The message box of the actor `c` of gatherer `g`, focused, if it is shown here (the pane in focus's): its keys taken
 // back from a native page first, in the desktop app.
 function appFocusAgent(g, c) {
@@ -530,7 +573,7 @@ function addAppPane(app, instance, size = 1, held = false) {
       .filter((a) => !a.closed && !isCoordinator(a))                                                           // agent: attached to no app
       .map((a) => ({ channel: a.channel, name: (a.name && a.name.text) || a.last_user_message || a.channel })),
     agentState: appAgentState, send: appSend, answer: appAnswer, interrupt: appInterrupt, focusAgent: appFocusAgent,
-    actors: appActors,
+    actors: appActors, sendActor: appSendActor, startActor: appStartActor, showActor: appShowActor,
   });
   p.node = p.panel.node; p.frame = p.panel.frame;
   p.gutter = topGutter(p);

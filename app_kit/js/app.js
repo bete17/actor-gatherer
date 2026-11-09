@@ -28,6 +28,13 @@ Everything goes through the page around it, by postMessage, which checks it agai
     ag.actors.current / on(cb)                           the actors as the dashboard lists them (capability actors):
                                                          {gatherers: [{name, agents: [{channel, name, avatar,
                                                          avatar_hue, cwd, status: [kind, said], ...}]}], home_dir, cwd}
+    ag.actors.send(ch, text) / answer(ch, call, choice)  any actor of the panel's gatherer messaged, its question
+                                                         answered, as the user (capability message_actors), as Chat
+                                                         does: "gatherer" for its gatherer agent (started if it has
+                                                         none). send's answer: {channel}, the actor's
+    ag.actors.start({harness, folder, text})             a new actor of the gatherer, started in `folder` with `text`
+                                                         as its first message: {channel}
+    ag.actors.show(ch)                                   an actor of the gatherer shown in the pane in focus (its Chat)
     ag.theme.current / on(cb)                            {mode: "light"|"dark", vars}: the vars also set on :root
     ag.agents.focus(ch)                                  the message box of an attached agent's pane, focused (say after
                                                          the user pointed at something in the panel: they type next)
@@ -217,7 +224,14 @@ Esc, and keys with Ctrl or ⌘ the panel leaves unhandled, go on to the page, as
       on(kind, cb) { if (!listeners.intent.has(kind)) listeners.intent.set(kind, []); listeners.intent.get(kind).push(cb); },
     },
     selection: { get current() { return selection; }, on(cb) { listeners.selection.push(cb); } },
-    actors: { get current() { return actors; }, on(cb) { listeners.actors.push(cb); } },
+    actors: {
+      get current() { return actors; },
+      on(cb) { listeners.actors.push(cb); },
+      send: (channel, text) => send("actors.send", { channel, text }),
+      answer: (channel, call, choice) => send("actors.answer", { channel, call, choice }),
+      start: (o) => send("actors.start", { harness: (o && o.harness) || "", folder: (o && o.folder) || "", text: (o && o.text) || "" }),
+      show: (channel) => send("actors.show", { channel }),
+    },
     theme: { get current() { return theme; }, on(cb) { listeners.theme.push(cb); } },
     notices: {
       send: (n) => send("notices.send", { ...(n || {}) }),
