@@ -8,9 +8,11 @@ import { get, post } from "../../core/api/client";
 import { stream, type Stream } from "../../core/api/stream";
 import "./apps.css";
 import { desktop, nativePanes, nativeSoon, type NativePlace } from "./native";
-import { toActors } from "./actors";
+import { ACTOR_OPS, toActors } from "./actors";
+import { NOTICE_OPS, toNotices } from "./notices";
 
-type Capability = "message_agents" | "transcript" | "edit_guard" | "native_view" | "docs" | "actors" | "notify" | "message_actors";
+type Capability =
+  "message_agents" | "transcript" | "edit_guard" | "native_view" | "docs" | "actors" | "notify" | "message_actors";
 export interface AppInfo {
   name: string;
   label: string;
@@ -374,6 +376,8 @@ export class AppPane {
 
   private async answer(m: Msg): Promise<unknown> {
     const w = this.where();
+    if (ACTOR_OPS.has(String(m.op))) return toActors(this.app, this.hooks, m, w.gatherer);
+    if (NOTICE_OPS.has(String(m.op))) return toNotices(this.app, m, w);
     switch (m.op) {
       case "hello": {
         this.ready = true;
@@ -429,11 +433,6 @@ export class AppPane {
       case "agents.focus":
         this.hooks.focusAgent(w.gatherer, this.mine(m.channel));
         return null;
-      case "actors.send":
-      case "actors.answer":
-      case "actors.start":
-      case "actors.show":
-        return toActors(this.app, this.hooks, m, w.gatherer);
       case "native.place": {
         if (!desktop() || !this.app.capabilities?.native_view)
           throw new Error(`${this.app.label} shows no native page`);
@@ -457,13 +456,6 @@ export class AppPane {
         const p = new URLSearchParams({ gatherer: w.gatherer, channel: this.mine(m.channel) });
         if (Number(m.after) > 0) p.set("after", String(Number(m.after)));
         return get(`/api/transcript?${p}`);
-      }
-      case "notices.send":
-      case "notices.clear": {
-        if (!this.app.capabilities?.notify) throw new Error(`${this.app.label} may not send notifications`);
-        if (m.op === "notices.clear") return post("/api/apps/notices/settle", { ...w, which: m.which, by: "app" });
-        const n = { title: m.title, text: m.text, key: m.key, show: m.show, where: m.where };
-        return (await post<{ id: string }>("/api/apps/notify", { ...w, ...n })).id;
       }
       case "intent":
         return this.hooks.intent(String(m.kind), (m.data || {}) as Record<string, unknown>, this);

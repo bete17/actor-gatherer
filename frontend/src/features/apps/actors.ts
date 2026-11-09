@@ -5,6 +5,8 @@ import type { AppInfo, PaneHooks } from "./host";
 
 type Msg = Record<string, unknown> & { op?: string };
 
+export const ACTOR_OPS = new Set(["actors.send", "actors.answer", "actors.start", "actors.show"]);
+
 export async function toActors(app: AppInfo, h: PaneHooks, m: Msg, gatherer: string): Promise<unknown> {
   if (!app.capabilities?.message_actors) throw new Error(`${app.label} may not message the actors`);
   const text = String(m.text || "");
