@@ -1,6 +1,6 @@
 // Folders of gatherers (gatherer_folders.py; 05-gatherer-folders.js): none at first, the list as without them; one made
-// from the list's head, a gatherer dragged into it and out onto the head, folders in folders, folded (an actor open in
-// a pane still in view), renamed and deleted -- no counts, no start buttons on their lines, no actor dropped in one; and
+// from the list's head, a gatherer dragged into it and out onto the head, folders in folders, folded (nothing of it in
+// view), renamed and deleted -- no counts, no start buttons on their lines, no actor dropped in one; and
 // in the rail, the same folders, folded and opened there.
 import type { Page } from "@playwright/test";
 import { expect, test } from "./test";
@@ -49,11 +49,10 @@ test("keeps gatherers in folders of their own: made from the list's head, filled
     expect((await treeOf(page)).filed).toEqual({}); // the actor dragged before: still at its gatherer's top
 
     await page.locator("#agents button.agent", { hasText: CLAUDE }).click(); // open in the pane...
-    await line("Work projects").locator(".fbtn").click(); // ...folded: only it in view under the folder
+    await line("Work projects").locator(".fbtn").click(); // ...folded: nothing of it in view, not even that actor
     await expect(line("Work projects").locator(".fbtn")).toHaveAttribute("aria-expanded", "false");
     await expect(gRow).toHaveCount(0);
-    await expect(page.locator("#agents .gf-kids.peek button.agent")).toHaveCount(1);
-    await expect(page.locator("#agents .gf-kids.peek button.agent", { hasText: CLAUDE })).toBeVisible();
+    await expect(page.locator("#agents .gf-kids button.agent")).toHaveCount(0);
     await page.reload(); // folded, kept in this browser
     await expect(line("Work projects").locator(".fbtn")).toHaveAttribute("aria-expanded", "false");
     await line("Work projects").locator(".fbtn").click();

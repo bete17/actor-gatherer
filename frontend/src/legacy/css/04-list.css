@@ -203,7 +203,6 @@ button:disabled { opacity: .5; cursor: default; }
 .gf-kids > .folder-line, .gf-kids > .gatherer > .gatherer-row { margin-left: 4px; }
 .gf-kids > .gatherer > .g-kids { margin-left: 13px; }
 .gf-kids > .agent { margin-left: 4px; width: calc(100% - 12px); }
-.gf-kids.peek { border-left-style: dashed; }
 .gatherer-row.dragging { opacity: .45; }
 /* SELECTING several actors (Shift+click): tinted in its own colour, not the blue of the one shown; from two, a check on
    each one's avatar and a bar under the list */

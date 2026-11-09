@@ -6,8 +6,8 @@
 // one by dragging its row onto its line (dragGatherer), or onto the list's head for the top; a folder of them dragged
 // so too. The list's folder code draws and changes them, as a gatherer's folders: their gatherer GF, a name no gatherer
 // has (each a directory's name: no "/") -- treeOf, folderPost, makeFolder, startFolderEdit, ... -- and GFS where a
-// gatherer is asked for. Each open till the reader folds it (gfFolded, kept in this browser); folded, the actors of its
-// gatherers open in a pane stay in view under it. The rail shows them so too (railGfLevel), to fold and open only.
+// gatherer is asked for. Each open till the reader folds it (gfFolded, kept in this browser); folded, nothing of it is in
+// view, not even an actor open in a pane. The rail shows them so too (railGfLevel), to fold and open only.
 const GF = "/";
 const GFS = { name: GF, agents: [] };
 const GF_FOLDED_KEY = "ag-dashboard-gatherer-folders-folded";
@@ -21,10 +21,6 @@ function gfShow(id, open) {
 }
 // The folder the gatherer named `name` is kept in: its id, or null for the list's top (its folder deleted since: the top)
 const gfOf = (name) => { const id = treeOf(GF).filed[name]; return folderById(GF, id) ? id : null; };
-// the gatherers of `shown` in folder `id`, or in a folder in it
-const gatherersIn = (shown, id) => shown.filter((g) => { const at = gfOf(g.name); return at !== null && within(GF, at, id); });
-// folded: the actors of its gatherers open in a pane, [gatherer, actor] each
-const gfPeek = (shown, id) => gatherersIn(shown, id).flatMap((g) => g.agents.filter((a) => inPane(g, a)).map((a) => [g, a]));
 // Gatherers put in folder `id` (null: the list's top), by name: it opened
 function fileGatherers(names, id) {
   if (!names.length) return null;
@@ -67,9 +63,6 @@ function gfLevel(shown, id, draw) {
     if (isOpenFolder(GF, f.id)) {
       const rows = gfLevel(shown, f.id, draw);
       out.push(el("div", { class: "gf-kids" }, ...(rows.length ? rows : [el("div", { class: "f-empty", text: gfEmpty(f) })])));
-    } else {
-      const peek = gfPeek(shown, f.id);
-      if (peek.length) out.push(el("div", { class: "gf-kids peek" }, ...peek.map(([g, a]) => agentRow(g, a, groupOf(g, a)))));
     }
   }
   for (const g of shown) if (gfOf(g.name) === id) out.push(draw(g));
@@ -100,7 +93,7 @@ function gfLine(f) {
 }
 // A level of the rail (`id` null: its top), as the list's (gfLevel): each folder its name in a bracket, as a gatherer's
 // folders are -- a button folding or opening it, as in the list (no card, no drilling in, nothing dropped on it) -- and,
-// open, what is in it under it; folded, the actors of its gatherers open in a pane. Then its gatherers, each `draw(g)`.
+// open, what is in it under it; folded, nothing. Then its gatherers, each `draw(g)`.
 function railGfLevel(shown, id, draw) {
   const out = [];
   for (const f of kidFolders(GF, id)) {
@@ -112,7 +105,7 @@ function railGfLevel(shown, id, draw) {
       const kids = railGfLevel(shown, f.id, draw);
       out.push(el("div", { class: "r-fopen r-gf", role: "group", "aria-label": f.name }, name,
         el("div", { class: "r-kids" }, ...(kids.length ? kids : [el("div", { class: "r-none", text: "Empty" })]))));
-    } else out.push(el("div", { class: "r-ffold r-gf" }, name, ...gfPeek(shown, f.id).map(([g, a]) => railActor(g, a))));
+    } else out.push(el("div", { class: "r-ffold r-gf" }, name));
   }
   for (const g of shown) if (gfOf(g.name) === id) out.push(draw(g));
   return out;
