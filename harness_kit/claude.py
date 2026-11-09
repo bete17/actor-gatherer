@@ -1501,8 +1501,12 @@ def permission_shown(lines: List[str]) -> Optional[dict]:
 #:     {"type": "queue-operation", "operation", "timestamp", "content"}   its queue of what the user writes while it
 #:         works: "enqueue" when a message is written; "remove", reason "absorbed_mid_turn", when it goes to the model
 #:         with the turn's next call (wrapped: MID_TURN); "dequeue" when the turn ended first and it opens the next
-#:         (the first in); any other "remove": taken back; "popAll" when Up takes every message the user wrote back
-#:         into the prompt, to edit (its `content` their words, joined) -- taken back too, its notes staying queued.
+#:         -- naming none: Claude Code takes the first of the highest priority (its notes wait "later"), its queue is
+#:         gone with its process (a note queued as it closes is never taken), and it queues some messages with no
+#:         `content`, so which one it took is the user line it writes right after (its words; a note's origin is the
+#:         note's kind), and the first in is only the guess till then; any other "remove": taken back; "popAll" when Up
+#:         takes every message the user wrote back into the prompt, to edit (its `content` their words, joined) --
+#:         taken back too, its notes staying queued.
 #:         Its own notes (QUEUED_NOTES) are queued too, in the user's name.
 #:     {"type": "user", "origin": {"kind": "human"}, "message"}   a message the user sent between turns: not queued,
 #:         sent at once as the next turn's first (a note's origin is of another kind; a "!" command's line has none)
@@ -1569,6 +1573,7 @@ class Record(Follower):
         self.session = session
         self.title: Optional[str] = None          # its name for the session, as last read
         self.queue: List[dict] = []               # [{key, text, at, note}]: not sent yet, in the order queued
+        self.dequeued: Optional[float] = None     # when Claude Code last took one off its queue (it says not which)
         self.sent: List[Tuple[str, float]] = []   # (text, when) of the newest sent as a turn's first
         self.asks: Dict[str, str] = {}            # an asking call's id -> its tool, until its result
         self.results: Dict[str, dict] = {}        # an asking call's id -> {key, at, result, seen}: its result, settling
@@ -1621,6 +1626,8 @@ class Record(Follower):
             out.append(Fact(Facts.TURN_STOPPED, key, when, {"how": "interrupted"}))
         elif isinstance(m.get("origin"), dict) and m["origin"].get("kind") == "human" and not m.get("isMeta"):
             out += self._prompt(_content_text(content), key, when)
+        elif isinstance(m.get("origin"), dict) and not m.get("isMeta"):    # a note, as it is sent: the one taken
+            self._took(_content_text(content), when)
         return out
 
     def due(self, now: float) -> List[Fact]:
@@ -1643,7 +1650,9 @@ class Record(Follower):
             return [] if q["note"] else [Fact(Facts.MESSAGE_QUEUED, key, when, {
                 "queued": key, "text": text, "words": words_of(text)[1],
                 "joins_after": when + BUSY_SECONDS if when is not None else None})]
-        if kind == "dequeue" and self.queue:                    # the first in: it opens the next turn
+        if kind == "dequeue":
+            self.dequeued = when
+        if kind == "dequeue" and self.queue:                    # the first in, as a guess: it opens the next turn
             q = self.queue.pop(0)
             self.sent = (self.sent + [(q["text"], when)])[-SENT_KEPT:]
             held = q["at"] is not None and when is not None and when - q["at"] > BUSY_SECONDS
@@ -1671,13 +1680,29 @@ class Record(Follower):
 
     def _prompt(self, text: Optional[str], key: str, when: Optional[float]) -> List[Fact]:
         """A message the user sent between turns -- not one the queue has as dequeued, which Claude Code records again
-        as it sends it."""
+        as it sends it; one queued that the dequeue just before took, not the first in that was the guess: sent with
+        it, by this line (its key, the one this line had before a guess was put right here)."""
         if text is None or when is None:
             return []
         if any(t == text and sent is not None and abs(when - sent) <= BUSY_SECONDS for t, sent in self.sent):
             return []
+        q = self._took(text, when)
+        if q is not None:
+            self.sent = (self.sent + [(text, self.dequeued)])[-SENT_KEPT:]
+            held = q["at"] is not None and self.dequeued - q["at"] > BUSY_SECONDS
+            return self._sent(q, key, self.dequeued, "next", held)
         return [Fact(Facts.MESSAGE_SENT, key, when, {"queued": None, "text": text, "words": words_of(text)[1],
                                                       "how": "prompt", "joins": False, "written": when})]
+
+    def _took(self, text: Optional[str], when: Optional[float]) -> Optional[dict]:
+        """The message still queued that a user line sending `text` right after a dequeue says it took, out of the
+        queue -- the guess, the first in, was another: one queued as its process closed, or of a lower priority."""
+        if text is None or when is None or self.dequeued is None or abs(when - self.dequeued) > BUSY_SECONDS:
+            return None
+        q = next((q for q in self.queue if q["text"] == text), None)
+        if q is not None:
+            self.queue.remove(q)
+        return q
 
     def _titled(self, m: dict, key: str) -> List[Fact]:
         """Its name for the session, when it is not the one it last gave: it writes the same name again and again."""

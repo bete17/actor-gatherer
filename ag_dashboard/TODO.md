@@ -176,6 +176,13 @@ Not covered yet:
   back in its box (`taken_back`), no Ctrl+C before the next send (`took_back`). Sent again unchanged, ag restores the
   old row. Joined with the queued one, with Claude Code's newline, ag can store it as a new row and leave the old one
   withdrawn: the old row is then hidden (`sent_again`). Recorded live: tests/esc_runs.
+- [x] **A terminal closed mid-call keeps the message:** Claude Code drops its calls when its terminal closes too (a
+  hang-up: the dashboard's close, its put-away, a terminal window shut), but only once its process is gone -- and it
+  keeps the message in its record: a resumed session shows it, and sends it with its next call, an answer of its own
+  ("No response requested.") before the next message. The hook withdrew it as for Esc, and Chat lost the turn, in no
+  turn and not back in its box (no key stopped it). Its launcher names its run by its process id (`/r/<pid>`, ag execs
+  it) and the hook withdraws on a hang-up only while that process runs (proxy_hook.py's `harness_ended`:
+  gone or a zombie); the hang-up says it withdrew nothing, and the turn shows stopped as its terminal closed.
 - [ ] **Until ag records that hang-up, Chat shows the message twice** (the newline form): ag stores the hang-up and
   its withdrawal behind the next call's read in the session's lane -- 3-7 s, with a new-task check -- and until then
   the old row and the new one are both turns; the queued message is listed as waiting twice for a moment too. The

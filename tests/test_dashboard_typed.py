@@ -17,6 +17,7 @@ from ag_dashboard import data, files  # noqa: E402
 from ag_dashboard import home as dashboard_home  # noqa: E402
 from followed import Followed, insert, schema  # noqa: E402
 from harness_kit import claude as claude_rules  # noqa: E402
+from harness_kit.base import Follower, follow  # noqa: E402
 from test_dashboard_files import asked, call, note, result, said  # noqa: E402
 
 SESSION = "0e1d2c3b-0000-4000-8000-000000000002"
@@ -100,6 +101,49 @@ class TypedTest(RecordBase):
         self.assertEqual(self.typed(), [("first", True), ("second", False)])
         self.op("remove", "second", ago=1, reason="cancelled")              # taken back
         self.assertEqual(self.typed(), [("first", True)])
+
+    def test_a_note_queued_as_its_process_closed_is_never_taken_nor_a_message_sent_twice(self):
+        # Claude Code's queue is gone with its process: a note queued as it closes (a task it killed) is never taken by
+        # the one reopened, so the first in is not what a dequeue takes -- the user line after each says which it took
+        # (as Claude Code 2.1.319 wrote it, in a live session)
+        self.op("enqueue", "<task-notification>\n<task-id>b1</task-id>\n<status>killed</status>", ago=60)
+        self.op("enqueue", "<task-notification>\n<task-id>b2</task-id>", ago=30)     # reopened
+        self.op("dequeue", ago=30)
+        self.prompt("<task-notification>\n<task-id>b2</task-id>", ago=30, origin="task-notification")
+        self.op("enqueue", "show me", ago=10)
+        self.op("dequeue", ago=5)                                           # the turn ended: it opens the next
+        self.prompt("show me", ago=5)
+        self.op("enqueue", "<task-notification>\n<task-id>b3</task-id>", ago=1)
+        self.op("dequeue", ago=1)
+        self.prompt("<task-notification>\n<task-id>b3</task-id>", ago=1, origin="task-notification")
+        self.assertEqual([(q["text"], q["joins"]) for q in self.got()], [("show me", True)])
+        [m] = data.meanwhile(self.db, SESSION)
+        self.assertEqual(m["text"], "show me")
+        self.assertAlmostEqual(m["sent"], self.now - 5, delta=0.002)                # sent when it was, once
+
+    def test_a_message_taken_before_a_note_queued_first_is_sent_once_as_its_line_says(self):
+        self.op("enqueue", "<task-notification>\n<task-id>b1</task-id>", ago=8)
+        self.op("enqueue", "and b too", ago=6)
+        self.op("dequeue", ago=2)                                           # a note waits "later": the message first
+        self.prompt("and b too", ago=2)
+        self.op("dequeue", ago=1)
+        self.prompt("<task-notification>\n<task-id>b1</task-id>", ago=1, origin="task-notification")
+        self.assertEqual([(q["text"], q["joins"]) for q in self.got()], [("and b too", True)])
+        [m] = data.meanwhile(self.db, SESSION)
+        self.assertEqual(m["text"], "and b too")
+        self.assertAlmostEqual(m["sent"], self.now - 2, delta=0.002)
+        # its event is the user line's, the one ag recorded it by before (as a message sent between turns): read again
+        # from the start by a hook with this, an old record's is not stored twice
+        lines = []
+
+        class Lines(Follower):
+            def take(self, line, at):
+                lines.append((json.loads(line), at))
+                return []
+        follow(self.record, Lines(), 0)
+        [key] = [at for m, at in lines if m.get("type") == "user" and m["message"]["content"] == "and b too"]
+        self.assertEqual([r[0] for r in self.db.execute("SELECT event_id FROM events WHERE event_id LIKE 'message_sent:%'")],
+                         [f"message_sent:{os.path.basename(self.record)}:{key}"])
 
     def test_pulled_back_into_the_prompt_is_taken_back_and_the_next_sent_is_itself(self):
         # Up while messages wait: Claude Code 2.1.311 writes "popAll" with their words (saved from a live session)

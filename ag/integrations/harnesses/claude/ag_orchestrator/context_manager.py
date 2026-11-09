@@ -333,9 +333,17 @@ class ClaudeContextManager(ProxyHook):
         the user's message back in its input box and never sends it again; after, it sends it again with its next call,
         and storing it again keeps it (the server's `withdraw`). Withdrawn first: a reader that finds the hang-up finds
         what it withdrew with it (the dashboard tells a message taken back from a turn stopped by the two together),
-        and the hang-up says it withdrew (`withdrawn`)."""
+        and the hang-up says it withdrew (`withdrawn`). Not when Claude Code's process has ended (`harness_ended`): its
+        terminal closed -- Claude Code drops its calls only once its process is gone -- and its record keeps the
+        message, which a resumed session shows and sends with its next call."""
         if status == HUNG_UP:
-            withdrawn = await report_withdrawn(self.ag_clients, request)
+            if await self.harness_ended(request):
+                withdrawn = False
+                kept = (getattr(request, "state", None) or {}).get(self.ANSWERED)
+                if kept is not None:
+                    self.log(kept[0], f"[{kept[1]}] hung up as its process ended: what the call stored kept")
+            else:
+                withdrawn = await report_withdrawn(self.ag_clients, request)
         await super().failed(request, status, error, withdrawn)
 
     async def side_answered(self, request, status: int, answer) -> bool:
