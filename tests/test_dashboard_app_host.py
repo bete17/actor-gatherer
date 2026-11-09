@@ -81,6 +81,9 @@ class NotesApp(App):
     def attached(self, instance, channel):
         self.host.tell_panel(instance, {"hello": channel})
 
+    def sleep(self, instance):
+        self.slept = getattr(self, "slept", []) + [instance.id]
+
     def request(self, instance, method, path, query, body):
         if path == "count":
             return Response.json({"n": len(self.host.read(instance, ["notes.added"])), "method": method})
@@ -197,6 +200,16 @@ class InstancesTest(HostBase):
                                          "WHERE t.name LIKE 'app_%' ORDER BY e.row_id")]
         self.assertEqual(kinds, ["app_opened", "app_opened", "app_attached", "app_attached", "app_detached",
                                  "app_closed"])
+
+    def test_an_instance_put_to_sleep_stays_open_its_agents_attached(self):
+        a = self.host.open("notes", "g", self.folder)
+        self.host.attach("g", a.id, "c1")
+        self.host.sleep_instance("g", a.id)                                        # its task closed
+        self.assertEqual(self.host.backend("notes").slept, [a.id])                 # its backend let go of it
+        got = self.host.listed("g")
+        self.assertEqual(([i["id"] for i in got["instances"]], got["attached"]), ([a.id], {a.id: ["c1"]}))
+        with self.assertRaises(AppError):
+            self.host.sleep_instance("g", "nope")
 
     def test_an_attachment_is_in_the_agent_s_channel_and_no_conversation_view_shows_it(self):
         a = self.host.open("notes", "g", self.folder)

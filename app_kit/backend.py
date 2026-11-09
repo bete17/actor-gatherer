@@ -207,6 +207,10 @@ class App:
     def close(self, instance: Instance) -> None:
         """The instance closed: by the user, or its gatherer gone."""
 
+    def sleep(self, instance: Instance) -> None:
+        """The instance put to sleep -- its task closed: it stays open, and what runs for it (a process, a page) is let
+        go of, its state kept to come back as it was once it is used again. Nothing runs for it: nothing to do."""
+
     def call(self, instance: Instance, tool: str, args: dict, caller: Caller) -> ToolResult:
         """A call of one of its tools (its own name) handled by the backend, on `instance`, by `caller`. Raise
         AppError, or return ToolResult.error, to refuse it."""

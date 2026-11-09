@@ -85,6 +85,10 @@ class BrowserApp(App):
         with self.lock:
             self.by_key.pop(instance.id, None)
 
+    def sleep(self, instance: Instance) -> None:
+        """Its task closed: its tabs closed, their pages kept, opened again as they were on its next use."""
+        self.bs.sleep(instance.id)
+
     # -- the agent's tools
 
     def call(self, instance: Instance, tool: str, args: dict, caller: Caller) -> ToolResult:

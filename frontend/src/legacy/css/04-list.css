@@ -260,7 +260,13 @@ button:disabled { opacity: .5; cursor: default; }
 .actor-card .c-task-row .c-row { flex: 1 1 auto; min-width: 0; }
 .actor-card .take-out { flex: none; width: 22px; height: 22px; border: 0; border-radius: 6px; background: none; color: var(--muted);
   display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
-.actor-card .take-out:is(:hover, :focus-visible) { color: var(--critical); background: var(--wash); outline: none; }
+.actor-card .take-out:is(:hover, :focus-visible) { color: var(--ink); background: var(--wash); outline: none; }   /* out: not a close */
+/* an actor's own bookmark and close in a task's card, as its row's: the bookmark filled once saved */
+.actor-card .c-task-row :is(.save-btn, .close-btn) { flex: none; width: 22px; height: 22px; border-radius: 6px; color: var(--muted);
+  display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+.actor-card .c-task-row .save-btn.on { color: var(--s1); }
+.actor-card .c-task-row .save-btn:is(:hover, :focus-visible) { color: var(--s1); background: var(--wash); outline: none; }
+.actor-card .c-task-row .close-btn:is(:hover, :focus-visible) { color: var(--critical); background: var(--wash); outline: none; }
 /* an actor's face at its row's right, no harness badge, the marks of the apps it works with beside it, small */
 .agent .a-face { display: flex; align-items: center; gap: 3px; align-self: start; }
 .agent { grid-template-columns: 10px minmax(0, 1fr) auto; }

@@ -890,6 +890,21 @@ class ChromeTest(ChromeBase):
         self.assertEqual(self.b.tabs, [])
         self.assertIn("Page two", self.text("snapshot"))
 
+    def test_put_to_sleep_its_tabs_close_and_open_again_as_they_were_on_its_next_use(self):
+        self.text("navigate", url=os.path.join(self.root, "two.html"))
+        self.text("tabs", action="new", url=os.path.join(self.root, "index.html"))
+        targets = [t.target for t in self.b.tabs]
+        self.bs.sleep(self.key)                          # its task closed: at once, no wait for its pages to be kept
+        self.assertEqual(self.b.tabs, [])
+        self.assertTrue(self.until(lambda: not any(t["targetId"] in targets for t in
+                                                   self.bs.chrome.cdp().call("Target.getTargets")["targetInfos"])))
+        self.bs.sleep("0" * 16)                          # one not open: asleep already
+        listed = self.text("tabs")                       # used again: its tabs back, the one shown as it was
+        self.assertIn("Second page", listed)
+        self.assertIn("Shop checkout", listed)
+        self.assertEqual(len(self.b.tabs), 2)
+        self.assertEqual(self.b.active, 1)
+
     def test_a_page_opened_again_is_read_once_it_has_loaded(self):
         class Slow(http.server.BaseHTTPRequestHandler):                 # its title at once, its body 1.5 s later
             def do_GET(self):

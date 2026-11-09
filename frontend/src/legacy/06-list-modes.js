@@ -611,14 +611,18 @@ function taskCard(g, t) {
           onclick: (ev) => { cardHide(); pick(g.name, a.channel, ev); } },
         el("span", { class: `status ${cls}` }, el("i", { "aria-hidden": "true" })), plainFace(a),
         el("span", { class: "nm", text: actorTitle(a) }), el("span", { class: "st", text: label })),
+        // its own bookmark and close, as its row's; then out of the task (its own mark: not a close)
+        saveButton(g, a), closeButton(g, a),
         el("button", { class: "act take-out", type: "button", title: "Take it out of the task: an actor on its own again, detached from the task's apps",
-          "aria-label": `Take ${actorTitle(a)} out of the task`, onclick: (ev) => { ev.stopPropagation(); takeOut(g.name, a.channel); } }, closeIcon()));
+          "aria-label": `Take ${actorTitle(a)} out of the task`, onclick: (ev) => { ev.stopPropagation(); takeOut(g.name, a.channel); } },
+        strokeIcon(ICONS.takeOut, 13)));
     }), ...apps.map((o) => el("div", { class: "c-task-row c-app-row" },
       el("button", { class: "c-row", type: "button", title: `${o.app.label}: select it, its panel above the panes`,
         onclick: (ev) => { cardHide(ev); selectApp(g.name, o, ev); } },
       appMarkOf(o), el("span", { class: "nm", text: o.app.label }), el("span", { class: "st", text: o.title || "" })),
       el("button", { class: "act take-out", type: "button", title: `Take it out of the task: an app on its own again, the task's agents detached from it`,
-        "aria-label": `Take ${o.app.label} out of the task`, onclick: (ev) => { ev.stopPropagation(); takeOut(g.name, appItem(o.id)); } }, closeIcon())))),
+        "aria-label": `Take ${o.app.label} out of the task`, onclick: (ev) => { ev.stopPropagation(); takeOut(g.name, appItem(o.id)); } },
+      strokeIcon(ICONS.takeOut, 13))))),
     el("div", { class: "c-hint", text: "Click the task to open it: its apps above, its actors side by side · drag an actor or an app onto it to put it in" }),
   ].filter(Boolean);
 }

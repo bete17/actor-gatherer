@@ -337,6 +337,14 @@ class AppHost:
         self._record(i, "app_closed", {"by": by})
         self._ring(i)
 
+    def sleep_instance(self, gatherer: str, instance_id: str) -> None:
+        """The instance put to sleep (its task closed: task_links.py): its backend lets go of what runs for it, the
+        instance kept open, its agents attached -- used again, it comes back as it was (App.sleep)."""
+        i = self.instance(gatherer, instance_id)
+        m = self.hosted(i.app).manifest
+        if m.backend.python or m.backend.command:
+            self.backend(i.app).sleep(i)
+
     def attach(self, gatherer: str, instance_id: str, channel: str, by: str = "user") -> None:
         """An agent attached to the instance: its tool calls go to it, and the app may tell it what it does."""
         i = self.instance(gatherer, instance_id)

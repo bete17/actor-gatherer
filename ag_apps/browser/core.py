@@ -1507,6 +1507,32 @@ class Browser:
         self.video.gone()
         self._publish()
 
+    def sleep(self) -> None:
+        """Put to sleep, its task closed (backend.py's `sleep`): its pages kept -- written at once -- and its tabs
+        closed in the Chrome, as when the Chrome stops (`chrome_gone`): opened again, as they were, on its next use
+        (`live`). The Chrome, once no Browser has been used for IDLE_STOP, stops by itself."""
+        with self.lock:
+            tabs = list(self.tabs)
+            if tabs:
+                self.saved = [{"url": t.url, "title": t.title} for t in tabs]
+                self.saved_active = self.active
+            saved, active = list(self.saved), self.saved_active
+            self.tabs, self.casting, self.refs, self.ref_of = [], None, {}, {}
+        if saved:
+            conn = _db()
+            try:
+                conn.execute("UPDATE browser SET tabs = ?, active = ? WHERE key = ?", (json.dumps(saved), active, self.key))
+            finally:
+                conn.close()
+        cdp = self.chrome.conn
+        for t in tabs if cdp is not None else []:
+            try:
+                cdp.post("Target.closeTarget", {"targetId": t.target})
+            except Exception:  # noqa: BLE001 - gone already: closed all the same
+                pass
+        self.video.gone()
+        self._publish()
+
     # -- what the page sees
 
     def join(self, video: bool = False, page: str = "", visible: bool = True, native: bool = False) -> Viewer:
@@ -3886,6 +3912,13 @@ class Browsers:
         self.owner.clear()
         for b in list(self.open.values()):
             b.chrome_gone()
+
+    def sleep(self, key: str) -> None:
+        """Browser `key` put to sleep (Browser.sleep); one not open now: asleep already."""
+        with self.lock:
+            b = self.open.get(key)
+        if b is not None:
+            b.sleep()
 
     def revive(self) -> None:
         """Each Browser a page shows, its tabs opened again now (the ag app connected) -- or its view told why they

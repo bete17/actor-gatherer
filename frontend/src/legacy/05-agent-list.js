@@ -712,9 +712,46 @@ function taskRow(g, t, group) {
   el("span", { class: `dot ${cls}`, "aria-label": label, style: `--spin-at: -${Date.now() % 1200}ms` }),
   el("div", {},
     el("div", { class: "name", text: name }),
-    rowActs(first ? addButton(g, first) : null)),
+    rowActs(first ? addButton(g, first) : null, taskSaveButton(g, t), taskCloseButton(g, t))),
   el("span", { class: "t-faces" }, ...taskFaces(g, t.id)));
   return first ? dropOnItem(dragItems(row, g, () => taskItems(g, t.id)), g, first) : row;
+}
+// A task SAVED: every actor in it saved for later, as an actor's bookmark saves it -- the bookmark filled once every one
+// is; closed, the task is then listed in its folder's saved line, not its closed one (where its first actor comes)
+function taskSaveButton(g, t) {
+  const all = taskMembers(g, t.id);
+  if (!all.length) return null;
+  const saved = all.every((a) => !!savedAs(g.name, a));
+  if (SNAPSHOT) return saved ? el("span", { class: "save-btn on", title: "Saved for later" }, saveIcon(true)) : null;
+  return rowButton("save-btn" + (saved ? " on" : ""), { "aria-pressed": saved ? "true" : "false",
+    title: saved ? "Saved for later: click to unsave its actors" : "Save the task for later: once closed, kept in its folder's saved line",
+    "aria-label": saved ? "Unsave the task" : "Save the task for later" }, () => saveTask(g.name, t.id, !saved), saveIcon(saved));
+}
+async function saveTask(gname, id, save) {
+  const g = state.home.gatherers.find((x) => x.name === gname);
+  for (const a of g ? taskMembers(g, id) : []) if (!!savedAs(gname, a) !== save) await setSaved(gname, a, save);
+}
+// A task CLOSED (its ×, while an actor of it runs): its actors' processes closed, as an actor's × does, and its apps put
+// to sleep -- kept, in the task, with nothing running for them (a Browser's tabs closed, their pages kept: app_host.py's
+// `sleep_instance`) -- their panels here closed first, the task's layout remembered. Clicked again later, it opens as
+// it was: its apps above (a Browser's tabs opened again), its actors as closed ones are, started again by a message.
+function taskCloseButton(g, t) {
+  if (SNAPSHOT || !taskMembers(g, t.id).some(closable)) return null;
+  return rowButton("close-btn", { title: "Close the task: its actors closed, its apps put to sleep (a Browser's tabs kept) -- opened again as it was",
+    "aria-label": "Close the task" }, () => closeTask(g.name, t.id), closeIcon());
+}
+async function closeTask(gname, id) {
+  const g = state.home.gatherers.find((x) => x.name === gname);
+  if (!g) return;
+  const k = `${gname}\u0000t${id}`, apps = taskApps(g, id);
+  if (tasksLaidOut.has(k) && selectedTask() === k) rememberTask(k);   // shown: opened again as it is now
+  tasksLaidOut.delete(k);                            // its row clicked next, even while shown: laid out again, its apps back
+  for (const p of [...panes.apps]) if (apps.some((o) => o.id === p.instance.id)) closeAppPane(p);
+  await Promise.all(taskMembers(g, id).filter(closable).map(closeSession));
+  await Promise.all(apps.map((o) => post("/api/apps/sleep", { gatherer: gname, instance: o.id })
+    .catch((e) => paneNote(`${o.app.label}: ${e.message}`))));
+  await loadHome();
+  renderAgents();
 }
 // An app in no task, a task of its own: its row, as an actor's -- what it shows (its title, else its kind) and its kind
 // under it, its "+" and its × (closeApp), its face at its right. Pressed: selected (selectApp); dragged onto another item's

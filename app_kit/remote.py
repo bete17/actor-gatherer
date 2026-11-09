@@ -158,6 +158,9 @@ class RemoteApp(App):
     def close(self, instance: Instance) -> None:
         self._op("close", {"instance": instance.to_dict()})
 
+    def sleep(self, instance: Instance) -> None:
+        self._op("sleep", {"instance": instance.to_dict()})
+
     def call(self, instance: Instance, tool: str, args: dict, caller: Caller) -> ToolResult:
         return ToolResult.from_dict(self._op("call", {"instance": instance.to_dict(), "tool": tool, "args": args,
                                                        "caller": caller.to_dict()}))
@@ -280,6 +283,7 @@ def app_ops(app: App) -> Dict[str, Callable[[dict], Optional[dict]]]:
     return {
         "open": lambda b: {"instance": app.open(inst(b["instance"]), dict(b.get("args") or {})).to_dict()},
         "close": lambda b: app.close(inst(b["instance"])),
+        "sleep": lambda b: app.sleep(inst(b["instance"])),
         "call": lambda b: app.call(inst(b["instance"]), b["tool"], dict(b.get("args") or {}),
                                    Caller.from_dict(b.get("caller"))).to_dict(),
         "request": request,

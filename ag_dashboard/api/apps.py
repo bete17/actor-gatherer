@@ -122,6 +122,18 @@ def apps_close(srv: Parts, body: Body) -> Response:
         return _failed(exc)
 
 
+@router.post("/api/apps/sleep")
+def apps_sleep(srv: Parts, body: Body) -> Response:
+    """The instance put to sleep, its task closed (app_host.py's `sleep_instance`): what runs for it let go of, the
+    instance kept open, in its task."""
+    try:
+        gatherer, instance = _need(body, "gatherer", "instance")
+        _host(srv).sleep_instance(gatherer, instance)
+        return answer({})
+    except AppError as exc:
+        return _failed(exc)
+
+
 @router.post("/api/apps/attach")
 def apps_attach(srv: Parts, body: Body) -> Response:
     """An agent (its channel) attached to the instance by the reader: put in the app's task, so attached to its other
