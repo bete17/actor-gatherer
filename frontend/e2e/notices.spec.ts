@@ -94,6 +94,24 @@ test("an app's notification: its row's status, counted, popped up, in its card; 
   await expect(row.locator(":scope > .dot.notified")).toHaveCount(0);
 });
 
+test("an app's quiet notification (show []): listed, counted and in its card, never popped up", async ({ page }) => {
+  await openActor(page, CLAUDE);
+  const { pane, instance } = await openNotepad(page);
+  await pane.locator(".app-close").click();
+  const row = page.locator(`#agents button.agent.app-row[data-key="${GATHERER}/app:${instance}"]`);
+  await notify(page, instance, { title: "3 new messages in #design", text: "Leo: done", show: [] });
+  await expect(row.locator(":scope > .dot.notified")).toHaveCount(1);
+  await expect(page.locator("#agents .gatherer-row .count.notified")).toHaveText("1");
+  await page.waitForTimeout(400);
+  await expect(page.locator("#pops .pop")).toHaveCount(0);
+  await row.hover();
+  await expect(page.locator("#actor-card .c-notice.new")).toContainText("3 new messages in #design");
+  // one that asks for the pop-up, after it: popped up
+  await page.mouse.move(900, 600);
+  await notify(page, instance, { title: "Maya Chen, direct message", show: ["ag"] });
+  await expect(page.locator("#pops .pop.notified")).toContainText("Maya Chen, direct message");
+});
+
 test("an app's backend notifies, its panel closed meanwhile; clicked on, the panel is handed where", async ({
   page,
 }) => {

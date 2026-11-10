@@ -66,8 +66,9 @@ HOST_TYPES = (EventType("app_opened", HOST_PROPERTIES), EventType("app_closed", 
               EventType("app_notice_settled", HOST_PROPERTIES), EventType("app_named", HOST_PROPERTIES))
 HOST_RECORDS = tuple(t.name for t in HOST_TYPES)
 #: A NOTIFICATION an app sends the user, as an agent's `asked` is: open until settled, as `ask_settled` settles that.
-#:     app_notified        {id, key, title, text, show, where}: where it is shown (SHOWS: "ag", a pop-up in the
-#:                         dashboard; "system", the computer's notification too) and where in the app a click on it
+#:     app_notified        {id, key, title, text, show, where}: listed by the dashboard, and where it pops up too
+#:                         (SHOWS: "ag", a pop-up in the dashboard; "system", the computer's notification; none: only
+#:                         listed) and where in the app a click on it
 #:                         takes the user (`where`, the app's own JSON, handed back to its panel); a newer one of the
 #:                         same `key` takes an open one's place
 #:     app_notice_settled  {id or key, how}: it no longer asks for the user -- "cleared" by the app, "dismissed" by the

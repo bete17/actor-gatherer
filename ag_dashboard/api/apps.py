@@ -206,7 +206,8 @@ def apps_notify(srv: Parts, body: Body) -> Response:
         name, gatherer, instance = _need(body, "app", "gatherer", "instance")
         h = _host(srv)
         return answer({"id": h.notify(name, h.instance(gatherer, instance, name), body.get("title"), body.get("text"),
-                                      body.get("key"), body.get("show") or ("ag",), body.get("where"))})
+                                      body.get("key"), ("ag",) if body.get("show") is None else body["show"],
+                                      body.get("where"))})
     except AppError as exc:
         return _failed(exc)
 
