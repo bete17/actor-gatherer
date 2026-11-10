@@ -8,7 +8,10 @@ A block can be sent to an agent of the gatherer (`@` in it, or its Send button):
 then says who it went to (`to`), and under it, in one line, how that actor stands now and its latest report. Its
 conversation -- the user's messages to it (sent to it too), its reports (the backend's notes_report), what it asks,
 answered there -- is in a panel beside the page, opened from that line: never on the page itself. The Agents page, and an `agents` block,
-show every actor of the gatherer: how it stands, what it was sent from the notes, and its last report. */
+show every actor of the gatherer: how it stands, what it was sent from the notes, and its last report.
+
+Several lines can be picked at once (whole lines, as Notion's block selection): deleted, copied, cut, indented, moved,
+turned into another type or sent to an agent together, as one message naming each of them. */
 (async function () {
   "use strict";
   const ag = await AgApp.connect();
@@ -392,6 +395,7 @@ show every actor of the gatherer: how it stands, what it was sent from the notes
   function openPage(id) {
     flushTyped();
     pump();
+    if (current !== id) unpick();
     if (convo && convo.page !== id) convo = null;         // a line's conversation: on its own page only
     current = id;
     store.set("page", id);
@@ -445,6 +449,8 @@ show every actor of the gatherer: how it stands, what it was sent from the notes
   const rowOf = (id) => box.querySelector(`.blk[data-id="${CSS.escape(id)}"]`);
   const page = () => current && pages.get(current);
   const blockOf = (id) => { const p = page(); return p && p.blocks.find((b) => b.id === id); };
+  const picked = new Set();                                // the lines picked: a run of the page's, `anchor` to `head`
+  let anchor = null, head = null;
   function makeRow(b) {
     const gut = el("div", { class: "gut" },
       el("button", { class: "add", type: "button", tabindex: "-1", title: "Add a block below", "aria-label": "Add a block below", html: SVG.plus }),
@@ -467,6 +473,7 @@ show every actor of the gatherer: how it stands, what it was sent from the notes
     if (!tx) return;
     const to = n.querySelector(".to-btn");                 // its words drawn by the style: not the block's text
     if (to) { to.dataset.label = b.type === "todo" ? "Assign" : "Ask"; to.setAttribute("aria-label", `${to.dataset.label}: send it to an agent`); }
+    n.classList.toggle("picked", picked.has(b.id));
     sentPart(n, b, ro);
     tx.setAttribute("contenteditable", ro ? "false" : b.type === "code" ? "plaintext-only" : "true");
     tx.dataset.ph = PH[b.type] || "";
@@ -505,6 +512,7 @@ show every actor of the gatherer: how it stands, what it was sent from the notes
       if (flash && flash.has(b.id)) { n.classList.remove("flash"); void n.offsetWidth; n.classList.add("flash"); }
     }
     numbers(p);
+    drawPicked();
     if (focus && focus.isConnected && document.activeElement !== focus) {
       focus.focus();
       if (at) setCaret(focus, at.start, at.end);
@@ -586,6 +594,7 @@ show every actor of the gatherer: how it stands, what it was sent from the notes
   box.addEventListener("input", (ev) => {
     const tx = ev.target.closest && ev.target.closest(".tx");
     if (!tx) return;
+    if (undo) undo.armed = false;                          // typed since: ⌘Z is the line's own again
     const n = tx.closest(".blk"), b = blockOf(n.dataset.id);
     if (!b) return;
     if (tx.innerHTML === "<br>") tx.innerHTML = "";
@@ -634,7 +643,7 @@ show every actor of the gatherer: how it stands, what it was sent from the notes
     return true;
   }
   // A block made another type: its text kept (plain, into code; out of code, as text), its indent where it may have one.
-  function retype(b, type, extra = {}) {
+  function retypeOp(b, type, extra = {}) {
     const was = b.type;
     let text = "text" in extra ? extra.text : b.text;
     if (!("text" in extra)) {
@@ -643,7 +652,11 @@ show every actor of the gatherer: how it stands, what it was sent from the notes
     }
     forget(b.id);
     const put = { id: b.id, type, text, indent: INDENTED.includes(type) ? b.indent || 0 : 0, checked: type === "todo" ? !!(extra.checked ?? b.checked) : false };
-    change([{ op: "block.put", page: current, block: put }]);
+    return { op: "block.put", page: current, block: put };
+  }
+  function retype(b, type, extra = {}) {
+    const was = b.type, op = retypeOp(b, type, extra), text = op.block.text;
+    change([op]);
     const tx = rowOf(b.id) && rowOf(b.id).querySelector(".tx");
     if (tx && (type === "code" || was === "code") && document.activeElement === tx) {
       if (type === "code") tx.textContent = text; else tx.innerHTML = clean(text);
@@ -663,8 +676,24 @@ show every actor of the gatherer: how it stands, what it was sent from the notes
     if (menu && menu.kind === "slash" && slashKey(ev)) return;
     if (menu && menu.kind === "at" && atKey(ev)) return;
     const mod = ev.metaKey || ev.ctrlKey, k = ev.key;
+    if (k === "Escape" && !mod && !ev.shiftKey) { ev.preventDefault(); pickRange(b.id, b.id); return holdKeys(); }   // the line picked
+    if (ev.shiftKey && !mod && !ev.altKey && (k === "ArrowUp" || k === "ArrowDown")) {
+      const c = caretIn(tx), up = k === "ArrowUp";          // its text selected to an end already: the lines from here
+      if (c && (up ? c.start === 0 : c.end === tx.textContent.length)) {
+        ev.preventDefault();
+        const to = p.blocks[i + (up ? -1 : 1)];
+        pickRange(b.id, to ? to.id : b.id);
+        return holdKeys();
+      }
+    }
     if (mod && !ev.altKey) {
       const low = k.toLowerCase();
+      if (!ev.shiftKey && low === "z" && undo && undo.armed) { ev.preventDefault(); return takeBack(); }
+      if (!ev.shiftKey && low === "a") {                    // ⌘A: the line's text, then (all of it selected) every line
+        const c = caretIn(tx);
+        if (c && c.start === 0 && c.end === tx.textContent.length) { ev.preventDefault(); pickAll(); return holdKeys(); }
+        return;
+      }
       if (b.type !== "code" && !ev.shiftKey && low === "b") return format(ev, n, "bold");
       if (b.type !== "code" && !ev.shiftKey && low === "i") return format(ev, n, "italic");
       if (b.type !== "code" && !ev.shiftKey && low === "u") return format(ev, n, "underline");
@@ -707,6 +736,8 @@ show every actor of the gatherer: how it stands, what it was sent from the notes
   });
   function dividerKey(ev, n) {
     const p = page(), i = p.blocks.findIndex((b) => b.id === n.dataset.id);
+    if (ev.key === "Escape") { ev.preventDefault(); pickRange(n.dataset.id, n.dataset.id); return holdKeys(); }
+    if (p.deleted) return;
     if (ev.key === "Backspace" || ev.key === "Delete") {
       ev.preventDefault();
       const near = p.blocks[i - 1] || p.blocks[i + 1];
@@ -1031,14 +1062,16 @@ show every actor of the gatherer: how it stands, what it was sent from the notes
     const grip = ev.target.closest(".gut .grip");
     if (!grip || ev.button !== 0 || page().deleted) return;
     ev.preventDefault();
-    drag = { row: grip.closest(".blk"), y: ev.clientY, moved: false, before: undefined };
+    const row = grip.closest(".blk");                      // a picked line's grip: every picked line goes with it
+    const rows = picked.size > 1 && picked.has(row.dataset.id) ? [...box.children].filter((r) => picked.has(r.dataset.id)) : [row];
+    drag = { row, rows, y: ev.clientY, moved: false, before: undefined };
     grip.setPointerCapture(ev.pointerId);
   });
   box.addEventListener("pointermove", (ev) => {
     if (!drag) return;
     if (!drag.moved && Math.abs(ev.clientY - drag.y) < 4) return;
-    if (!drag.moved) { drag.moved = true; drag.row.classList.add("dragging"); document.body.classList.add("dragging"); }
-    const rows = [...box.children].filter((r) => r !== drag.row);
+    if (!drag.moved) { drag.moved = true; for (const r of drag.rows) r.classList.add("dragging"); document.body.classList.add("dragging"); }
+    const rows = [...box.children].filter((r) => !drag.rows.includes(r));
     drag.before = rows.find((r) => { const b = r.getBoundingClientRect(); return ev.clientY < b.top + b.height / 2; }) || null;
     const line = $("drop"), at = drag.before ? drag.before.getBoundingClientRect() : (rows[rows.length - 1] || drag.row).getBoundingClientRect();
     const left = box.getBoundingClientRect();
@@ -1053,23 +1086,29 @@ show every actor of the gatherer: how it stands, what it was sent from the notes
     const d = drag;
     drag = null;
     $("drop").hidden = true;
-    d.row.classList.remove("dragging");
+    for (const r of d.rows) r.classList.remove("dragging");
     document.body.classList.remove("dragging");
     if (ev.type === "pointercancel") return;
     if (!d.moved) return blockMenu(d.row);
-    const rows = [...box.children].filter((r) => r !== d.row);
+    const rows = [...box.children].filter((r) => !d.rows.includes(r));
     const at = d.before ? rows.indexOf(d.before) : rows.length;
     const after = at > 0 ? rows[at - 1].dataset.id : "";
-    const p = page(), i = p.blocks.findIndex((b) => b.id === d.row.dataset.id);
+    const p = page(), i = p.blocks.findIndex((b) => b.id === d.rows[0].dataset.id);
     if ((after === "" && i === 0) || (i > 0 && p.blocks[i - 1].id === after)) return;
-    change([{ op: "block.move", page: p.id, block: d.row.dataset.id, after }]);
+    change(moveOps(d.rows.map((r) => r.dataset.id), after));
     drawPage();
+    if (d.rows.length > 1) holdKeys();
   };
+  // lines (a run, in order) moved to go after a block ("" the page's start)
+  function moveOps(ids, after) {
+    return ids.map((id) => { const op = { op: "block.move", page: current, block: id, after }; after = id; return op; });
+  }
   box.addEventListener("pointerup", endDrag);
   box.addEventListener("pointercancel", endDrag);
   function blockMenu(n) {
     const b = blockOf(n.dataset.id);
     if (!b) return;
+    if (picked.size > 1 && picked.has(b.id)) return linesMenu(n.querySelector(".grip").getBoundingClientRect(), n);
     n.classList.add("menu-open");
     popUp(n.querySelector(".grip").getBoundingClientRect(), (pop) => {
       pop.append(el("div", { class: "hd", text: "Turn into" }));
@@ -1081,7 +1120,7 @@ show every actor of the gatherer: how it stands, what it was sent from the notes
           item({ glyph: SVG.x, sm: true, label: "Forget who it went to" }, () => { change([{ op: "block.put", page: current, block: { id: b.id, to: "" } }]); drawPage(); }),
         ] : [item({ glyph: SVG.at, sm: true, label: "Send to an agent…" }, () => openPicker(b.id, n.getBoundingClientRect()))]),
         item({ glyph: "⧉", sm: true, label: "Duplicate" }, () => {
-          const { to: _to, sent: _sent, thread: _thread, ...rest } = b;
+          const { to: _to, sent: _sent, thread: _thread, extra: _extra, group: _group, ...rest } = b;
           const copy = { ...rest, id: rid() };
           change([{ op: "block.put", page: current, block: copy, after: b.id }]);
           drawPage();
@@ -1096,6 +1135,363 @@ show every actor of the gatherer: how it stands, what it was sent from the notes
         }));
     }, () => n.classList.remove("menu-open"));
   }
+
+  // ---------------------------------------------------------------- lines picked: several at once
+  // Whole lines (Notion's block selection), always a run of the page's, `anchor` to `head`: picked by a drag from one
+  // line's words into others (back into its own, its text selected again), a box dragged from beside the lines,
+  // Shift+click, Esc in a line (then Shift+↑↓ more or fewer), Shift+↑↓ past a line's end, or ⌘A twice. While lines are
+  // picked the keys are the page's (the blocks' box has them, no caret): ⌫ deletes them (Undo brings them back), ⌘C ⌘X
+  // copy and cut them (as markdown, and as themselves for these notes), ⌘V puts lines after them, Tab and ⇧Tab indent
+  // them, ⌘D duplicates them, ⌘↵ ticks their to-dos, ⌘⇧↑↓ moves them, ↵ goes back to typing; their grip drags them all,
+  // and its menu (or the bar over them) turns them into a type, or sends them to an agent as one message. A click
+  // anywhere else, or Esc, puts them down.
+  let undo = null;                                         // {run, armed}: lines just deleted, to bring back
+  box.tabIndex = -1;
+  const order = () => { const p = page(); return p ? p.blocks.map((b) => b.id) : []; };
+  const pickedBlocks = () => { const p = page(); return p ? p.blocks.filter((b) => picked.has(b.id)) : []; };
+  function pickRange(a, z) {
+    const ids = order(), i = ids.indexOf(a), j = ids.indexOf(z);
+    if (i < 0 || j < 0) return unpick();
+    picked.clear();
+    for (const id of ids.slice(Math.min(i, j), Math.max(i, j) + 1)) picked.add(id);
+    anchor = a;
+    head = z;
+    drawPicked();
+    const r = rowOf(z);
+    if (r && !drag && !band && !sweep) r.scrollIntoView({ block: "nearest" });
+  }
+  function pickAll() { const ids = order(); if (ids.length) pickRange(ids[0], ids[ids.length - 1]); }
+  function unpick() {
+    if (!picked.size) return;
+    picked.clear();
+    anchor = head = null;
+    drawPicked();
+  }
+  // the page's keys, not a line's: no caret, no text selected
+  function holdKeys() {
+    flushTyped();
+    pump();
+    const s = getSelection();
+    if (s.rangeCount) s.removeAllRanges();
+    if (document.activeElement !== box) box.focus({ preventScroll: true });
+  }
+  // the rows marked as picked (some gone, by another's change: forgotten), and the bar over a run of several
+  function drawPicked() {
+    const ids = order().filter((id) => picked.has(id));
+    picked.clear();
+    for (const id of ids) picked.add(id);
+    if (ids.length && !picked.has(anchor)) anchor = ids[0];
+    if (ids.length && !picked.has(head)) head = ids[ids.length - 1];
+    for (const n of box.children) n.classList.toggle("picked", picked.has(n.dataset.id));
+    box.classList.toggle("picking", ids.length > 0);
+    box.classList.toggle("grp", ids.length > 1);
+    const bar = $("pk-bar"), p = page();
+    if (ids.length < 2 || !p || p.deleted) { bar.hidden = true; return; }
+    const n = ids.length, can = sendable(pickedBlocks()).length;
+    if (bar.dataset.n !== `${n}:${can}`) {
+      bar.dataset.n = `${n}:${can}`;
+      bar.replaceChildren(el("span", { class: "pk-n", text: `${n} lines` }),
+        can ? el("button", { type: "button", class: "pk-send", title: `Send ${can === n ? "them" : `the ${can} with words`} to an agent, as one message`,
+          onclick: (ev) => {                               // the lines picked now (the bar is drawn again only as their count changes)
+            const now = pickedBlocks().map((b) => b.id);
+            if (now.length) openPicker(now[0], ev.currentTarget.getBoundingClientRect(), now);
+          } },
+        el("span", { html: SVG.at }), el("span", { text: "Send to an agent" })) : null,
+        el("button", { type: "button", class: "pk-more", title: "More", "aria-label": "More for these lines", html: SVG.more,
+          onclick: (ev) => linesMenu(ev.currentTarget.getBoundingClientRect()) }));
+    }
+    bar.hidden = false;
+    const first = rowOf(ids[0]);
+    bar.style.top = `${Math.max(0, first.offsetTop - bar.offsetHeight - 4)}px`;
+    bar.style.left = `${box.offsetLeft + box.offsetWidth - bar.offsetWidth}px`;
+  }
+  // lines with words to send (no divider, no agents table)
+  const sendable = (bs) => bs.filter((b) => !UNSENT.includes(b.type) && plainOf(b.type === "code" ? esc(b.text) : b.text).trim());
+
+  // -- what picked lines do
+  function deleteLines() {
+    const p = page(), bs = pickedBlocks();
+    if (!p || p.deleted || !bs.length) return;
+    const i = p.blocks.indexOf(bs[0]), before = i > 0 ? p.blocks[i - 1].id : "";
+    const gone = bs.map((b) => JSON.parse(JSON.stringify(b)));
+    for (const b of bs) forget(b.id);
+    const ops = bs.map((b) => ({ op: "block.delete", page: p.id, block: b.id }));
+    const fresh = p.blocks.length === bs.length ? { id: rid(), type: "text", text: "", checked: false, indent: 0 } : null;
+    if (fresh) ops.push({ op: "block.put", page: p.id, block: fresh });   // a page keeps a line to type in
+    change(ops);
+    unpick();
+    if (convo && gone.some((b) => b.id === convo.block)) convo = null;
+    drawPage();
+    const near = fresh || (before ? blockOf(before) : page().blocks[0]);
+    if (near) focusBlock(near.id, before ? "end" : "start");
+    const pid = p.id;
+    undoable(`${gone.length === 1 ? "A line" : `${gone.length} lines`} deleted`, () => {
+      if (current !== pid) openPage(pid);
+      const q = page();
+      if (!q || q.deleted) return;
+      const back = [];
+      if (fresh && q.blocks.length === 1 && q.blocks[0].id === fresh.id && !plainOf(q.blocks[0].text)) back.push({ op: "block.delete", page: pid, block: fresh.id });
+      let after = before && q.blocks.some((b) => b.id === before) ? before : "";
+      for (const b of gone) { back.push({ op: "block.put", page: pid, block: b, after }); after = b.id; }
+      change(back);
+      drawPage();
+      pickRange(gone[0].id, gone[gone.length - 1].id);
+      holdKeys();
+    });
+  }
+  function undoable(text, run) {
+    const w = $("who");
+    undo = { run, armed: true };
+    w.classList.remove("bad");
+    w.replaceChildren(el("span", { text }), el("button", { type: "button", class: "undo", text: "Undo", onclick: () => takeBack() }));
+    w.style.opacity = "1";
+    clearTimeout(sayTimer);
+    sayTimer = setTimeout(() => { w.style.opacity = "0"; undo = null; }, 12000);
+  }
+  function takeBack() {
+    const u = undo;
+    undo = null;
+    $("who").style.opacity = "0";
+    if (u) u.run();
+  }
+  function indentLines(by) {
+    const ops = pickedBlocks().filter((b) => INDENTED.includes(b.type)).map((b) => [b, Math.max(0, Math.min(MAX_INDENT, (b.indent || 0) + by))])
+      .filter(([b, to]) => to !== (b.indent || 0)).map(([b, to]) => ({ op: "block.put", page: current, block: { id: b.id, indent: to } }));
+    if (ops.length) { change(ops); drawPage(); }
+  }
+  function tickLines() {                                   // all ticked, unless all are: then none
+    const todos = pickedBlocks().filter((b) => b.type === "todo");
+    if (!todos.length) return;
+    const to = todos.some((b) => !b.checked);
+    change(todos.map((b) => ({ op: "block.put", page: current, block: { id: b.id, checked: to } })));
+    drawPage();
+  }
+  function duplicateLines() {
+    const bs = pickedBlocks();
+    if (!bs.length) return;
+    let after = bs[bs.length - 1].id;
+    const copies = bs.map(({ to: _to, sent: _sent, thread: _thread, extra: _extra, group: _group, ...rest }) => ({ ...rest, id: rid() }));
+    change(copies.map((c) => { const op = { op: "block.put", page: current, block: c, after }; after = c.id; return op; }));
+    drawPage();
+    pickRange(copies[0].id, copies[copies.length - 1].id);
+  }
+  function moveLines(by) {
+    const all = order(), ids = all.filter((id) => picked.has(id));
+    const i = all.indexOf(ids[0]), j = all.indexOf(ids[ids.length - 1]);
+    if (by < 0 ? i <= 0 : j >= all.length - 1) return;
+    change(moveOps(ids, by < 0 ? (i >= 2 ? all[i - 2] : "") : all[j + 1]));
+    drawPage();
+    const r = rowOf(head);
+    if (r) r.scrollIntoView({ block: "nearest" });
+  }
+  function retypeLines(type) {
+    const ops = pickedBlocks().filter(editable).filter((b) => b.type !== type).map((b) => retypeOp(b, type));
+    if (ops.length) { change(ops); drawPage(); }
+  }
+  // the picked lines' menu: a type for them all, sent to an agent together, duplicated, deleted
+  function linesMenu(rect, n = null) {
+    const bs = pickedBlocks(), can = sendable(bs);
+    if (!bs.length) return;
+    const types = new Set(bs.map((b) => b.type));
+    if (n) n.classList.add("menu-open");
+    popUp(rect, (pop) => {
+      pop.append(el("div", { class: "hd", text: `${bs.length} lines: turn into` }));
+      for (const k of KINDS) if (!UNSENT.includes(k.type))
+        pop.append(item({ ...k, note: "", sm: true, cur: types.size === 1 && types.has(k.type) }, () => { retypeLines(k.type); holdKeys(); }));
+      pop.append(el("div", { class: "sep" }),
+        ...(can.length ? [item({ glyph: SVG.at, sm: true, label: `Send ${can.length === bs.length ? "them" : `${can.length} of them`} to an agent…` },
+          () => openPicker(can[0].id, rect, can.map((b) => b.id)))] : []),
+        ...(bs.some((b) => b.type === "todo") ? [item({ glyph: SVG.check, sm: true, label: bs.some((b) => b.type === "todo" && !b.checked) ? "Tick the to-dos" : "Untick the to-dos", note: "⌘↵" },
+          () => { tickLines(); holdKeys(); })] : []),
+        item({ glyph: "⧉", sm: true, label: "Duplicate", note: "⌘D" }, () => { duplicateLines(); holdKeys(); }),
+        item({ glyph: SVG.trash, sm: true, label: `Delete ${bs.length} lines`, note: "⌫", bad: true }, () => deleteLines()));
+    }, () => { if (n) n.classList.remove("menu-open"); });
+  }
+
+  // -- copied and pasted: as markdown for anywhere, and as the blocks themselves for these notes
+  const CLIP = "application/x-ag-notes-blocks";
+  function clip(dt) {
+    const bs = pickedBlocks();
+    dt.setData("text/plain", mdLines(bs).join("\n"));
+    dt.setData(CLIP, JSON.stringify(bs.map((b) => ({ type: b.type, text: b.text, checked: !!b.checked, indent: b.indent || 0 }))));
+  }
+  function clipBlocks(dt) {
+    let got;
+    try { got = JSON.parse(dt.getData(CLIP) || "null"); } catch { return null; }
+    if (!Array.isArray(got) || !got.length) return null;
+    const ok = got.filter((b) => b && TYPES.includes(b.type) && typeof b.text === "string");
+    return ok.length ? ok.map((b) => ({ id: rid(), type: b.type, text: b.text, checked: !!b.checked && b.type === "todo",
+      indent: INDENTED.includes(b.type) ? Math.max(0, Math.min(MAX_INDENT, Number(b.indent) || 0)) : 0 })) : null;
+  }
+  // a block's text (clean HTML) as markdown: notebook.py's inline_markdown, a line break a new line
+  function mdInline(h) {
+    const t = document.createElement("template");
+    t.innerHTML = clean(h);
+    const walk = (node) => [...node.childNodes].map((c) => {
+      if (c.nodeType === 3) return c.textContent;
+      if (c.nodeType !== 1) return "";
+      const tag = c.nodeName.toLowerCase(), inner = walk(c);
+      if (tag === "br") return "\n";
+      if (tag === "a") return `[${inner}](${c.getAttribute("href") || ""})`;
+      const m = { b: "**", i: "*", s: "~~", code: "`" }[tag] || "";
+      return m + inner + m;
+    }).join("");
+    return walk(t.content);
+  }
+  // lines as markdown (notebook.py's markdown_lines, without ids): indents from the least of them, lists numbered afresh
+  function mdLines(bs) {
+    const ins = bs.filter((b) => INDENTED.includes(b.type)).map((b) => b.indent || 0);
+    const base = ins.length ? Math.min(...ins) : 0, out = [], counts = new Map();
+    for (const b of bs) {
+      const k = INDENTED.includes(b.type) ? Math.max(0, (b.indent || 0) - base) : 0;
+      for (const d of [...counts.keys()]) if (d > k) counts.delete(d);
+      if (b.type === "number") counts.set(k, (counts.get(k) || 0) + 1); else counts.delete(k);
+      if (b.type === "code") { out.push("```", ...String(b.text).split("\n"), "```"); continue; }
+      if (b.type === "divider") { out.push("---"); continue; }
+      if (b.type === "agents") continue;
+      const pad = "  ".repeat(k), mark = { text: "", h1: "# ", h2: "## ", h3: "### ", bullet: "- ", quote: "> ",
+        todo: b.checked ? "- [x] " : "- [ ] ", number: `${counts.get(k)}. ` }[b.type] || "";
+      out.push(pad + mark + mdInline(b.text).replace(/\n/g, `\n${pad}${" ".repeat(mark.length)}`));
+    }
+    return out;
+  }
+
+  // -- the keys, the clipboard, and clicks, while lines are picked
+  const inField = (t) => !!(t && t.closest && t.closest(".tx, input, textarea, [contenteditable='true'], [contenteditable='plaintext-only'], .pop, .convo"));
+  const theirs = () => picked.size > 0 && !inField(document.activeElement);
+  document.addEventListener("keydown", (ev) => {
+    if (ev.defaultPrevented || ev.isComposing || inField(ev.target)) return;
+    const mod = ev.metaKey || ev.ctrlKey, k = ev.key, low = k.toLowerCase();
+    if (mod && !ev.shiftKey && low === "z" && undo) { ev.preventDefault(); return takeBack(); }
+    if (!picked.size || menu) return;
+    const p = page(), ro = !p || !!p.deleted, all = order();
+    if (k === "Escape") { ev.preventDefault(); return unpick(); }
+    if (mod && !ev.shiftKey && low === "a") { ev.preventDefault(); return pickAll(); }
+    if (k === "ArrowUp" || k === "ArrowDown") {
+      ev.preventDefault();
+      const up = k === "ArrowUp";
+      if (mod && ev.shiftKey) return ro ? null : moveLines(up ? -1 : 1);
+      if (ev.shiftKey) { const j = all.indexOf(head) + (up ? -1 : 1); if (j >= 0 && j < all.length) pickRange(anchor, all[j]); return; }
+      const ids = all.filter((id) => picked.has(id)), j = up ? all.indexOf(ids[0]) - 1 : all.indexOf(ids[ids.length - 1]) + 1;
+      if (j >= 0 && j < all.length) pickRange(all[j], all[j]);
+      return;
+    }
+    if (k === "Enter" && !mod && !ev.shiftKey) { ev.preventDefault(); const at = head; unpick(); return focusBlock(at, "end"); }
+    if (ro) return;
+    if (k === "Backspace" || k === "Delete") { ev.preventDefault(); return deleteLines(); }
+    if (k === "Tab") { ev.preventDefault(); return indentLines(ev.shiftKey ? -1 : 1); }
+    if (mod && k === "Enter") { ev.preventDefault(); return tickLines(); }
+    if (mod && !ev.shiftKey && low === "d") { ev.preventDefault(); return duplicateLines(); }
+  });
+  document.addEventListener("copy", (ev) => { if (theirs()) { ev.preventDefault(); clip(ev.clipboardData); } });
+  document.addEventListener("cut", (ev) => {
+    if (!theirs()) return;
+    ev.preventDefault();
+    clip(ev.clipboardData);
+    if (!page().deleted) deleteLines();
+  });
+  document.addEventListener("paste", async (ev) => {      // after the lines picked, and then those picked
+    if (!theirs() || page().deleted) return;
+    ev.preventDefault();
+    const ids = order().filter((id) => picked.has(id)), last = ids[ids.length - 1];
+    const text = (ev.clipboardData.getData("text/plain") || "").replace(/\r\n?/g, "\n");
+    let got = clipBlocks(ev.clipboardData);
+    if (!got) { try { got = text.trim() ? await parsed(text) : []; } catch { got = []; } }
+    if (!got.length || !blockOf(last)) return;
+    putBlocks(got, last);
+    pickRange(got[0].id, got[got.length - 1].id);
+    holdKeys();
+  });
+  // a click anywhere puts the lines down -- but in a menu, on the bar, on a picked line's grip, or Shift+click on a line
+  document.addEventListener("pointerdown", (ev) => {
+    if (!picked.size) return;
+    const t = ev.target;
+    if (t.closest && t.closest(".pop, .pk-bar, .blk.picked > .gut .grip")) return;
+    if (ev.shiftKey && t.closest && t.closest("#blocks > .blk")) return;
+    unpick();
+  }, true);
+
+  // -- the drags that pick: a sweep from a line's words, a box from beside the lines
+  let sweep = null, band = null, eatMouse = false;
+  const BAND_NOT = ".tx, button, input, textarea, a, .pg-title, .pg-icon, .pg-tools, .agt, .hr, .sent, .gut, .chk, .banner, .empty, .pk-bar";
+  function rowAt(y) {                                     // the line at a height (above the first: it; below the last: it)
+    const rows = [...box.children];
+    return rows.find((r) => y < r.getBoundingClientRect().bottom) || rows[rows.length - 1] || null;
+  }
+  function edgeScroll(y) {
+    const sc = $("scroll"), r = sc.getBoundingClientRect();
+    if (y < r.top + 30) sc.scrollTop -= 12;
+    else if (y > r.bottom - 30) sc.scrollTop += 12;
+  }
+  $("scroll").addEventListener("pointerdown", (ev) => {
+    const sc = $("scroll");
+    if (ev.button !== 0 || current === AGENTS || !page() || ev.target.closest(".pop")) return;
+    if (ev.target === sc && ev.clientX >= sc.getBoundingClientRect().left + sc.clientWidth) return;   // its scrollbar
+    const n = ev.target.closest(".blk");
+    if (ev.shiftKey && n && box.contains(n) && !ev.target.closest("button, .chk, a")) {
+      const f = document.activeElement, fn = f && box.contains(f) && f !== box ? f.closest(".blk") : null;
+      const from = picked.size ? anchor : fn ? fn.dataset.id : null;
+      if (from && (picked.size || from !== n.dataset.id)) {   // (Shift+click in the line typed in: its text, as ever)
+        eatMouse = true;
+        pickRange(from, n.dataset.id);
+        holdKeys();
+        return;
+      }
+    }
+    if (ev.target.closest(".tx") && n) { sweep = { row: n, on: false }; return; }
+    if (ev.target.closest(BAND_NOT)) return;
+    band = { x: ev.clientX, y: ev.clientY + sc.scrollTop, on: false, below: !!ev.target.closest("#below") };
+    eatMouse = true;                                       // no text selected, no focus lost, as the box is dragged
+  });
+  document.addEventListener("mousedown", (ev) => { if (eatMouse) { eatMouse = false; ev.preventDefault(); } }, true);
+  document.addEventListener("pointermove", (ev) => {
+    if (sweep) {
+      const r = rowAt(ev.clientY);
+      if (!r) return;
+      if (r !== sweep.row) {
+        if (!sweep.on) { sweep.on = true; document.body.classList.add("sweeping"); }
+        pickRange(sweep.row.dataset.id, r.dataset.id);
+      } else if (sweep.on) {                               // back in its own line: its text, selected as the drag goes
+        sweep.on = false;
+        document.body.classList.remove("sweeping");
+        unpick();
+      }
+      edgeScroll(ev.clientY);
+    } else if (band) {
+      const sc = $("scroll"), y0 = band.y - sc.scrollTop;
+      if (!band.on && Math.hypot(ev.clientX - band.x, ev.clientY - y0) < 5) return;
+      if (!band.on) { band.on = true; document.body.classList.add("banding"); }
+      const top = Math.min(y0, ev.clientY), bottom = Math.max(y0, ev.clientY);
+      Object.assign($("band").style, { left: `${Math.min(band.x, ev.clientX)}px`, top: `${top}px`,
+        width: `${Math.abs(ev.clientX - band.x)}px`, height: `${bottom - top}px` });
+      $("band").hidden = false;
+      const hit = [...box.children].filter((r) => { const b = r.getBoundingClientRect(); return b.bottom > top && b.top < bottom; });
+      if (!hit.length) unpick();
+      else {
+        const down = ev.clientY >= y0, a = (down ? hit[0] : hit[hit.length - 1]).dataset.id, z = (down ? hit[hit.length - 1] : hit[0]).dataset.id;
+        pickRange(a, z);
+      }
+      edgeScroll(ev.clientY);
+    }
+  });
+  function endPick(ev) {
+    if (sweep) {
+      const s = sweep;
+      sweep = null;
+      document.body.classList.remove("sweeping");
+      if (s.on && picked.size) holdKeys();
+    }
+    if (band) {
+      const b = band;
+      band = null;
+      $("band").hidden = true;
+      document.body.classList.remove("banding");
+      if (b.on) { if (picked.size) holdKeys(); }
+      else if (b.below && ev.type === "pointerup") belowClick();
+    }
+  }
+  document.addEventListener("pointerup", endPick);
+  document.addEventListener("pointercancel", endPick);
 
   // ---------------------------------------------------------------- the title, the icon, and below the blocks
   const title = $("title");
@@ -1135,47 +1531,58 @@ show every actor of the gatherer: how it stands, what it was sent from the notes
   }, null, "menu", "emoji");
   $("add-icon").addEventListener("click", (ev) => iconPicker(ev.currentTarget));
   $("icon").addEventListener("click", (ev) => { if (!page().deleted) iconPicker(ev.currentTarget); });
-  $("below").addEventListener("mousedown", (ev) => {
+  function belowClick() {                                 // a click under the lines (a drag there picks them): one to type in
     const p = page();
     if (!p || p.deleted) return;
-    ev.preventDefault();
     const last = p.blocks[p.blocks.length - 1];
     if (last && last.type === "text" && !plainOf(last.text)) return focusBlock(last.id, "end");
     const b = { id: rid(), type: "text", text: "", checked: false, indent: 0 };
     change([{ op: "block.put", page: p.id, block: b }]);
     drawPage();
     focusBlock(b.id, 0);
-  });
+  }
 
   // ---------------------------------------------------------------- pasting: lines as blocks
+  // Lines copied from these notes come back as they were (their own clipboard type: types, ticks, indents); other text
+  // of several lines is read as markdown, a line each.
   box.addEventListener("paste", async (ev) => {
     const tx = ev.target.closest && ev.target.closest(".tx");
     if (!tx) return;
     ev.preventDefault();
     const text = (ev.clipboardData.getData("text/plain") || "").replace(/\r\n?/g, "\n");
+    const ours = clipBlocks(ev.clipboardData);
     const n = tx.closest(".blk"), b = blockOf(n.dataset.id);
-    if (!text || !b) return;
-    if (b.type === "code" || !text.trim().includes("\n")) {
+    if (!b || (!text && !ours)) return;
+    if (b.type === "code" || (!ours && !text.trim().includes("\n"))) {
       document.execCommand("insertText", false, b.type === "code" ? text : text.replace(/\n+/g, " "));
       return;
     }
-    let got = [];
-    try { got = (await (await ag.api("parse", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ markdown: text }) })).json()).blocks || []; }
-    catch { document.execCommand("insertText", false, text.replace(/\n+/g, " ")); return; }
+    let got = ours || [];
+    if (!ours) {
+      try { got = await parsed(text); }
+      catch { document.execCommand("insertText", false, text.replace(/\n+/g, " ")); return; }
+    }
     if (!got.length || !blockOf(b.id)) return;
+    focusBlock(putBlocks(got, b.id, empty(tx) && b.type === "text" ? tx : null), "end");
+  });
+  const parsed = async (text) => (await (await ag.api("parse", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ markdown: text }) })).json()).blocks || [];
+  // Blocks put in after one (`after`), in order -- the first into the empty line typed in (`into`), if it is one -- and
+  // the last one's id.
+  function putBlocks(got, after, into = null) {
     const ops = [];
-    let after = b.id;
-    if (empty(tx) && b.type === "text") {
-      const first = got.shift();
-      forget(b.id);
-      ops.push({ op: "block.put", page: current, block: { ...first, id: b.id } });
-      if (first.type === "code") tx.textContent = first.text; else tx.innerHTML = clean(first.text);
+    got = [...got];
+    if (into) {
+      const id = into.closest(".blk").dataset.id, first = got.shift();
+      forget(id);
+      ops.push({ op: "block.put", page: current, block: { ...first, id } });
+      if (first.type === "code") into.textContent = first.text; else into.innerHTML = clean(first.text);
     }
     for (const nb of got) { ops.push({ op: "block.put", page: current, block: nb, after }); after = nb.id; }
     change(ops);
     drawPage();
-    focusBlock(after, "end");
-  });
+    return after;
+  }
 
   // ---------------------------------------------------------------- the gatherer's actors (ag.actors), to send blocks to
   let crew = { agents: [], harnesses: [], start: "", home: "" };
@@ -1217,9 +1624,9 @@ show every actor of the gatherer: how it stands, what it was sent from the notes
     if (a.saved && (k === "idle" || k === "closed")) return ["idle", "Saved"];
     return WORDS[k] || ["idle", (a.status && a.status[1]) || "Idle"];
   }
-  // The line an actor is on now: the one its latest message is about (ag.actors' `asked_of`, a line of this notebook's),
-  // or none -- its latest message came from elsewhere (Chat, another app).
-  const lineOn = (a) => (a && a.asked_of && a.asked_of.app === ag.app ? a.asked_of.item : null);
+  // The lines an actor is on now: the ones its latest message is about (ag.actors' `asked_of`, a line of this notebook's,
+  // or several sent together: their ids, ", " between), or none -- its latest message came from elsewhere (Chat, another app).
+  const linesOn = (a) => (a && a.asked_of && a.asked_of.app === ag.app ? String(a.asked_of.item || "").split(/,\s*/).filter(Boolean) : []);
   // when a line last went to its actor: sent, or the user's latest message about it
   const lastSent = (b) => Math.max(b.sent || 0, ...(b.thread || []).filter((l) => l.by === "user").map((l) => l.at || 0));
   // How a line stands with the actor it went to -- its own state, not the actor's alone: the line the actor is on now,
@@ -1230,7 +1637,7 @@ show every actor of the gatherer: how it stands, what it was sent from the notes
     const [cls, word] = stands(a);
     if (cls === "gone") return [cls, word];
     const busy = cls === "work" || cls === "ask" || cls === "bad";
-    if (busy && lineOn(a) === b.id) return [cls, cls === "work" ? `${word} · ${since(lastSent(b))}` : word];
+    if (busy && linesOn(a).includes(b.id)) return [cls, cls === "work" ? `${word} · ${since(lastSent(b))}` : word];
     const last = [...(b.thread || [])].reverse().find((l) => byOf(a, l.by));
     if ((last && (last.at || 0) >= lastSent(b)) || (b.type === "todo" && b.checked)) return ["done", "Done"];
     if (busy && waiting(a, b)) return ["wait", "Waiting"];
@@ -1238,7 +1645,7 @@ show every actor of the gatherer: how it stands, what it was sent from the notes
   }
   // a line sent to a busy actor after the one it is on (or while it is on something else): not taken up yet
   function waiting(a, b) {
-    const on = lineOn(a), found = on ? findLine(on) : null;
+    const on = linesOn(a)[0], found = on ? findLine(on) : null;
     return !found || lastSent(b) >= lastSent(found.b);       // (sent with it, or after: not taken up yet)
   }
   function findLine(id) {
@@ -1246,7 +1653,30 @@ show every actor of the gatherer: how it stands, what it was sent from the notes
     return null;
   }
   // what an actor asks, if it asks it about this line (the line it is on now)
-  const askedOn = (a, b) => (a && a.asking && stands(a)[0] === "ask" && lineOn(a) === b.id ? a.asking : null);
+  const askedOn = (a, b) => (a && a.asking && stands(a)[0] === "ask" && linesOn(a).includes(b.id) ? a.asking : null);
+  // The lines sent together with one -- to the same actor, as one message: the same `group` -- in the page's order; just
+  // it, sent alone. They show once, at the last of them: how they stand together, and one conversation.
+  function sentWith(b) {
+    const p = page();
+    if (!p || !b.to || !b.group) return [b];
+    const g = p.blocks.filter((x) => x.to === b.to && x.group === b.group);
+    return g.includes(b) ? g : [b];
+  }
+  // How lines sent together stand: the actor on them (working, needs you, error) as one sent alone; Done once it has
+  // reported on every one; else waiting, or how many are done so far.
+  function standsAll(a, g) {
+    if (g.length === 1) return standsOn(a, g[0]);
+    const all = g.map((b) => standsOn(a, b));
+    for (const c of ["gone", "ask", "bad", "work"]) { const s = all.find(([k]) => k === c); if (s) return s; }
+    const done = all.filter(([k]) => k === "done").length;
+    if (done === g.length) return ["done", "Done"];
+    if (all.some(([k]) => k === "wait")) return ["wait", "Waiting"];
+    return done ? ["idle", `${done} of ${g.length} done`] : ["idle", "Sent"];
+  }
+  const askedAll = (a, g) => g.map((b) => askedOn(a, b)).find(Boolean) || null;
+  // the actor's reports and the user's messages on lines sent together, in the order written (a report saying its line)
+  const threadOf = (g) => g.flatMap((x) => (x.thread || []).map((l) => (g.length > 1 && l.by !== "user" ? { ...l, on: oneLine(x.text, 48) } : l)))
+    .sort((x, y) => (x.at || 0) - (y.at || 0));
   let sayTimer = 0;
   function say(text, bad = false) {
     const w = $("who");
@@ -1259,6 +1689,7 @@ show every actor of the gatherer: how it stands, what it was sent from the notes
 
   // ---------------------------------------------------------------- a block sent to an actor
   const outgoing = new Set();                              // blocks being sent now
+  const quiet = new Set();                                 // ... with others, not the last of them: no status of its own
   // A block's words sent to an actor, as the user's message: an actor there (`channel`; "gatherer", its gatherer agent),
   // or a new one (`harness`, `folder`), with what the user added (`extra`: instructions beyond the line). The block then
   // says who it went to, and with what. The note at its start says where it is from (the Notes app's [asked] reads it
@@ -1280,7 +1711,7 @@ show every actor of the gatherer: how it stands, what it was sent from the notes
     try {
       const got = who.harness ? await ag.actors.start({ harness: who.harness, folder: who.folder, text })
         : await ag.actors.send(who.channel, text);
-      change([{ op: "block.put", page: p.id, block: { id, to: got.channel, sent: now(), extra: esc(extra).replace(/\n/g, "<br>") } }]);
+      change([{ op: "block.put", page: p.id, block: { id, to: got.channel, sent: now(), extra: esc(extra).replace(/\n/g, "<br>"), group: "" } }]);
       say(`Sent to ${nameOf(actorOf(got.channel), who.channel || got.channel)}${who.harness ? ", a new actor" : ""}`);
     } catch (e) {
       say(`Not sent: ${e.message}`, true);
@@ -1289,12 +1720,46 @@ show every actor of the gatherer: how it stands, what it was sent from the notes
       drawPage();
     }
   }
-  // A reply on a block sent to an actor: sent to that actor, then a line of the block's thread.
+  // Several lines sent together, as one message: the note names each line (in the order they follow it) and asks for a
+  // report on each; the lines as markdown, then what the user added. Each line then says who it went to, as one sent alone,
+  // and the `group` they share (`sentWith` finds them by it).
+  async function sendBlocks(ids, who, extra = "") {
+    flushTyped();
+    pump();
+    const p = page();
+    if (!p) return;
+    const bs = sendable(p.blocks.filter((b) => ids.includes(b.id)));
+    if (bs.length < 2) return bs.length ? sendBlock(bs[0].id, who, extra) : say("Write what to ask first, then send it.", true);
+    const report = store.get("report", true);
+    extra = extra.trim();
+    const text = `(From my Notes, page ${JSON.stringify(p.title || "Untitled")}, blocks ${bs.map((b) => b.id).join(", ")}: the lines below, in that order.`
+      + `${report ? " When you're done, report back on each with notes_report, in one to three lines." : ""})`
+      + `\n\n${mdLines(bs).join("\n")}${extra ? `\n\n${extra}` : ""}`;
+    for (const b of bs) { outgoing.add(b.id); if (b !== bs[bs.length - 1]) quiet.add(b.id); }
+    drawPage();
+    try {
+      const got = who.harness ? await ag.actors.start({ harness: who.harness, folder: who.folder, text })
+        : await ag.actors.send(who.channel, text);
+      const at = now(), more = esc(extra).replace(/\n/g, "<br>"), group = rid();
+      change(bs.map((b) => ({ op: "block.put", page: p.id, block: { id: b.id, to: got.channel, sent: at, extra: more, group } })));
+      unpick();
+      say(`Sent ${bs.length} lines to ${nameOf(actorOf(got.channel), who.channel || got.channel)}${who.harness ? ", a new actor" : ""}`);
+    } catch (e) {
+      say(`Not sent: ${e.message}`, true);
+    } finally {
+      for (const b of bs) { outgoing.delete(b.id); quiet.delete(b.id); }
+      drawPage();
+    }
+  }
+  const sendTo = (ids, who, extra) => (ids.length > 1 ? sendBlocks(ids, who, extra) : sendBlock(ids[0], who, extra));
+  // A reply on a block sent to an actor: sent to that actor, then a line of the block's thread. On lines sent together,
+  // about them all, and kept on the last of them.
   async function reply(id, words) {
     const p = page(), b = blockOf(id);
     words = words.trim();
     if (!p || !b || !b.to || !words) return false;
-    const text = `(A reply in my Notes, page ${JSON.stringify(p.title || "Untitled")}, block ${b.id}.`
+    const g = sentWith(b);
+    const text = `(A reply in my Notes, page ${JSON.stringify(p.title || "Untitled")}, ${g.length > 1 ? `blocks ${g.map((x) => x.id).join(", ")}` : `block ${b.id}`}.`
       + ` Report back with notes_report when you're done.)\n\n${words}`;
     try {
       await ag.actors.send(b.to, text);
@@ -1312,25 +1777,26 @@ show every actor of the gatherer: how it stands, what it was sent from the notes
   // preview of it is on the page.
   function sentPart(n, b, ro) {
     let part = n.querySelector(":scope > .sent");
+    const g = sentWith(b), tail = g[g.length - 1];         // sent with others: shown once, at the last of them
     const has = b.to || (b.thread && b.thread.length) || outgoing.has(b.id);
-    const open = !!convo && convo.block === b.id;
+    const open = !!convo && g.some((x) => x.id === convo.block);
     n.classList.toggle("convo-on", !!has && open);
-    if (!has) { if (part) part.remove(); return; }
+    if (!has || b !== tail || (quiet.has(b.id) && !b.to)) { if (part) part.remove(); return; }
     if (!part) { part = el("div", { class: "sent" }); n.append(part); }
     const a = b.to ? actorOf(b.to) : null;
     const sendingNow = outgoing.has(b.id) && !b.to;
-    const [cls, word] = sendingNow ? ["work", "Sending…"] : b.to ? standsOn(a, b) : ["idle", "Sent to no one now"];
+    const [cls, word] = sendingNow ? ["work", "Sending…"] : b.to ? standsAll(a, g) : ["idle", "Sent to no one now"];
     const name = b.to ? nameOf(a, b.to) : "";
-    const asks = !!askedOn(a, b);
-    const latest = lastReport(b), on = cls === "wait" ? findLine(lineOn(a)) : null;
+    const asks = !!askedAll(a, g);
+    const latest = [...threadOf(g)].reverse().find((l) => l.by !== "user"), on = cls === "wait" && linesOn(a).length ? findLine(linesOn(a)[0]) : null;
     const said = asks ? `Asks: ${askLine(a.asking)}` : cls === "wait" ? (on ? `After “${oneLine(on.b.text, 60)}”` : "After what it is on now")
       : latest ? oneLine(latest.text, 240) : "";
-    const count = 1 + (b.thread || []).length;
-    const sig = JSON.stringify([cls, word, name, a && a.avatar, said, count, asks, open, ro]);
+    const count = 1 + g.reduce((k, x) => k + (x.thread || []).length, 0);
+    const sig = JSON.stringify([cls, word, name, a && a.avatar, said, count, asks, open, ro, g.length]);
     if (part.dataset.sig === sig) return;
     part.dataset.sig = sig;
     const talk = () => toggleConvo(b.id);
-    const told = `${name}: ${word}${said ? `\n${said}` : ""}`;      // its name and latest word: on hover, not on the page
+    const told = `${name}: ${word}${g.length > 1 ? ` (${g.length} lines sent together)` : ""}${said ? `\n${said}` : ""}`;   // on hover, not on the page
     part.replaceChildren(
       b.to ? el("button", { type: "button", class: `chip ${cls}`, title: `${told}\n(${open ? "close" : "open"} the conversation)`,
         "aria-label": told, onclick: talk }, face(a, 16), el("span", { text: word }))
@@ -1340,8 +1806,6 @@ show every actor of the gatherer: how it stands, what it was sent from the notes
           "aria-label": `${open ? "Close" : "Open"} the conversation: ${count} message${count === 1 ? "" : "s"}`, onclick: talk },
           el("span", { html: SVG.bubble }), el("span", { text: String(count) })));
   }
-  // its newest line by an agent: what the page shows of the conversation
-  const lastReport = (b) => [...(b.thread || [])].reverse().find((l) => l.by !== "user") || null;
   // what an actor asks, in a line
   function askLine(ask) {
     const q = ask.questions && ask.questions[0];
@@ -1371,7 +1835,9 @@ show every actor of the gatherer: how it stands, what it was sent from the notes
   function drawConvo() {
     const box = $("convo");
     const p = convo && current === convo.page ? pages.get(convo.page) : null;
-    const b = p && p.blocks.find((x) => x.id === convo.block);
+    let b = p && p.blocks.find((x) => x.id === convo.block);
+    const g = b ? sentWith(b) : [];
+    if (b && g[g.length - 1] !== b) { b = g[g.length - 1]; convo.block = b.id; }   // lines sent together: one conversation, the last's
     if (!b || !(b.to || (b.thread && b.thread.length))) {
       convo = null;
       box.hidden = true;
@@ -1387,31 +1853,35 @@ show every actor of the gatherer: how it stands, what it was sent from the notes
       box.replaceChildren(el("div", { class: "cv-head" }), el("div", { class: "cv-list", role: "log", "aria-live": "polite" }), el("div", { class: "cv-foot" }));
     }
     const a = b.to ? actorOf(b.to) : null, name = b.to ? nameOf(a, b.to) : "", ro = !!p.deleted;
-    const [cls, word] = b.to ? standsOn(a, b) : ["idle", "Sent to no one now"];
+    const [cls, word] = b.to ? standsAll(a, g) : ["idle", "Sent to no one now"];
+    const words = (x) => (x.type === "code" ? esc(x.text) : x.text);
+    const about = g.length > 1 ? `${g.length} lines: ${g.map((x) => oneLine(words(x), 60)).join(" · ")}` : oneLine(words(b), 160);
     const head = box.querySelector(".cv-head");
-    const headSig = JSON.stringify([cls, word, name, a && a.avatar, b.text, !!a]);
+    const headSig = JSON.stringify([cls, word, name, a && a.avatar, about, !!a]);
     if (head.dataset.sig !== headSig) {
       head.dataset.sig = headSig;
       head.replaceChildren(
         el("div", { class: "cv-who" }, b.to ? face(a, 22) : null, el("b", { text: name || "No one" }), el("span", { class: `pill ${cls}`, text: word }),
           el("button", { type: "button", class: "cv-x", title: "Close", "aria-label": "Close the conversation", html: SVG.x, onclick: () => closeConvo() })),
-        el("button", { type: "button", class: "cv-about", title: `${oneLine(b.type === "code" ? esc(b.text) : b.text, 400)}\n(show it on the page)`, onclick: () => {
-          const r = rowOf(b.id);
-          if (r) { r.scrollIntoView({ block: "center", behavior: "smooth" }); r.classList.remove("flash"); void r.offsetWidth; r.classList.add("flash"); }
-        } }, el("span", { class: "dim", text: "About: " }), oneLine(b.type === "code" ? esc(b.text) : b.text, 160) || "(empty)"),
+        el("button", { type: "button", class: "cv-about", title: `${g.map((x) => oneLine(words(x), 400)).join("\n")}\n(show ${g.length > 1 ? "them" : "it"} on the page)`, onclick: () => {
+          const rs = g.map((x) => rowOf(x.id)).filter(Boolean);
+          if (rs[0]) rs[0].scrollIntoView({ block: "center", behavior: "smooth" });
+          for (const r of rs) { r.classList.remove("flash"); void r.offsetWidth; r.classList.add("flash"); }
+        } }, el("span", { class: "dim", text: "About: " }), about || "(empty)"),
         a ? el("button", { type: "button", class: "cv-chat", text: "Open its Chat", onclick: () => ag.actors.show(b.to).catch((e) => say(e.message, true)) }) : null);
     }
     const list = box.querySelector(".cv-list");
-    const lines = b.thread || [];
-    const ask = askedOn(a, b);
-    const listSig = JSON.stringify([b.text, b.sent, b.extra, lines.map((l) => [l.id, l.by === "user" ? "" : (actorOf(l.by.slice(6)) || {}).avatar || ""]),
+    const lines = threadOf(g);
+    const ask = askedAll(a, g);
+    const listSig = JSON.stringify([g.map((x) => [x.id, x.text]), b.sent, b.extra, lines.map((l) => [l.id, l.by === "user" ? "" : (actorOf(l.by.slice(6)) || {}).avatar || ""]),
       ask && ask.id, a && a.answerable, ro]);
     if (list.dataset.sig !== listSig) {
       const fresh = list.dataset.sig === undefined, atEnd = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
       list.dataset.sig = listSig;
       list.replaceChildren(
-        ...(b.sent ? [bubble({ by: "user", at: b.sent,                  // the line as sent, with what the user added
-          text: (b.type === "code" ? esc(b.text) : b.text) + (b.extra ? `<br><br>${b.extra}` : "") })] : []),
+        ...(b.sent ? [bubble({ by: "user", at: b.sent,                  // the line(s) as sent, with what the user added
+          text: g.map(words).join("<br>") + (b.extra ? `<br><br>${b.extra}` : ""),
+          note: g.length > 1 ? `${g.length} lines, as one message` : "" })] : []),
         ...lines.map(bubble),
         ...(ask ? [askCard(a, ask, b, ro)] : []));
       if (fresh || atEnd) requestAnimationFrame(() => { list.scrollTop = list.scrollHeight; });   // once laid out
@@ -1432,7 +1902,7 @@ show every actor of the gatherer: how it stands, what it was sent from the notes
       mine ? null : face(a, 20),
       el("div", { class: "mb" },
         el("div", { class: "bub", html: clean(l.text) }),
-        el("div", { class: "mm", text: mine ? `You · ${clock(l.at)}` : `${nameOf(a, ch)} reported${l.done ? ": done" : ""} · ${clock(l.at)}` })));
+        el("div", { class: "mm", text: mine ? `You · ${clock(l.at)}${l.note ? ` · ${l.note}` : ""}` : `${nameOf(a, ch)} reported${l.on ? ` on “${l.on}”` : ""}${l.done ? ": done" : ""} · ${clock(l.at)}` })));
   }
   function replyBox(id) {
     const input = el("input", { type: "text", "aria-label": "Reply", autocomplete: "off" });
@@ -1515,18 +1985,19 @@ show every actor of the gatherer: how it stands, what it was sent from the notes
     const r = getSelection().getRangeAt(0).getBoundingClientRect();
     atPop(r.width || r.height ? r : tx.getBoundingClientRect(), { tx, from: c.start - 1, block: b.id });
   }
-  function openPicker(id, rect) {
-    atPop(rect, { tx: null, block: id });
+  function openPicker(id, rect, ids = null) {
+    atPop(rect, { tx: null, block: id, blocks: ids && ids.length > 1 ? ids : null });
     if (menu && menu.extra) menu.extra.focus();          // at once: keys typed next are its, however busy the page is
   }
   // the picker's frame: its head, the box for what to add (kept as the agents are drawn again), the agents, its foot
   function atPop(rect, m) {
     popUp(rect, (pop) => {
-      const extra = el("textarea", { class: "at-extra", rows: "1", "aria-label": "Instructions to send with the line",
+      const many = m.blocks ? m.blocks.length : 0;
+      const extra = el("textarea", { class: "at-extra", rows: "1", "aria-label": `Instructions to send with the line${many ? "s" : ""}`,
         placeholder: m.tx ? "Add instructions (optional): Tab to type here" : "Add instructions (optional)" });
       extra.addEventListener("input", () => { extra.style.height = "auto"; extra.style.height = `${Math.min(extra.scrollHeight, 140)}px`; });
       extra.addEventListener("keydown", (ev) => extraKey(ev, extra));
-      pop.append(el("div", { class: "hd lead", text: "Send it to an agent, as your message" }), extra,
+      pop.append(el("div", { class: "hd lead", text: many ? `Send ${many} lines to an agent, as one message of yours` : "Send it to an agent, as your message" }), extra,
         el("div", { class: "at-list", role: "group", "aria-label": "Agents" }), el("div", { class: "at-end" }));
       menu.extra = extra;
     }, null, "at", "at-pop");
@@ -1607,6 +2078,7 @@ show every actor of the gatherer: how it stands, what it was sent from the notes
       const tx = menu.tx;
       closePop();
       if (tx && tx.isConnected) tx.focus();
+      else if (picked.size) holdKeys();                   // (sent from lines picked: they keep the keys)
     }
   }
   // Who was picked: the "@..." typed taken out of the block, and the block sent with what was added -- or, for another
@@ -1629,18 +2101,18 @@ show every actor of the gatherer: how it stands, what it was sent from the notes
       forget(b.id);
       change([{ op: "block.put", page: current, block: { id: b.id, text: b.text } }]);
     }
-    if (it.kind === "where") return folderAsk(b.id, m.rect, extra);
-    sendBlock(b.id, it.kind === "new" ? { harness: it.harness, folder: crew.start } : { channel: it.channel }, extra);
+    if (it.kind === "where") return folderAsk(m.blocks || [b.id], m.rect, extra);
+    sendTo(m.blocks || [b.id], it.kind === "new" ? { harness: it.harness, folder: crew.start } : { channel: it.channel }, extra);
   }
   // A new actor's folder, asked: typed, and a harness picked.
-  function folderAsk(id, rect, extra) {
+  function folderAsk(ids, rect, extra) {
     popUp(rect, (pop) => {
       const input = el("input", { type: "text", value: tilde(crew.start), "aria-label": "The folder it works in", placeholder: "~/a/folder" });
       const go = (h) => {
         const v = input.value.trim().replace(/^~(?=\/|$)/, crew.home);
         if (!v) return input.focus();
         closePop();
-        sendBlock(id, { harness: h, folder: v }, extra);
+        sendTo(ids, { harness: h, folder: v }, extra);
       };
       input.addEventListener("keydown", (e) => { if (e.key === "Enter" && crew.harnesses[0]) { e.preventDefault(); go(crew.harnesses[0].name); } });
       pop.append(el("div", { class: "hd", text: "A new actor, working in" }), el("div", { class: "row" }, input),

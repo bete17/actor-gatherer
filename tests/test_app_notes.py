@@ -52,6 +52,18 @@ class ManifestTest(unittest.TestCase):
                 self.assertIn(m.asked.when, text)                                  # (the list's copy: lines made one)
                 self.assertEqual(re.match(m.asked.pattern, text).groups(), (words, page, "abc12345"))
 
+    def test_lines_sent_together_are_read_back_as_one_message_about_each_of_them(self):
+        import re
+        m = app_kit.load(FOLDER)
+        text = ('(From my Notes, page "Ship", blocks abc12345, def67890, ghi24680: the lines below, in that order. When '
+                'you\'re done, report back on each with notes_report, in one to three lines.)\n\n- [ ] Fix the parser\n'
+                '- [ ] Add CSV export\n  - dates in ISO\n\nOne branch for both.')
+        self.assertIn(m.asked.when, text)
+        self.assertEqual(re.match(m.asked.pattern, text).groups(),
+                         ("- [ ] Fix the parser\n- [ ] Add CSV export\n  - dates in ISO\n\nOne branch for both.", "Ship",
+                          "abc12345, def67890, ghi24680"))
+        self.assertIn("blocks", m.instructions)                                    # agents told what it means
+
 
 class BookBase(unittest.TestCase):
     def setUp(self):
@@ -182,6 +194,21 @@ class SentTest(BookBase):
         for bad in ({"to": "no spaces here"}, {"to": 7}, {"to": "abc123", "sent": "now"}):
             with self.subTest(bad=bad), self.assertRaises(nb.NotebookError):
                 self.book.apply([{"op": "block.put", "page": "pagepage", "block": {"id": "aaaaaa01", **bad}}])
+
+    def test_lines_sent_together_share_a_group_which_goes_when_one_is_sent_alone_or_to_no_one(self):
+        self.page(blocks=[block("aaaaaa01", "todo", "fix it"), block("aaaaaa02", "todo", "test it")])
+        self.book.apply([{"op": "block.put", "page": "pagepage",
+                          "block": {"id": i, "to": "chan-1", "sent": 1700000000, "group": "grp00001"}}
+                         for i in ("aaaaaa01", "aaaaaa02")])
+        self.assertEqual([b.get("group") for b in self.book.page("pagepage")["blocks"]], ["grp00001", "grp00001"])
+        self.book.apply([{"op": "block.put", "page": "pagepage",                      # the first, sent again alone
+                          "block": {"id": "aaaaaa01", "to": "chan-2", "sent": 1700000100, "group": ""}},
+                         {"op": "block.put", "page": "pagepage", "block": {"id": "aaaaaa02", "to": ""}}])
+        self.assertFalse(any("group" in b for b in self.book.page("pagepage")["blocks"]))
+        for bad in ({"group": "NO SPACES"}, {"group": 7}):
+            with self.subTest(bad=bad), self.assertRaises(nb.NotebookError):
+                self.book.apply([{"op": "block.put", "page": "pagepage",
+                                  "block": {"id": "aaaaaa01", "to": "chan-1", **bad}}])
 
     def test_its_thread_takes_lines_in_order_each_once_and_goes_with_it(self):
         self.page(blocks=[block("aaaaaa01", "todo", "ship it", to="chan-1"), block("aaaaaa02", text="other")])

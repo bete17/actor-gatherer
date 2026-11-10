@@ -23,7 +23,7 @@ The ops (each a dict, `op` its kind):
     page.delete   {page}            into the trash, with its subpages
     page.restore  {page}            out of it, with what went in with it
     page.purge    {page}            gone for good, with its subpages (a page in the trash only)
-    block.put     {page, block: {id, type?, text?, checked?, indent?, to?, sent?, extra?}, after?}   a new block
+    block.put     {page, block: {id, type?, text?, checked?, indent?, to?, sent?, extra?, group?}, after?}   a new block
                                     (after the block `after`; "": first; none: last), or what is given of one there
                                     changed
     block.move    {page, block, after}
@@ -32,7 +32,8 @@ The ops (each a dict, `op` its kind):
 
 A block sent to an agent (the panel sends it, as the user's message: an actor of the gatherer, or its gatherer agent)
 says so: `to`, the actor's channel, `sent`, when, and `extra`, what the user added to it when they sent it (their
-instructions beyond the line's words), if anything. What is said about it after -- the user's replies, sent to that
+instructions beyond the line's words), if anything; `group`, when it went with other lines in one message, an id
+those lines share (a line sent alone again has none). What is said about it after -- the user's replies, sent to that
 agent too, and the agent's reports (the Notes app's notes_report) -- is the block's `thread`: lines, each `by` "user" or
 "agent:<its channel>", in the order written. An `agents` block holds no text: the panel draws the gatherer's actors
 there, as they are now.
@@ -650,6 +651,12 @@ def _block(b: Any, was: Optional[dict], kind: str) -> dict:
             raise NotebookError(f"{kind}: a block's `extra` is what the user added to it, a string")
         if extra and clean_html(extra[:MAX_LINE]):
             out["extra"] = clean_html(extra[:MAX_LINE])
+        group = b.get("group") or ""
+        if group:
+            if not isinstance(group, str) or not ID.match(group):
+                raise NotebookError(f"{kind}: a block's `group` is the id the lines sent with it in one message share, "
+                                    f"6-24 of a-z and 0-9")
+            out["group"] = group
     thread = b.get("thread")
     if thread:
         if not isinstance(thread, list):

@@ -627,6 +627,16 @@ on its "+ ⋯" menu entry too.
   ticks a to-do the actor says is done. The block keeps them all as its `thread`.
 - **The Agents page and the `/agents` block:** every actor with its state, what it was sent from the notes, and its
   last report.
+- **Several lines at once** (2026-11-09): whole lines are picked, as Notion's block selection -- a drag from one line
+  into others, a box dragged beside them, Shift+click, Esc then Shift+↑↓, ⌘A twice -- and are deleted (with an Undo),
+  copied or cut (markdown, plus their own clipboard type so Notes pastes them back as they were), indented, moved,
+  duplicated, ticked or turned into a type together. Sent to an agent, they go as ONE message: the note names every
+  line, "blocks <id>, <id>, …", in the order the lines follow it as markdown, and asks for a report on each. `[asked]`'s
+  third group is then those ids, ", " between, and every one of them is a line the actor is on. Each line keeps `to`,
+  `sent` and `extra` as one sent alone, and a `group` id they share. They show ONCE, at the last of them (the user:
+  "the agent should only show once at the end of what was selected, not all the lines"): one status for them all
+  (working or asking as the actor is, "1 of 2 done", Done once it reported on each) and one conversation -- the lines
+  as sent, the user's replies (about them all, kept on the last), and a report on each, saying which line.
 - **What the contract gained, each general:**
   - capability `message_actors`: the SDK's `ag.actors.send` / `answer` / `start` / `show`, for any actor of the
     panel's gatherer ("gatherer": its gatherer agent, started if it has none), as Chat does them. `message_agents`
