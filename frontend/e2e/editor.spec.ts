@@ -167,7 +167,10 @@ test("the file open in an Editor stays open, at its place, when the reader goes 
   request,
 }) => {
   const { repo } = project();
-  fs.writeFileSync(path.join(repo, "long.py"), Array.from({ length: 300 }, (_, i) => `x${i + 1} = ${i + 1}\n`).join(""));
+  fs.writeFileSync(
+    path.join(repo, "long.py"),
+    Array.from({ length: 300 }, (_, i) => `x${i + 1} = ${i + 1}\n`).join(""),
+  );
   const { actor, sid, src } = await startEditor(page, repo);
   const task = page.locator(`#agents button.agent[data-key="${await actor.getAttribute("data-key")}"]`); // the Editor's task
   const panel = editorPanel(page);
