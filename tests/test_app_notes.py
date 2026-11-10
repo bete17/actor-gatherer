@@ -242,10 +242,79 @@ class SentTest(BookBase):
         self.assertIn("[aaaaaa01] - [ ] ship it\n[aaaaaa02] (a table of the gatherer's actors", md)
         self.assertIn("- [aaaaaa01] sent to actor chan-1 (you), with: today\n    the user: and **fast**\n"
                       "    actor chan-1 (you): on it", md)
+        self.assertIn("The user's work items on this page", md)
         self.assertNotIn("(you)", self.book.markdown(page, "chan-2"))
         self.assertNotIn("to", self.book.page("pagepage")["blocks"][1])         # an agents block goes to no one
         self.book.apply([{"op": "block.put", "page": "pagepage", "block": {"id": "aaaaaa02", "to": "chan-1"}}])
         self.assertNotIn("to", self.book.page("pagepage")["blocks"][1])
+
+
+class WorkTest(BookBase):
+    """Work items: lines sent to an agent, or marked as one; only the user ends one, done or canceled."""
+
+    def test_a_line_is_a_work_item_once_sent_or_marked_and_stays_one_sent_to_no_one(self):
+        self.page(blocks=[block("aaaaaa01", "todo", "ship it"), block("aaaaaa02", text="plain"),
+                          block("aaaaaa03", "divider")])
+        bs = lambda: self.book.page("pagepage")["blocks"]                          # noqa: E731
+        self.assertFalse(any(nb.is_work(b) for b in bs()))
+        self.book.apply([{"op": "block.put", "page": "pagepage", "block": {"id": "aaaaaa01", "work": True}},
+                         {"op": "block.put", "page": "pagepage", "block": {"id": "aaaaaa02", "to": "chan-1"}},
+                         {"op": "block.put", "page": "pagepage", "block": {"id": "aaaaaa03", "work": True}}])
+        self.assertEqual([nb.is_work(b) for b in bs()], [True, True, False])      # a divider is never one
+        self.assertNotIn("work", bs()[2])
+        self.book.apply([{"op": "block.put", "page": "pagepage",
+                          "block": {"id": "aaaaaa01", "to": "chan-1", "sent": 1700000000}},
+                         {"op": "block.put", "page": "pagepage", "block": {"id": "aaaaaa01", "to": ""}}])
+        self.assertTrue(nb.is_work(bs()[0]))                                      # marked: still one, sent to no one
+        self.book.apply([{"op": "block.put", "page": "pagepage", "block": {"id": "aaaaaa01", "work": False}}])
+        self.assertFalse(nb.is_work(bs()[0]))
+
+    def test_the_user_ends_one_done_or_canceled_and_a_ticked_to_do_one_is_done(self):
+        self.page(blocks=[block("aaaaaa01", "todo", "ship it", work=True), block("aaaaaa02", text="ask", to="chan-1"),
+                          block("aaaaaa03", "todo", "not one")])
+        bs = lambda: self.book.page("pagepage")["blocks"]                          # noqa: E731
+        self.assertEqual([nb.ended_of(b) for b in bs()], ["", "", ""])
+        self.book.apply([{"op": "block.put", "page": "pagepage", "block": {"id": "aaaaaa01", "checked": True}},
+                         {"op": "block.put", "page": "pagepage",
+                          "block": {"id": "aaaaaa02", "ended": "canceled", "ended_at": 1700000000}},
+                         {"op": "block.put", "page": "pagepage", "block": {"id": "aaaaaa03", "checked": True}}])
+        self.assertEqual([nb.ended_of(b) for b in bs()], ["done", "canceled", ""])   # (a to-do that is no work item)
+        self.assertEqual(bs()[1]["ended_at"], 1700000000.0)
+        self.book.apply([{"op": "block.put", "page": "pagepage", "block": {"id": "aaaaaa01", "ended": "done"}},
+                         {"op": "block.put", "page": "pagepage", "block": {"id": "aaaaaa03", "ended": "done"}}])
+        self.assertIsInstance(bs()[0]["ended_at"], float)                         # when: now, if not said
+        self.assertNotIn("ended", bs()[2])                                         # nothing to end on a line not one
+        self.book.apply([{"op": "block.put", "page": "pagepage", "block": {"id": "aaaaaa02", "ended": ""}}])
+        self.assertFalse({"ended", "ended_at"} & set(bs()[1]))                     # reopened
+        with self.assertRaises(nb.NotebookError):
+            self.book.apply([{"op": "block.put", "page": "pagepage", "block": {"id": "aaaaaa02", "ended": "maybe"}}])
+
+    def test_a_report_keeps_what_it_made(self):
+        self.page(blocks=[block("aaaaaa01", "todo", "ship it", to="chan-1")])
+        line = {"id": "line0001", "by": "agent:chan-1", "text": "done", "done": True,
+                "results": ["  branch   ship-it ", "", "x" * 400, *[f"f{i}.py" for i in range(10)]]}
+        self.book.apply([{"op": "thread.add", "page": "pagepage", "block": "aaaaaa01", "line": line}])
+        made = self.book.page("pagepage")["blocks"][0]["thread"][0]["results"]
+        self.assertEqual(made[:2], ["branch ship-it", "x" * nb.MAX_RESULT])
+        self.assertEqual(len(made), nb.MAX_RESULTS)
+        with self.assertRaises(nb.NotebookError):
+            self.book.apply([{"op": "thread.add", "page": "pagepage", "block": "aaaaaa01",
+                              "line": {**line, "id": "line0002", "results": "a.py"}}])
+
+    def test_an_agent_reads_which_lines_are_work_items_and_how_the_user_ended_them(self):
+        page = self.page(blocks=[block("aaaaaa01", "todo", "ship it", to="chan-1", checked=True,
+                                       thread=[{"id": "line0001", "by": "agent:chan-1", "text": "shipped", "done": True,
+                                                "results": ["PR #4"]}]),
+                                 block("aaaaaa02", text="later", work=True),
+                                 block("aaaaaa03", text="dropped", to="chan-2", ended="canceled"),
+                                 block("aaaaaa04", "work")])
+        md = self.book.markdown(page, "chan-1")
+        self.assertIn("- [aaaaaa01] sent to actor chan-1 (you); the user accepted it as done\n"
+                      "    actor chan-1 (you): shipped (said it is done) (made: PR #4)", md)
+        self.assertIn("- [aaaaaa02] sent to no one yet\n", md)
+        self.assertIn("- [aaaaaa03] sent to actor chan-2; the user canceled it", md)
+        self.assertIn("[aaaaaa04] (a list of the user's open work items", md)
+        self.assertIn("Plans (0 of 1 to-dos open, 1 work item open)", self.book.outline())
 
 
 class MarkdownTest(unittest.TestCase):
@@ -390,30 +459,39 @@ class BackendTest(unittest.TestCase):
             {"op": "page.new", "page": {"id": "pagepage", "title": "Plans"},
              "blocks": [block("aaaaaa01", type, text, to="chan-1", sent=1700000000)]}]})
 
-    def test_an_agent_reports_back_on_a_block_it_was_sent_and_ticks_it(self):
+    def test_an_agent_reports_back_on_a_block_it_was_sent_and_the_user_ends_it(self):
         self.sent_block()
         err, text = self.call("report", block="aaaaaa01", text="Did it: **branch** `ship-it`.\nTests pass.")
         self.assertFalse(err)
-        self.assertEqual(text, "Reported under the block on “Plans”: the user sees it there.")
-        err, text = self.call("report", block="aaaaaa01", text="All done.", done=True)
-        self.assertIn("and ticked it", text)
+        self.assertEqual(text, "Reported on the line on “Plans”: the user reviews it there, and says when it is done.")
+        err, text = self.call("report", block="aaaaaa01", text="All done.", done=True, results=["ship-it", "a.py"])
+        self.assertFalse(err)
         b = self.app.book(self.inst.gatherer).block("aaaaaa01")[1]
-        self.assertTrue(b["checked"])
-        self.assertEqual([(x["by"], x["text"], x.get("done", False)) for x in b["thread"]],
-                         [("agent:chan-1", "Did it: <b>branch</b> <code>ship-it</code>.<br>Tests pass.", False),
-                          ("agent:chan-1", "All done.", True)])
+        self.assertFalse(b["checked"])                                            # the user's to tick, not its
+        self.assertEqual([(x["by"], x["text"], x.get("done", False), x.get("results")) for x in b["thread"]],
+                         [("agent:chan-1", "Did it: <b>branch</b> <code>ship-it</code>.<br>Tests pass.", False, None),
+                          ("agent:chan-1", "All done.", True, ["ship-it", "a.py"])])
         told = self.host.told[-1]
         self.assertEqual((told["by"], told["agent"], [o["op"] for o in told["ops"]]),
-                         ("agent:chan-1", "chan-1", ["thread.add", "block.put"]))
-        err, text = self.call("report", block="aaaaaa01", text="Again.", done=True)
-        self.assertNotIn("ticked", text)                                          # ticked already
-        self.assertIn("    actor chan-1 (you): All done.", self.call("read", page="Plans")[1])
+                         ("agent:chan-1", "chan-1", ["thread.add"]))
+        self.assertIn("    actor chan-1 (you): All done. (said it is done) (made: ship-it, a.py)",
+                      self.call("read", page="Plans")[1])
+        err, text = self.call("change", page="Plans", block="aaaaaa01", checked=True)
+        self.assertTrue(err)
+        self.assertIn("only the user says when one is done", text)
+        err, text = self.call("change", page="Plans", block="aaaaaa01", markdown="- [x] ship it today")
+        self.assertIn("- [ ] ship it today", text)                                # rewritten, its tick kept
+        self.ask("POST", "ops", {"by": "p-one", "ops": [{"op": "block.put", "page": "pagepage", "block": {
+            "id": "aaaaaa01", "ended": "canceled"}}]})
+        err, text = self.call("report", block="aaaaaa01", text="Late.")
+        self.assertIn("The user canceled that line: leave it.", text)
 
     def test_an_agent_is_told_what_is_wrong_with_its_report(self):
         self.sent_block()
         for args, says in (({"block": "zzzzzz99", "text": "x"}, "no block 'zzzzzz99'"),
                            ({"block": "aaaaaa01", "text": "  "}, "one to three lines"),
-                           ({"block": "aaaaaa01", "text": "x" * 2000}, "too long for a report")):
+                           ({"block": "aaaaaa01", "text": "x" * 2000}, "too long for a report"),
+                           ({"block": "aaaaaa01", "text": "x", "results": "a.py"}, "is a list of what you made")):
             with self.subTest(args=args):
                 err, text = self.call("report", **args)
                 self.assertTrue(err)
@@ -449,6 +527,124 @@ class BackendTest(unittest.TestCase):
         self.assertEqual(self.ask("GET", "state")[1]["version"], 1)   # parsing changed nothing
         self.assertEqual(self.ask("POST", "ops", ["not", "an", "object"])[0], 400)
         self.assertEqual(self.app.request(self.inst, "GET", "nothing", {}, b"").status, 404)
+
+
+class SourceTest(BookBase):
+    """A block an agent wrote from its own conversation with the user names it, and when: its source. The user's
+    follow-ups on it, and the agent's replies, are its thread."""
+
+    def test_a_block_keeps_its_source_as_it_is_retyped_and_a_divider_has_none(self):
+        self.page(blocks=[block("aaaaaa01", "bullet", "ACP fits ag best", source="chan-1", source_at=1700000000),
+                          block("aaaaaa02", "divider", source="chan-1")])
+        b, d = self.book.page("pagepage")["blocks"]
+        self.assertEqual((b["source"], b["source_at"]), ("chan-1", 1700000000.0))
+        self.assertFalse({"source", "source_at"} & set(d))
+        self.book.apply([{"op": "block.put", "page": "pagepage", "block": {"id": "aaaaaa01", "text": "ACP fits"}},
+                         {"op": "block.put", "page": "pagepage", "block": {"id": "aaaaaa01", "type": "todo"}}])
+        b = self.book.page("pagepage")["blocks"][0]
+        self.assertEqual((b["type"], b["text"], b["source"], b["source_at"]),
+                         ("todo", "ACP fits", "chan-1", 1700000000.0))
+        self.book.apply([{"op": "block.put", "page": "pagepage", "block": {"id": "aaaaaa01", "source": ""}}])
+        self.assertFalse({"source", "source_at"} & set(self.book.page("pagepage")["blocks"][0]))
+        for bad in ({"source": "no spaces here"}, {"source": 7}, {"source": "abc123", "source_at": "now"}):
+            with self.subTest(bad=bad), self.assertRaises(nb.NotebookError):
+                self.book.apply([{"op": "block.put", "page": "pagepage", "block": {"id": "aaaaaa01", **bad}}])
+
+    def test_an_agent_reads_who_wrote_lines_from_its_conversation_and_the_follow_ups(self):
+        at = 1700000000
+        page = self.page(blocks=[
+            block("aaaaaa01", "bullet", "ACP fits", source="chan-1", source_at=at),
+            block("aaaaaa02", "bullet", "AG-UI less so", source="chan-1", source_at=at,
+                  thread=[{"id": "line0001", "by": "user", "text": "why <b>less</b>?"},
+                          {"id": "line0002", "by": "agent:chan-1", "text": "it needs a web front end"}]),
+            block("aaaaaa03", "text", "my own line"),
+            block("aaaaaa04", "todo", "try ACP", source="chan-2", source_at=at + 60, to="chan-3")])
+        md = self.book.markdown(page, "chan-1")
+        when = __import__("time").strftime("%Y-%m-%d %H:%M", __import__("time").localtime(at))
+        self.assertIn("Lines agents wrote from their conversations with the user", md)
+        self.assertIn(f"- [aaaaaa01], [aaaaaa02] by actor chan-1 (you), {when}\n    the user: why **less**?\n"
+                      f"    actor chan-1 (you): it needs a web front end\n", md)
+        self.assertIn("- [aaaaaa04] by actor chan-2, ", md)
+        self.assertIn("- [aaaaaa04] sent to actor chan-3", md)                  # sent on: its thread goes with the sent
+        self.assertNotIn("sent to no one", md)                                   # a follow-up is not a line sent
+        self.assertNotIn("[aaaaaa03] by", md)
+        self.assertNotIn("Lines agents wrote", self.book.markdown(self.page("pagetwo", "Two", [block("bbbbbb01")])))
+
+
+class SourceToolsTest(unittest.TestCase):
+    """notes_add and notes_change name the agent as the source of lines it writes from its own conversation."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.app = NotesApp()
+        self.app.start(Host(self.dir))
+        self.inst = self.app.open(Instance(id="0123456789abcdef", app="notes", gatherer="g"), {})
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def call(self, tool, channel="chan-1", **args):
+        got = self.app.call(self.inst, tool, args, Caller(channel=channel, gatherer="g"))
+        return got.is_error, got.content[0]["text"]
+
+    def blocks(self, page="Plans"):
+        return self.app.book("g").page(page)["blocks"]
+
+    def test_lines_from_its_conversation_name_it_and_lines_it_was_told_to_write_do_not(self):
+        self.assertFalse(self.call("add", title="Plans", markdown="- ACP fits\n- AG-UI less so",
+                                   from_conversation=True)[0])
+        self.assertFalse(self.call("add", page="Plans", markdown="- [ ] call Ana")[0])
+        a, b, c = self.blocks()
+        self.assertEqual((a["source"], b["source"]), ("chan-1", "chan-1"))
+        self.assertEqual(a["source_at"], b["source_at"])                       # one call's lines: one reference
+        self.assertFalse({"source", "source_at"} & set(c))
+        err, text = self.call("read", page="Plans")
+        self.assertIn(f"- [{a['id']}], [{b['id']}] by actor chan-1 (you), ", text)
+
+    def test_a_block_rewritten_from_a_conversation_names_who_did_and_one_tidied_keeps_its_source(self):
+        self.call("add", title="Plans", markdown="ACP fits")
+        bid = self.blocks()[0]["id"]
+        self.assertFalse(self.call("change", page="Plans", block=bid, markdown="ACP fits best", from_conversation=True,
+                                   channel="chan-2")[0])
+        b = self.blocks()[0]
+        self.assertEqual(b["source"], "chan-2")
+        self.call("change", page="Plans", block=bid, markdown="- ACP fits best\n- and Zed speaks it")
+        b, more = self.blocks()
+        self.assertEqual((b["text"], b["source"]), ("ACP fits best", "chan-2"))  # changed as told: still chan-2's
+        self.assertNotIn("source", more)
+        err, text = self.call("add", page="Plans", markdown="x", from_conversation="yes")
+        self.assertTrue(err)
+        self.assertIn("`from_conversation` is true or false", text)
+
+    def test_its_reply_to_a_follow_up_goes_beside_the_line_and_a_work_item_it_wrote_stays_one(self):
+        self.call("add", title="Plans", markdown="- ACP fits", from_conversation=True)
+        bid = self.blocks()[0]["id"]
+        err, text = self.call("report", block=bid, text="It speaks JSON-RPC over stdio.")
+        self.assertFalse(err)
+        self.assertEqual(text, "Reported beside the line on “Plans”: the user sees it there.")
+        self.assertNotIn("work", self.blocks()[0])                              # an answer: no work item made
+        read = self.call("read", page="Plans")[1]
+        self.assertIn("    actor chan-1 (you): It speaks JSON-RPC over stdio.", read)
+        pid = self.app.book("g").page("Plans")["id"]
+        self.app.change(self.inst, [{"op": "block.put", "page": pid, "block": {"id": bid, "work": True}}], "user")
+        read = self.call("read", page="Plans")[1]                              # marked a work item by the user
+        self.assertIn(f"- [{bid}] sent to no one yet", read)
+        self.assertIn(f"- [{bid}] by actor chan-1 (you), ", read)
+        self.assertEqual(read.count("It speaks JSON-RPC over stdio."), 1)       # its thread: with the work items
+        self.assertIn("the user reviews it there", self.call("report", block=bid, text="More.")[1])
+
+    def test_a_follow_up_is_read_back_as_the_users_words_about_those_lines(self):
+        import re
+        m = app_kit.load(FOLDER)
+        self.assertIn("from_conversation", m.instructions)
+        self.assertIn("from_conversation", m.tool("add").input_schema["properties"])
+        self.assertIn("from_conversation", m.tool("change").input_schema["properties"])
+        text = ('(A reply in my Notes, page "Discussion", blocks abc12345, def67890: about lines you wrote there on '
+                'Nov 9, 2:02 PM, from our conversation. Answer as always, then put one to three lines beside them '
+                'with notes_report, one report, on block def67890.)\n\n- ACP fits\n- AG-UI less so\n\nWhy less so?')
+        self.assertIn(m.asked.when, text)
+        self.assertEqual(re.match(m.asked.pattern, text).groups(),
+                         ("- ACP fits\n- AG-UI less so\n\nWhy less so?", "Discussion", "abc12345, def67890"))
 
 
 if __name__ == "__main__":

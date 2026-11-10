@@ -271,14 +271,16 @@ test("lines picked with a box go to an agent as one message naming each; they sh
   await expect(nth(1).locator(".sent .chip")).toContainText("Working");
   await expect(nth(0).locator(".sent")).toHaveCount(0);
 
-  // done with it, reported on one line: 1 of 2; on both: Done
+  // done with it, reported on one line: 1 of 2 to review; on both: to review, the reader's to accept
   fake = null;
   reports = { [one]: "Fixed the parser" };
   await again();
-  await expect(nth(1).locator(".sent .chip")).toContainText("1 of 2 done");
+  await expect(nth(1).locator(".sent .chip")).toContainText("1 of 2 to review");
+  await expect(nth(1).locator(".sent .accept")).toHaveCount(0);
   reports = { [one]: "Fixed the parser", [two]: "CSV export added" };
   await again();
-  await expect(nth(1).locator(".sent .chip")).toContainText("Done");
+  await expect(nth(1).locator(".sent .chip")).toContainText("To review");
+  await expect(nth(1).locator(".sent .accept")).toHaveCount(1);
   await expect(nth(1).locator(".sent .talk")).toHaveText("3"); // the message, and a report on each line
 
   // one conversation for both: the lines as sent, then a report on each, saying which line
@@ -293,8 +295,9 @@ test("lines picked with a box go to an agent as one message naming each; they sh
   await expect(mine.locator(".bub")).toContainText("One branch for both");
   await expect(mine.locator(".mm")).toContainText("2 lines, as one message");
   await expect(convo.locator(".msg:not(.you) .mm")).toHaveText([
-    new RegExp(`reported on “Fix the parser”: done`),
-    new RegExp(`reported on “Add CSV export”: done`),
+    new RegExp(`reported on “Fix the parser”, says it's done`),
+    new RegExp(`reported on “Add CSV export”, says it's done`),
   ]);
+  await expect(convo.locator(".cv-q")).toHaveText("Are these 2 done?");
   await binPage(panel, "Group");
 });

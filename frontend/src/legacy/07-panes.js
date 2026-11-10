@@ -64,18 +64,25 @@ function setAppsOnly(k) {
 }
 let taskNow = null;                                  // the task last entered: what the apps opened for it wait on
 // Each task's LAYOUT, as it was left (`taskLayouts`, kept in this browser): its actors' panes, in order, the one in focus,
-// and its apps' panels -- so a task is opened again as it was, an actor's pane or an app's panel closed in it staying
-// closed. A task never left yet opens as a task does at first: its actors not closed side by side, its apps above.
+// the view each shows and its width, and its apps' panels, each its width -- with the top row's height and the chat
+// minimized under it or not -- so a task is opened again as it was, an actor's pane or an app's panel closed in it staying
+// closed. A task never left yet opens as a task does at first: its actors not closed side by side, its apps above, the
+// chat not minimized.
 const TASK_LAYOUTS_KEY = "ag-dashboard-task-layouts-2", TASK_LAYOUTS_KEPT = 200;   // -2: none kept of a task never laid out
 const taskLayouts = (() => { try { return JSON.parse(localStorage.getItem(TASK_LAYOUTS_KEY)) || {}; } catch (e) { return {}; } })();
 function rememberTask(key) {
   if (!key) return;
-  const sel = focusedActor(), [g] = key.split("\u0000");
-  const actors = openActors().filter(([pg, c]) => pg === g && taskKey(pg, c) === key).map(([, c]) => c);
-  const apps = panes.apps.filter((p) => !p.held && p.g === g && appPaneTask(p) === key).map((p) => ({ app: p.app.name, id: p.instance.id }));
+  const sel = focusedActor(), [g] = key.split("\u0000"), its = (pg, c) => pg === g && taskKey(pg, c) === key;
+  const actors = openActors().filter(([pg, c]) => its(pg, c)).map(([, c]) => c);
+  const views = {}, sizes = {};                      // each of its actors' panes: the view it shows, its width
+  if (state.selected && its(...state.selected)) { views[state.selected[1]] = chatView().id; sizes[state.selected[1]] = panes.here.size; }
+  for (const p of actorPanes()) if (its(p.g, p.c)) { if (p.view) views[p.c] = p.view; sizes[p.c] = p.size; }
+  const apps = panes.apps.filter((p) => !p.held && p.g === g && appPaneTask(p) === key).map((p) => ({ app: p.app.name, id: p.instance.id, size: p.size }));
   const chosen = appSelected(), focusApp = chosen && apps.some((a) => a.id === chosen) ? chosen : null;   // an app selected in it
   const mine = !appsOnly && sel && taskKey(sel[0], sel[1]) === key;
-  taskLayouts[key] = { actors: appsOnly ? [] : actors, focus: mine ? sel[1] : appsOnly ? null : actors[0] || null, focusApp, apps, at: Date.now() };
+  const under = !appsOnly && apps.length > 0;       // its actors under its apps: the chat minimized there, the row's height
+  taskLayouts[key] = { actors: appsOnly ? [] : actors, focus: mine ? sel[1] : appsOnly ? null : actors[0] || null, focusApp, apps,
+    views: appsOnly ? {} : views, sizes: appsOnly ? {} : sizes, min: under && !!state.chatMin, topH: under ? topHeight() || 0 : null, at: Date.now() };   // 0: never dragged
   const keys = Object.keys(taskLayouts).sort((x, y) => taskLayouts[y].at - taskLayouts[x].at);
   for (const k of keys.slice(TASK_LAYOUTS_KEPT)) delete taskLayouts[k];
   try { localStorage.setItem(TASK_LAYOUTS_KEY, JSON.stringify(taskLayouts)); } catch (e) { /* this page only */ }
@@ -85,29 +92,46 @@ const taskLayout = (key) => taskLayouts[key] || null;
 // remembered (rememberTask: only one laid out in this page -- one shown by chance as the page opened, its apps never
 // opened, would be remembered as having none), its panes closed (terminals kept) and its apps' panels (one attached to
 // none kept: no task's; one whose agent is at work held out of sight, as closing it does), the new task's actor taken
-// into this page's pane and its apps' panels opened above (openTaskApps) -> what to do once `c` is shown: the rest of its
-// actors' panes opened beside it, as the task was left, or, never left, every one not closed (its lead first). The same
-// task: nothing to do -- but, never laid out in this page, laid out now, adding to what is open.
+// into this page's pane and its apps' panels opened above (openTaskApps), the chat minimized under them or not and the
+// row as tall as when it was left (taskLooks) -> `view`, the view `c` showed then (not open already), and `after`, what
+// to do once `c` is shown: the rest of its actors' panes opened beside it, as the task was left, or, never left, every
+// one not closed (its lead first). The same task: nothing to do -- but, never laid out in this page, laid out now, adding
+// to what is open.
 function enterTask(g, c) {
   if (PANE || SNAPSHOT) return null;
   const to = taskKey(g, c), sel = focusedActor();
   const from = appsOnly || (sel && taskKey(sel[0], sel[1])) || (state.selected && taskKey(...state.selected));
   if (to) taskNow = to;
   if (!to || !sel) return null;
+  const was = taskLayout(to), open = openActors().some((s) => isAt(s, g, c));
   if (from === to) {
     if (tasksLaidOut.has(to)) return null;           // shown, laid out: as it is
-    // shown by chance (the page opened on it), never laid out in this page: laid out now, adding to what is open
+    // shown by chance (the page opened on it), never laid out in this page: laid out now, adding to what is open -- its
+    // chat minimized as it was left only if nothing is above it now (its apps closed with it: closeTask)
+    if (!topShown()) taskLooks(was, !!(was ? was.min : state.chatMin));
   } else {
     if (tasksLaidOut.has(from)) rememberTask(from);  // one never laid out here (its apps never opened) is not remembered
     setAppsOnly(null);
     for (const p of [...actorPanes()]) if (!isShell(p.c) && taskKey(p.g, p.c) !== to) closePane(p);
     if (state.selected && taskKey(...state.selected) !== to) focusPane(panes.here);   // the new task's actor: in this page's pane
     for (const p of [...panes.apps]) if (!p.held && appPaneTask(p) !== to) closeAppPane(p);
+    taskLooks(was, !!(was && was.min));
   }
-  const was = taskLayout(to);
   tasksLaidOut.add(to);
-  taskAppsOpening = openTaskApps(g, c, to, was ? was.apps : null);
-  return () => layOutTask(g, to, c, was ? was.actors : taskOrder(g, to));
+  taskAppsOpening = openTaskApps(g, c, to, was ? was.apps : null).then(() => {
+    if (taskNow === to && !topShown() && state.chatMin) keepMin(false);   // none of its apps opened: nothing to be under
+  });
+  const view = !open && from !== to && was && was.views ? was.views[c] || null : null;
+  return { view, after: () => layOutTask(g, to, c, was ? was.actors : taskOrder(g, to), was) };
+}
+// A task entered: the chat under its apps minimized (`min`) or not, every pane told -- drawn so as its apps' panels come
+// (topChanged), and so at once where they are already -- and its top row as tall as it was left
+function taskLooks(was, min) {
+  if (was && typeof was.topH === "number") setTopHeight(was.topH);
+  if (min === !!state.chatMin) return;
+  if (topShown()) { setChatMin(min); return; }
+  keepMin(min);
+  for (const p of panes.others) p.call("minimized", min);
 }
 let taskAppsOpening = Promise.resolve();            // the apps' panels the task last entered opens (openTaskApps): waited on
 // A task of apps only entered (`k`: its key; an app alone, or a task holding no actor): the task left remembered, its
@@ -129,17 +153,28 @@ function enterAppTask(g, k) {
 }
 // The tasks laid out in this page (entered, or opened at first by openTask): a task shown, laid out, stays as it is
 const tasksLaidOut = new Set();
-// a task's actors `rest`, not closed, opened beside `c` (shown), as many as there is room for; `c` in focus after
-function layOutTask(g, to, c, rest) {
+// a task's actors `rest`, not closed, opened beside `c` (shown), as many as there is room for -- each in the view it showed
+// and as wide as it was when the task was left (`was`); `c` in focus after
+function layOutTask(g, to, c, rest, was = null) {
   const gg = state.home && state.home.gatherers.find((x) => x.name === g);
   const open = (ch) => { const a = gg && gg.agents.find((x) => x.channel === ch); return a && statusOf(a)[0] !== "closed" && taskKey(g, ch) === to; };
   tasksLaidOut.add(to);
   for (const ch of rest) {
     if (ch === c || !open(ch) || openActors().some((s) => isAt(s, g, ch))) continue;
     if (allPanes().length >= MAX_PANES) break;
-    openBeside(g, ch);
+    openBeside(g, ch, (was && was.views && was.views[ch]) || null);
   }
+  if (was && was.sizes) sizePanes(g, was.sizes);
   focusPane(actorPanes().find((p) => isAt([p.g, p.c], g, c)) || panes.here);
+}
+// the actors' panes of `g` as wide as `sizes` (channel -> its share) says, each it names
+function sizePanes(g, sizes) {
+  let moved = false;
+  for (const p of allPanes()) {
+    const at = p === panes.here ? state.selected : [p.g, p.c], s = at && at[0] === g ? +sizes[at[1]] : 0;
+    if (s > 0 && s !== p.size) { p.size = s; moved = true; }
+  }
+  if (moved) { layout(); savePanes(); }
 }
 // A task opened BESIDE the one shown (⌘/Ctrl+click on it): nothing of the one shown closed -- its actors not closed, as it
 // was left (else its lead first; `first`, first), in panes beside the one in focus, as many as there is room for, and its
@@ -153,7 +188,7 @@ async function openTaskBeside(g, key, first) {
   for (const ch of order) {
     if (openActors().some((s) => isAt(s, g, ch))) continue;
     if (allPanes().length >= MAX_PANES) { left++; continue; }
-    openBeside(g, ch);
+    openBeside(g, ch, (was && was.views && was.views[ch]) || null);
   }
   if (left) paneNote(`At most ${MAX_PANES} actors side by side: ${plural(left, "actor")} of the task left out`);
   await openTaskApps(g, first, key, was ? was.apps : null, true);
@@ -191,7 +226,7 @@ async function openTaskApps(g, c, to, only = null, beside = false) {
     if (panes.apps.some((p) => p.instance.id === k.id)) continue;
     const inst = k.inst || await window.agNext.apps.instanceOf(k.app, g, k.id).catch(() => null);
     if (!inst || (!beside && taskNow !== to) || panes.apps.some((p) => p.instance.id === inst.id)) continue;
-    addAppPane(window.agNext.apps.named(k.app), inst);
+    addAppPane(window.agNext.apps.named(k.app), inst, +k.size > 0 ? +k.size : 1);   // as wide as it was left
     opened = true;
   }
   if (opened) { saveAppPanes(); renderAgents(); }
@@ -199,9 +234,9 @@ async function openTaskApps(g, c, to, only = null, beside = false) {
 // The actor in the pane in focus -- in `view`, if given; one open already, its pane focused instead. Of another task than
 // the one shown: the panels changed for it first (enterTask).
 async function show(g, c, view = null) {
-  const after = enterTask(g, c);
-  await showIn(g, c, view);
-  if (after) after();
+  const entered = enterTask(g, c);
+  await showIn(g, c, view || (entered && entered.view) || null);
+  if (entered) entered.after();
 }
 async function showIn(g, c, view = null) {
   const there = actorPanes().find((p) => isAt([p.g, p.c], g, c)) || (isAt(state.selected, g, c) ? panes.here : null);

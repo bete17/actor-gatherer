@@ -23,6 +23,7 @@
     <div class="bar">
       <button id="side-toggle" class="icon-btn" type="button" title="Show or hide the pages" aria-label="Show or hide the pages"></button>
       <nav id="crumbs" class="crumbs" aria-label="Where this page is"></nav>
+      <button id="done-btn" class="done-btn" type="button" aria-pressed="false" hidden></button>
       <span id="who" class="who" aria-live="polite"></span>
       <span id="saved" class="saved" aria-live="polite"></span>
     </div>
@@ -35,10 +36,12 @@
           <h1 id="title" class="pg-title" contenteditable="plaintext-only" spellcheck="true" data-ph="Untitled" aria-label="Title"></h1>
         </div>
         <div id="blocks" class="blocks" aria-label="The page's lines"></div>
+        <div id="fold-all" class="fold-all" hidden></div>
         <div id="pk-bar" class="pk-bar" role="toolbar" aria-label="The lines picked" hidden></div>
         <div id="below" class="below" title="Click to add a block, or drag to pick lines"></div>
       </article>
       <section id="agents-page" class="page agents-page" aria-label="Agents" hidden></section>
+      <section id="work-page" class="page agents-page work-page" aria-label="Work items" hidden></section>
       <div id="empty" class="empty" hidden>
         <div class="empty-mark" aria-hidden="true"></div>
         <p class="empty-h">No pages yet</p>

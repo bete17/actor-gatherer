@@ -112,6 +112,25 @@ function fitMini() {
   obs.observe(card);
   miniFit = { card, obs };
 }
+// The top row's height, as dragged (null: never, half the column); set again (a task entered as it was left: 07-panes.js's
+// taskLooks; 0: as never dragged), no taller than the column leaves the panes below their room, and kept as dragged
+function topHeight() {
+  const h = topRowEl() ? parseFloat(topRowEl().style.getPropertyValue("--ed-h")) : NaN;
+  return h > 0 ? h : null;
+}
+function setTopHeight(h) {
+  const top = topRowEl();
+  if (!top || !(h >= 0) || (h || null) === topHeight()) return;
+  if (!h) {
+    top.style.removeProperty("--ed-h");
+    try { localStorage.removeItem(ED_HEIGHT_KEY); } catch (e) { /* this page only */ }
+    return;
+  }
+  const room = top.parentElement ? top.parentElement.getBoundingClientRect().height : 0;
+  const to = Math.round(room > 360 ? Math.max(140, Math.min(h, room - 220)) : h);
+  top.style.setProperty("--ed-h", `${to}px`);
+  try { localStorage.setItem(ED_HEIGHT_KEY, String(to)); } catch (e) { /* this page only */ }
+}
 // The edge under the top row, dragged to resize it: its height kept in this browser.
 function topGrip(top) {
   const grip = el("div", { class: "ed-grip", title: "Drag to resize", "aria-hidden": "true" });
