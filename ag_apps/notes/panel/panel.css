@@ -142,6 +142,18 @@ body.dragging .blk > .gut { opacity: 0 !important; }
 .blk[data-type="code"] > .tx code { background: none; color: inherit; padding: 0; font-size: inherit; }
 .tx a { color: var(--md-link, var(--accent)); text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 40%, transparent); text-underline-offset: 2px; }
 .tx s { color: var(--muted); }
+/* a link to a page: its icon (or a page's mark) and its title now, kept whole; struck while in the trash, or gone */
+a.pg { color: var(--ink); font-weight: 500; text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 30%, transparent);
+  text-underline-offset: 3px; cursor: pointer; border-radius: 4px; padding: 0 2px; margin: 0 1px; }
+a.pg:hover { background: var(--wash); text-decoration-color: currentColor; }
+a.pg::before { display: inline-block; margin-right: 3px; text-decoration: none; }
+a.pg:not([data-icon=""])::before { content: attr(data-icon); }
+a.pg[data-icon=""]::before { content: ""; width: .95em; height: .95em; vertical-align: -.12em; background: var(--muted);
+  -webkit-mask: var(--pg-mark) center / contain no-repeat; mask: var(--pg-mark) center / contain no-repeat; }
+a.pg.binned, a.pg.gone { color: var(--muted); text-decoration-line: line-through; }
+a.pg.gone { cursor: default; }
+a.pg.gone:hover { background: none; }
+:root { --pg-mark: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M4 1.8h5.2L12.5 5v9.2H4z" fill="none" stroke="black" stroke-width="1.3" stroke-linejoin="round"/><path d="M9 2v3.3h3.3M6 8.2h4.5M6 10.8h4.5" fill="none" stroke="black" stroke-width="1.2" stroke-linecap="round"/></svg>'); }
 .below { min-height: 140px; cursor: text; }
 .page.ro .below { cursor: default; }
 .drop { position: fixed; height: 3px; border-radius: 2px; background: var(--accent); opacity: .7; pointer-events: none; z-index: 30; }

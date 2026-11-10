@@ -45,6 +45,8 @@ turned into another type or sent to an agent together, as one message naming eac
     { type: "agents", label: "Agents", note: "Your actors, as they are now", glyph: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><circle cx="6" cy="5.5" r="2.2"/><circle cx="11.5" cy="6.2" r="1.7"/><path d="M2 13c.5-2.3 2-3.4 4-3.4s3.5 1.1 4 3.4M10 9.9c.5-.3 1-.4 1.5-.4 1.5 0 2.5.9 2.9 2.6"/></svg>', words: "agents actors status table team" },
     { type: "work", label: "Work items", note: "What is open, as it stands now", glyph: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M3 4.5h10M3 8h10M3 11.5h6.5"/></svg>', words: "work items tasks open tracker board" },
   ];
+  const PAGE_KIND = { type: "page-new", label: "Page", note: "A new page inside this one", glyph: '<svg width="15" height="15" viewBox="0 0 16 16"><path d="M4 1.8h5.2L12.5 5v9.2H4z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M9 2v3.3h3.3M8.25 7.6v4.2M6.15 9.7h4.2" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>', words: "page subpage new child doc document" };   // in the / menu too, not a block's type
+  const LINK_KIND = { type: "page-link", label: "Link to a page", note: "Or type [[", glyph: '<svg width="15" height="15" viewBox="0 0 16 16"><path d="M4 1.8h5.2L12.5 5v9.2H4z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M9 2v3.3h3.3M6 8.2h4.5M6 10.8h4.5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>', words: "link page mention reference subpage" };   // in the / menu, not a block's type
   const ICONS = ["📄", "📝", "✅", "📌", "📚", "💡", "🎯", "🚀", "🛒", "🏠", "💼", "🧪", "🐛", "🔧", "📅", "⭐", "❤️", "🔥", "🌱", "🎨",
     "🎵", "✈️", "🍳", "💰", "📈", "🧠", "☕", "🗂️", "🔖", "🧩", "🏃", "📖", "🎓", "🧾", "📦", "⚙️", "🗒️", "🌟", "🍀", "🐣"];
   const SVG = {
@@ -89,7 +91,8 @@ turned into another type or sent to an agent together, as one message naming eac
     get(k, d) { try { const v = localStorage.getItem(`notes:${ag.instance}:${k}`); return v === null ? d : JSON.parse(v); } catch { return d; } },
     set(k, v) { try { localStorage.setItem(`notes:${ag.instance}:${k}`, JSON.stringify(v)); } catch { /* storage off: kept for now only */ } },
   };
-  const clean = (h) => window.DOMPurify.sanitize(h || "", { ALLOWED_TAGS: ["b", "i", "u", "s", "code", "a", "br"], ALLOWED_ATTR: ["href"] })
+  const clean = (h) => window.DOMPurify.sanitize((h || "").replace(/\u200b/g, ""), { ALLOWED_TAGS: ["b", "i", "u", "s", "code", "a", "br"], ALLOWED_ATTR: ["href"],
+    ALLOWED_URI_REGEXP: /^(?:https?:|mailto:|page:[a-z0-9]{6,24}$)/i })
     .replace(/<(b|i|u|s|code)><\/\1>/g, "").replace(/^(<br>)+$/, "");
   const plainOf = (h) => { const t = document.createElement("template"); t.innerHTML = (h || "").replace(/<br>/g, "\n"); return t.content.textContent; };
   const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
@@ -115,6 +118,54 @@ turned into another type or sent to an agent together, as one message naming eac
     const out = [], todo = [id];
     while (todo.length) { const here = todo.pop(); for (const p of book.pages) if (p.parent === here && !out.includes(p)) { out.push(p); todo.push(p.id); } }
     return out;
+  }
+  // A line's links to pages (href "page:<id>", notebook.py's), drawn as the page is now: its icon and title, struck while it
+  // is in the trash or gone, and kept whole (not typed into: a click opens the page). What is saved of one is its href and
+  // the title (clean() drops the rest).
+  const PAGE_HREF = /^page:([a-z0-9]{6,24})$/;
+  const pageOfLink = (a) => { const m = PAGE_HREF.exec(a.getAttribute("href") || ""); return m ? m[1] : null; };
+  // Beside a link at a line's start or end, a zero-width space: a place for the caret, which Chrome has none for there
+  // (never saved: clean() drops it).
+  const ZW = "\u200b";
+  function withLinks(h) {
+    if (!h || !h.includes('href="page:')) return h;
+    const t = document.createElement("template");
+    t.innerHTML = h;
+    drawLinks(t.content);
+    for (const a of t.content.querySelectorAll("a.pg")) padLink(a);
+    return t.innerHTML;
+  }
+  const isText = (n) => !!n && n.nodeType === 3 && n.length > 0;
+  function padLink(a) {
+    if (!isText(a.nextSibling)) a.after(ZW);
+    if (!isText(a.previousSibling)) a.before(ZW);
+  }
+  function drawLinks(root) {                             // (a line being typed in too: the caret is never in a link)
+    for (const a of root.querySelectorAll("a")) {
+      const id = pageOfLink(a);
+      if (!id) continue;
+      const p = pages.get(id), cls = `pg${!p ? " gone" : p.deleted ? " binned" : ""}`;
+      const tip = !p ? "That page was deleted" : p.deleted ? "In the trash: open it" : "Open the page";
+      if (a.className !== cls) a.className = cls;
+      if (a.getAttribute("contenteditable") !== "false") a.setAttribute("contenteditable", "false");
+      if (p && a.textContent !== (p.title || "Untitled")) a.textContent = p.title || "Untitled";
+      if (a.dataset.icon !== (p && p.icon ? p.icon : "")) a.dataset.icon = p && p.icon ? p.icon : "";
+      if (a.title !== tip) a.title = tip;
+    }
+  }
+  // whether a page has a link to one of those pages (renamed, binned, ...: the links drawn again)
+  const linksTo = (p, ids) => !!p && ids.size > 0 && p.blocks.some((b) => b.text && b.text.includes('href="page:')
+    && [...ids].some((id) => b.text.includes(`href="page:${id}"`)));
+  // ... and as markdown, `[its title](page:<id>)`, the rest of the line as it was: a line sent to an agent, so it can read the page
+  function pagesAsMd(h) {
+    if (!h || !h.includes('href="page:')) return h;
+    const t = document.createElement("template");
+    t.innerHTML = clean(h);
+    for (const a of t.content.querySelectorAll("a")) {
+      const id = pageOfLink(a), p = id && pages.get(id);
+      if (id) a.replaceWith(`[${p ? p.title || "Untitled" : a.textContent}](page:${id})`);
+    }
+    return t.innerHTML;
   }
   function placeAt(blocks, after) {
     if (after === "") return 0;
@@ -250,17 +301,18 @@ turned into another type or sent to an agent together, as one message naming eac
     const gap = m.version !== book.version + 1;          // a batch missed: everything read again, after these
     book.version = m.version;
     if (m.by !== ME) {
-      const touched = new Set(), blocks = new Set();
+      const touched = new Set(), blocks = new Set(), retitled = new Set();
       for (const op of m.ops) {
         apply(op);
         touched.add(typeof op.page === "string" ? op.page : op.page && op.page.id);
         if (op.op === "block.put") blocks.add(op.block.id);
         if (op.op === "block.move" || op.op === "thread.add") blocks.add(op.block);
+        if (op.op.startsWith("page.")) for (const id of op.pages || [typeof op.page === "string" ? op.page : op.page.id]) retitled.add(id);
       }
       if (current && !pages.has(current)) current = null;
       drawSide(m.agent ? touched : null);
       if (current && touched.has(current)) drawPage(blocks);
-      else if (!current || SPECIAL.includes(current)) drawPage();
+      else if (!current || SPECIAL.includes(current) || linksTo(pages.get(current), retitled)) drawPage();
       if (m.agent) told(m.agent, [...touched].map((id) => pages.get(id)).filter(Boolean));
     }
     if (gap) resync();
@@ -494,8 +546,8 @@ turned into another type or sent to an agent together, as one message naming eac
     tx.dataset.ph = PH[b.type] || "";
     if (tx !== document.activeElement && !dirty.has(b.id)) {
       if (b.type === "code") { if (tx.textContent !== b.text) tx.textContent = b.text; }
-      else { const h = clean(b.text); if (tx.innerHTML !== h) tx.innerHTML = h; }
-    }
+      else { const h = withLinks(clean(b.text)); if (tx.innerHTML !== h) tx.innerHTML = h; }
+    } else if (b.type !== "code") drawLinks(tx);
     const mk = n.querySelector(".mk");
     const want = b.type === "todo" ? `todo:${!!b.checked}` : b.type === "bullet" ? `bullet:${(b.indent || 0) % 3}` : b.type;
     if (mk.dataset.is !== want) {
@@ -630,8 +682,14 @@ turned into another type or sent to an agent together, as one message naming eac
   function pointAt(tx, n) {
     const w = document.createTreeWalker(tx, NodeFilter.SHOW_TEXT);
     let node, last = null;
-    while ((node = w.nextNode())) { if (n <= node.length) return { node, offset: n }; n -= node.length; last = node; }
-    return last ? { node: last, offset: last.length } : { node: tx, offset: tx.childNodes.length };
+    while ((node = w.nextNode())) { if (n <= node.length) return besideLink(tx, node, n); n -= node.length; last = node; }
+    return last ? besideLink(tx, last, last.length) : { node: tx, offset: tx.childNodes.length };
+  }
+  function besideLink(tx, node, n) {                     // a point in a link to a page: before it (at its start), else after it
+    const a = node.parentElement && node.parentElement.closest("a.pg");
+    if (!a || !tx.contains(a)) return { node, offset: n };
+    const i = [...a.parentNode.childNodes].indexOf(a);
+    return { node: a.parentNode, offset: n ? i + 1 : i };
   }
   function setCaret(tx, start, end = start) {
     const a = pointAt(tx, start), z = pointAt(tx, end), r = document.createRange();
@@ -648,7 +706,7 @@ turned into another type or sent to an agent together, as one message naming eac
     part.selectNodeContents(tx);
     if (atEnd) part.setStart(r.endContainer, r.endOffset); else part.setEnd(r.startContainer, r.startOffset);
     const f = part.cloneContents();
-    return f.textContent === "" && !f.querySelector("br");
+    return f.textContent.replace(/\u200b/g, "") === "" && !f.querySelector("br");
   }
   function onLine(tx, last) {                             // the caret on the first (or last) line of the block
     const s = getSelection();
@@ -668,7 +726,7 @@ turned into another type or sent to an agent together, as one message naming eac
     const len = tx.textContent.length;
     setCaret(tx, where === "end" ? len : where === "start" ? 0 : Math.min(where, len));
   }
-  const empty = (tx) => tx.textContent === "" && !tx.querySelector("br");
+  const empty = (tx) => tx.textContent.replace(/\u200b/g, "") === "" && !tx.querySelector("br, a");
   const textOf = (n, b) => (b.type === "code" ? n.querySelector(".tx").textContent : clean(n.querySelector(".tx").innerHTML));
   const editable = (b) => !UNSENT.includes(b.type);
 
@@ -685,11 +743,12 @@ turned into another type or sent to an agent together, as one message naming eac
     typed(current, b.id, b.text);
     slashInput(n, tx, b, ev);
     atInput(n, tx, b, ev);
+    pageInput(n, tx, b, ev);
   });
   box.addEventListener("focusout", (ev) => {
     const n = ev.target.closest && ev.target.closest(".blk");
     if (n && dirty.has(n.dataset.id)) sendTyped(n.dataset.id);
-    if (menu && (menu.kind === "slash" || menu.kind === "at") && ev.target === menu.tx
+    if (menu && (menu.kind === "slash" || menu.kind === "at" || menu.kind === "page") && ev.target === menu.tx
       && !(ev.relatedTarget && menu.el.contains(ev.relatedTarget))) closePop();   // (into the picker's box: kept)
   });
   // Markdown at the start of a block, as it is typed: "# " a heading, "- " a list, "[] " a to-do, "> " a quote, "```" code,
@@ -741,7 +800,7 @@ turned into another type or sent to an agent together, as one message naming eac
     change([op]);
     const tx = rowOf(b.id) && rowOf(b.id).querySelector(".tx");
     if (tx && (type === "code" || was === "code") && document.activeElement === tx) {
-      if (type === "code") tx.textContent = text; else tx.innerHTML = clean(text);
+      if (type === "code") tx.textContent = text; else tx.innerHTML = withLinks(clean(text));
     }
     drawPage();
   }
@@ -757,6 +816,7 @@ turned into another type or sent to an agent together, as one message naming eac
     const b = p.blocks[i];
     if (menu && menu.kind === "slash" && slashKey(ev)) return;
     if (menu && menu.kind === "at" && atKey(ev)) return;
+    if (menu && menu.kind === "page" && pageKey(ev)) return;
     const mod = ev.metaKey || ev.ctrlKey, k = ev.key;
     if (k === "Escape" && !mod && !ev.shiftKey) { ev.preventDefault(); pickRange(b.id, b.id); return holdKeys(); }   // the line picked
     if (ev.shiftKey && !mod && !ev.altKey && (k === "ArrowUp" || k === "ArrowDown")) {
@@ -796,6 +856,7 @@ turned into another type or sent to an agent together, as one message naming eac
       return enter(p, i, n, tx);
     }
     if (k === "Enter" && ev.shiftKey && b.type === "code") { ev.preventDefault(); return addAfter(b, "text"); }
+    if ((k === "Backspace" || k === "Delete") && !ev.altKey && overLink(n, tx, b, k === "Delete")) return ev.preventDefault();
     if (k === "Backspace" && edge(tx, false)) { ev.preventDefault(); return backspace(p, i, n, tx); }
     if (k === "Delete" && edge(tx, true) && i + 1 < p.blocks.length) { ev.preventDefault(); return joinNext(p, i, n, tx); }
     if (k === "Tab") {
@@ -858,7 +919,7 @@ turned into another type or sent to an agent together, as one message naming eac
     const hold = document.createElement("div");
     hold.append(tail.extractContents());
     const rest = clean(hold.innerHTML), left = clean(tx.innerHTML);
-    if (tx.innerHTML !== left) tx.innerHTML = left;
+    if (tx.innerHTML !== withLinks(left)) tx.innerHTML = withLinks(left);
     const next = { id: rid(), type: kind, text: rest, checked: false, indent: ind };
     forget(b.id);
     change([{ op: "block.put", page: p.id, block: { id: b.id, text: left } }, { op: "block.put", page: p.id, block: next, after: b.id }]);
@@ -894,7 +955,7 @@ turned into another type or sent to an agent together, as one message naming eac
     const joined = b.type === "code" ? tx.textContent + plainOf(next.text) : clean(clean(tx.innerHTML) + (next.type === "code" ? esc(next.text) : next.text));
     forget(b.id);
     forget(next.id);
-    if (b.type === "code") tx.textContent = joined; else tx.innerHTML = joined;
+    if (b.type === "code") tx.textContent = joined; else tx.innerHTML = withLinks(joined);
     change([{ op: "block.put", page: p.id, block: { id: b.id, text: joined } }, { op: "block.delete", page: p.id, block: next.id }]);
     drawPage();
     setCaret(tx, at);
@@ -1022,12 +1083,13 @@ turned into another type or sent to an agent together, as one message naming eac
   document.addEventListener("mousedown", (ev) => { if (menu && !menu.el.contains(ev.target)) closePop(); }, true);
   document.addEventListener("keydown", (ev) => {
     if (menu && menu.kind === "at" && !menu.tx && atKey(ev)) return;          // the picker opened by a block's button
-    if (menu && ev.key === "Escape" && menu.kind !== "slash" && menu.kind !== "at") { ev.preventDefault(); closePop(); }
+    if (menu && ev.key === "Escape" && !["slash", "at", "page"].includes(menu.kind)) { ev.preventDefault(); closePop(); }
   });
+  $("convo").addEventListener("click", followPage);
   $("convo").addEventListener("keydown", (ev) => {
     if (ev.key === "Escape" && !menu && !ev.target.closest(".reply")) { ev.preventDefault(); closeConvo(); }
   });
-  $("scroll").addEventListener("scroll", () => { if (menu && menu.kind !== "slash" && !(menu.kind === "at" && menu.tx)) closePop(); });
+  $("scroll").addEventListener("scroll", () => { if (menu && menu.kind !== "slash" && menu.kind !== "page" && !(menu.kind === "at" && menu.tx)) closePop(); });
 
   function slashInput(n, tx, b, ev) {
     if (menu && menu.kind === "slash") {
@@ -1050,14 +1112,15 @@ turned into another type or sent to an agent together, as one message naming eac
   }
   function drawSlash(q) {
     const words = q.trim().toLowerCase();
-    const items = KINDS.filter((k) => !words || k.label.toLowerCase().includes(words) || k.words.includes(words));
+    const items = [...KINDS, PAGE_KIND, LINK_KIND].filter((k) => !words || k.label.toLowerCase().includes(words) || k.words.includes(words));
     menu.items = items;
     menu.on = Math.min(menu.on || 0, Math.max(0, items.length - 1));
     const pop = menu.el;
     pop.replaceChildren(el("div", { class: "hd", text: "Blocks" }));
     if (!items.length) pop.append(el("div", { class: "none", text: "No block like that" }));
+    const m = menu;                                       // (closed by a click before its pick runs)
     items.forEach((k, j) => {
-      const it = item(k, () => slashPick(k.type));
+      const it = item(k, () => slashPick(k.type, m));
       if (j === menu.on) it.classList.add("on");
       it.addEventListener("mousemove", () => { if (menu.on !== j) { menu.on = j; drawSlash(q); } });
       pop.append(it);
@@ -1079,8 +1142,8 @@ turned into another type or sent to an agent together, as one message naming eac
   }
   // A block type picked from the / menu: the "/..." typed taken out, and the block made that type -- or, if it holds
   // other words, a new block of it below.
-  function slashPick(type) {
-    const m = menu;
+  function slashPick(type, picked = null) {
+    const m = picked || menu;
     closePop();
     if (!m || !m.tx || !m.tx.isConnected) return;
     const tx = m.tx, n = tx.closest(".blk"), b = blockOf(n.dataset.id);
@@ -1093,6 +1156,13 @@ turned into another type or sent to an agent together, as one message naming eac
     b.text = textOf(n, b);
     tx.focus();
     setCaret(tx, m.from);
+    if (type === LINK_KIND.type) return void document.execCommand("insertText", false, "[[");   // the pages, as "[[" opens them
+    if (type === PAGE_KIND.type) {                         // a page made inside this one, linked here, and opened
+      const id = subpage("");
+      putLink(tx, m.from, m.from, id);
+      openPage(id);
+      return $("title").focus();
+    }
     if (UNSENT.includes(type)) {
       forget(b.id);
       const next = { id: rid(), type: "text", text: "", checked: false, indent: 0 };
@@ -1111,6 +1181,136 @@ turned into another type or sent to an agent together, as one message naming eac
     forget(b.id);
     change([{ op: "block.put", page: current, block: { id: b.id, text: b.text } }]);
     addAfter(b, type);
+  }
+
+  // ---------------------------------------------------------------- [[: a link to a page
+  // "[[" typed opens a list of the pages, found by the words typed after it; one picked takes the "[[..." out and puts a
+  // link to it there. A page not there yet can be made, inside this one, and linked.
+  function pageInput(n, tx, b, ev) {
+    if (menu && menu.kind === "page") {
+      const c = caretIn(tx);
+      if (menu.tx !== tx || !c || c.start < menu.from + 2 || tx.textContent.slice(menu.from, menu.from + 2) !== "[[") return closePop();
+      const q = tx.textContent.slice(menu.from + 2, c.start);
+      if (q.length > 80 || q.includes("]")) return closePop();
+      return drawPages(q);
+    }
+    if (ev.inputType !== "insertText" || !ev.data || !ev.data.endsWith("[") || b.type === "code") return;
+    const c = caretIn(tx);
+    if (!c || !c.collapsed || c.start < 2 || tx.textContent.slice(c.start - 2, c.start) !== "[[") return;
+    const r = getSelection().getRangeAt(0).getBoundingClientRect();
+    const rect = r.width || r.height ? r : tx.getBoundingClientRect();
+    popUp(rect, () => {}, null, "page");
+    Object.assign(menu, { tx, from: c.start - 2, block: b.id, rect });
+    drawPages("");
+  }
+  const pathOf = (p) => { const up = []; for (let q = p.parent && pages.get(p.parent); q; q = q.parent && pages.get(q.parent)) up.unshift(q.title || "Untitled"); return up.join(" / "); };
+  // the pages to link, for the words typed: none, this page's subpages first, then the rest as the sidebar has them; some,
+  // the pages whose title has them, those starting with them first
+  function pagesFor(q) {
+    const words = q.trim().toLowerCase(), order = [];
+    const walk = (id) => { for (const p of kidsOf(id)) { order.push(p); walk(p.id); } };
+    walk(null);
+    const others = order.filter((p) => p.id !== current);
+    if (!words) return [...kidsOf(current), ...others.filter((p) => p.parent !== current)];
+    const t = (p) => (p.title || "Untitled").toLowerCase();
+    return others.filter((p) => t(p).includes(words)).sort((a, z) => Number(t(z).startsWith(words)) - Number(t(a).startsWith(words)));
+  }
+  function drawPages(q) {
+    const name = q.trim(), here = page(), m = menu;       // (the menu: closed before a pick runs)
+    const hits = pagesFor(q).slice(0, 50);
+    const picks = hits.map((p) => ({ k: { glyph: p.icon || SVG.doc, sm: !p.icon, label: p.title || "Untitled", note: pathOf(p) }, run: () => pagePick(m, p.id) }));
+    if (name && !hits.some((p) => (p.title || "").trim().toLowerCase() === name.toLowerCase()))
+      picks.push({ k: { glyph: SVG.plus, sm: true, label: `New page “${name}”`, note: here ? `Inside ${here.title || "Untitled"}` : "" }, run: () => pagePick(m, null, name) });
+    menu.items = picks;
+    menu.on = Math.min(menu.on || 0, Math.max(0, picks.length - 1));
+    const pop = menu.el;
+    pop.replaceChildren(el("div", { class: "hd", text: "Link to a page" }));
+    if (!picks.length) pop.append(el("div", { class: "none", text: "No pages yet: type a name to make one" }));
+    picks.forEach((x, j) => {
+      const it = item(x.k, x.run);
+      if (j === menu.on) it.classList.add("on");
+      it.addEventListener("mousemove", () => { if (menu.on !== j) { menu.on = j; drawPages(q); } });
+      pop.append(it);
+    });
+    place(pop, menu.rect);
+    const on = pop.querySelector(".it.on");
+    if (on) on.scrollIntoView({ block: "nearest" });
+  }
+  function pageKey(ev) {
+    const n = menu.items ? menu.items.length : 0;
+    if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+      ev.preventDefault();
+      if (n) { menu.on = (menu.on + (ev.key === "ArrowDown" ? 1 : n - 1)) % n; drawPages(menu.tx.textContent.slice(menu.from + 2, caretIn(menu.tx).start)); }
+      return true;
+    }
+    if ((ev.key === "Enter" || ev.key === "Tab") && n) { ev.preventDefault(); const run = menu.items[menu.on].run; closePop(); run(); return true; }
+    if (ev.key === "Escape") { ev.preventDefault(); closePop(); return true; }
+    return false;
+  }
+  // A page picked from the menu `m` (or `title`: one made, inside this page): the "[[..." typed swapped for a link to it.
+  function pagePick(m, id, title = "") {
+    closePop();
+    if (!m || !m.tx || !m.tx.isConnected || !blockOf(m.tx.closest(".blk").dataset.id)) return;
+    const c = caretIn(m.tx), to = Math.max(c && c.start > m.from ? c.start : m.from + 2, m.from + 2);
+    putLink(m.tx, m.from, to, id || subpage(title));
+  }
+  // A new page inside the one open (its row in the sidebar shown): its id.
+  function subpage(title) {
+    const made = { id: rid(), title, icon: "", parent: current };
+    change([{ op: "page.new", page: made, blocks: [{ id: rid(), type: "text", text: "", checked: false, indent: 0 }] }]);
+    if (current) { opened.add(current); store.set("open", [...opened]); }
+    return made.id;
+  }
+  // The line's text from `from` to `to` (caret positions) swapped for a link to the page `id`, the caret after it, and kept.
+  function putLink(tx, from, to, id) {
+    const n = tx.closest(".blk"), b = blockOf(n.dataset.id), name = pages.get(id).title || "Untitled";
+    const r = document.createRange(), a = pointAt(tx, from), z = pointAt(tx, to);
+    r.setStart(a.node, a.offset);
+    r.setEnd(z.node, z.offset);
+    r.deleteContents();
+    const t = document.createElement("template");
+    t.innerHTML = `<a href="page:${id}">${esc(name)}</a>`;
+    drawLinks(t.content);
+    const link = t.content.firstChild;
+    // a space after it, unless one is there already: the caret goes after it
+    const next = tx.textContent.charAt(from), gap = next && /\s/.test(next) ? null : document.createTextNode(" ");
+    if (gap) r.insertNode(gap);
+    r.insertNode(link);
+    if (!isText(link.previousSibling)) link.before(ZW);
+    for (const x of [...tx.childNodes]) if (x.nodeType === 3 && !x.length) x.remove();
+    tx.focus();
+    const at = document.createRange(), sel = getSelection();
+    if (gap) at.setStart(gap, 1); else at.setStartAfter(link);
+    at.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(at);
+    b.text = textOf(n, b);
+    typed(current, b.id, b.text);
+  }
+  // Backspace (Delete: forward) with only the zero-width space put beside a link between the caret and it: the link taken
+  // out whole, with the space -- not the space alone, which would leave the key seeming to do nothing.
+  function overLink(n, tx, b, fwd) {
+    const s = getSelection();
+    if (!s.rangeCount || !s.isCollapsed) return false;
+    const { startContainer: node, startOffset: off } = s.getRangeAt(0);
+    if (node.nodeType !== 3 || !tx.contains(node) || node.data.charAt(fwd ? off : off - 1) !== ZW) return false;
+    const link = fwd ? (off + 1 === node.length ? node.nextSibling : null) : (off === 1 ? node.previousSibling : null);
+    if (!link || link.nodeType !== 1 || !link.matches("a.pg")) return false;
+    node.deleteData(fwd ? off : off - 1, 1);
+    link.remove();
+    if (!node.length && !tx.textContent) tx.replaceChildren();
+    b.text = textOf(n, b);
+    typed(current, b.id, b.text);
+    return true;
+  }
+  // A link to a page clicked: that page opened (one in the trash too; one gone, nothing).
+  function followPage(ev) {
+    const a = ev.target.closest && ev.target.closest("a.pg");
+    if (!a) return false;
+    ev.preventDefault();
+    const id = pageOfLink(a);
+    if (id && pages.has(id)) openPage(id);
+    return true;
   }
 
   // ---------------------------------------------------------------- the gutter: + and the grip (drag, or its menu)
@@ -1135,10 +1335,11 @@ turned into another type or sent to an agent together, as one message naming eac
       if (b && !page().deleted) tick(b);
       return;
     }
+    if (followPage(ev)) return;
     const a = ev.target.closest(".tx a");
     if (a && (ev.metaKey || ev.ctrlKey || page().deleted)) { ev.preventDefault(); window.open(a.href, "_blank", "noopener"); }
   });
-  box.addEventListener("mousedown", (ev) => { if (ev.target.closest(".chk, .gut .add, .to-btn")) ev.preventDefault(); });
+  box.addEventListener("mousedown", (ev) => { if (ev.target.closest(".chk, .gut .add, .to-btn, .tx a.pg")) ev.preventDefault(); });
   let drag = null;
   box.addEventListener("pointerdown", (ev) => {
     const grip = ev.target.closest(".gut .grip");
@@ -1422,7 +1623,7 @@ turned into another type or sent to an agent together, as one message naming eac
       if (c.nodeType !== 1) return "";
       const tag = c.nodeName.toLowerCase(), inner = walk(c);
       if (tag === "br") return "\n";
-      if (tag === "a") return `[${inner}](${c.getAttribute("href") || ""})`;
+      if (tag === "a") { const id = pageOfLink(c), p = id && pages.get(id); return `[${p ? p.title || "Untitled" : inner}](${c.getAttribute("href") || ""})`; }
       const m = { b: "**", i: "*", s: "~~", code: "`" }[tag] || "";
       return m + inner + m;
     }).join("");
@@ -1666,7 +1867,7 @@ turned into another type or sent to an agent together, as one message naming eac
       const id = into.closest(".blk").dataset.id, first = got.shift();
       forget(id);
       ops.push({ op: "block.put", page: current, block: { ...first, id } });
-      if (first.type === "code") into.textContent = first.text; else into.innerHTML = clean(first.text);
+      if (first.type === "code") into.textContent = first.text; else into.innerHTML = withLinks(clean(first.text));
     }
     for (const nb of got) { ops.push({ op: "block.put", page: current, block: nb, after }); after = nb.id; }
     change(ops);
@@ -1874,7 +2075,7 @@ turned into another type or sent to an agent together, as one message naming eac
     pump();
     const f = findLine(id), p = f && f.p, b = f && f.b;
     if (!p || !b) return;
-    const words = plainOf(b.type === "code" ? esc(b.text) : b.text).trim();
+    const words = plainOf(b.type === "code" ? esc(b.text) : pagesAsMd(b.text)).trim();
     if (!words) return say("Write what to ask first, then send it.", true);
     const report = store.get("report", true);
     extra = extra.trim();
@@ -2109,7 +2310,7 @@ turned into another type or sent to an agent together, as one message naming eac
     return el("div", { class: `msg${mine ? " you" : ""}` },
       mine ? null : face(a, 20),
       el("div", { class: "mb" },
-        el("div", { class: "bub", html: clean(l.text) }),
+        el("div", { class: "bub", html: withLinks(clean(l.text)) }),
         l.results && l.results.length ? madeRow(l.results) : null,
         el("div", { class: "mm", text: mine ? `You · ${clock(l.at)}${l.note ? ` · ${l.note}` : ""}` : `${nameOf(a, ch)} reported${l.on ? ` on “${l.on}”` : ""}${l.done ? ", says it's done" : ""} · ${clock(l.at)}` })));
   }
