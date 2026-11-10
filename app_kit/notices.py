@@ -22,8 +22,8 @@ def _line(text: Any, most: int, what: str, need: bool = False) -> str:
 
 def made(title: Any, text: Any = "", key: Any = None, show: Any = ("ag",), where: Any = None) -> dict:
     """An `app_notified` record's payload, after the host's checks: {id, key, title, text, show, where}. Its title
-    and text one line each (cut to fit), `show` some of SHOWS ("ag" always), `where` JSON of at most
-    NOTICE_WHERE_BYTES."""
+    and text one line each (cut to fit), `show` some of SHOWS -- where it pops up; none: only listed, as every one is
+    -- `where` JSON of at most NOTICE_WHERE_BYTES."""
     shows = [show] if isinstance(show, str) else list(show or ())
     if not all(isinstance(x, str) and x in SHOWS for x in shows):
         raise AppError(f"notify: show is some of {', '.join(SHOWS)}")
@@ -38,7 +38,7 @@ def made(title: Any, text: Any = "", key: Any = None, show: Any = ("ag",), where
     return {"id": secrets.token_hex(6), "key": key.strip() if key else None,
             "title": _line(title, NOTICE_TITLE_CHARS, "title", need=True),
             "text": _line(text, NOTICE_TEXT_CHARS, "text"),
-            "show": [x for x in SHOWS if x == "ag" or x in shows], "where": where}
+            "show": [x for x in SHOWS if x in shows], "where": where}
 
 
 def settled(which: Any, how: str) -> dict:

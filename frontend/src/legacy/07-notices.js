@@ -3,8 +3,9 @@
 // wait for them (a question, a plan to approve) or stops on an error -- each the same way, from what the homes bring
 // (heedHome, as each is taken): a POP-UP in the page's corner (POP_SECONDS, longer while the pointer is on it; a click
 // opening what it is about, its × putting it away) and, the page not in front of the reader, the computer's own
-// notification too (`system`), each once. An app's on the computer only where the app asked ("system" in its `show`);
-// an actor's only while the reader keeps actors' pop-ups (`heed.actors`). Nothing for what the reader has in front of
+// notification too (`system`), each once. An app's only where the app asked: "ag" in its `show` for the pop-up, "system"
+// for the computer's -- neither, it is only listed (a quiet one); an actor's only while the reader keeps actors' pop-ups
+// (`heed.actors`). Nothing for what the reader has in front of
 // them -- its pane or panel shown, the page in focus -- nor for what was there as the page loaded (its first home). The
 // computer's needs the reader's leave once, in a browser (the desktop app gives it): asked from the settings. Both
 // choices kept in this browser (HEED_KEY).
@@ -53,7 +54,7 @@ function heedHome() {
   heedWas = new Set(now.keys());
   if (was === null) return;
   const fresh = [...now].filter(([k, w]) => !was.has(k) && (!w.a || heed.actors) && !inFront(w));
-  for (const [k, w] of fresh.slice(-POP_MOST)) popUp(k, w);
+  for (const [k, w] of fresh.filter(([, w]) => w.a || (w.n.show || []).includes("ag")).slice(-POP_MOST)) popUp(k, w);
   if (heed.system && !pageInFront() && canSay())
     for (const [k, w] of fresh) if (w.a || (w.n.show || []).includes("system")) sayOnComputer(k, w);
 }

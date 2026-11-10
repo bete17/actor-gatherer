@@ -11,6 +11,18 @@ and one cache (store.py: slack.db there). Each gatherer has one instance -- its 
                                   for changes or discards it; the agent is told which
     the user's own message        sent from the panel, as them
 
+The user is NOTIFIED of new messages through the dashboard (Host.notify), one notification a conversation, of each of
+two kinds (its key): a DM or a message that @mentions them ("you:<conversation>"), popped up -- and on the computer
+too, setting `notify_system` -- and any other new message of a conversation ("new:<conversation>"), only listed on the
+Slack app's row: QUIET, said again at most every QUIET_EVERY seconds. Their own messages never; nor thread replies
+that don't mention them, nor joins and leaves. Messages fetched after the line was down are listed quietly, never
+popped up. A conversation read (in the panel, or the user writing in it) clears its notifications.
+
+The LIVE LINE is kept up by the "line" schedule (app.toml, every minute; it also starts the backend with the
+dashboard): a line down DOWN_WAIT seconds -- Slack's SDK reconnects by itself, but not always (a sleep, a network
+change) -- is made again, and what was missed fetched; a connection that failed, tried again (not a refused token).
+While it is down the panel says so: `setup` says "disconnected", never "connected" without a line.
+
 What the user and agents did is recorded in the gatherer as the app's own events (slack.drafted, slack.sent,
 slack.discarded), which no model is shown. Slack's own history stays in the cache, not in the gatherer.
 
@@ -27,7 +39,8 @@ The panel's routes (on the app's origin, /api/...):
     POST send {conversation, text, thread?, broadcast?}   posted as the user -> {message}
     POST draft {id, action: send | discard | edit, text?, broadcast?}
     POST connect {user_token, app_token} / disconnect
-    POST settings {tell_agents?}
+    POST notified {conversation}    the user opened a notification of it: its notifications cleared
+    POST settings {tell_agents?, notify_system?}
 
 What the panels are told: {kind: status | conversations | message | reply | changed | deleted | draft | unread, ...}."""
 
@@ -54,6 +67,11 @@ RECENT_DAYS = 14               # how far back the panel's Recent list looks
 CATCH_UP = 40                  # at most this many conversations' missed messages fetched after (re)connecting
 ENV = ("AG_SLACK_USER_TOKEN", "AG_SLACK_APP_TOKEN")
 ID = re.compile(r"^[CGD][A-Z0-9]{6,}$")   # a Slack conversation's id
+DOWN_WAIT = 45.0               # seconds the live line may be down (the SDK reconnecting by itself) before it is made again
+QUIET_EVERY = 120.0            # seconds: a conversation's quiet notification said again at most this often while open
+REFUSED = ("invalid_auth", "not_authed", "token_revoked", "account_inactive", "missing_scope")   # not tried again
+NOT_NEWS = ("channel_join", "channel_leave", "group_join", "group_leave", "channel_topic", "channel_purpose",
+            "channel_name", "group_topic", "group_purpose", "group_name", "pinned_item", "unpinned_item")
 
 
 class SlackApp(App):
@@ -71,6 +89,9 @@ class SlackApp(App):
         self._views: Dict[str, dict] = {}   # instance -> what its panel has open: {conversation, thread, at}
         self._view_timers: Dict[str, threading.Timer] = {}   # instance -> the wait before telling its agents
         self._view_told: Dict[str, tuple] = {}               # instance -> (conversation, thread) its agents were told
+        self._down_since: Optional[float] = None             # when the live line was first seen down
+        self._said: Dict[str, float] = {}                    # a notification's key -> when it was last said
+        self._noticed: set = set()                           # the keys that may be open (kept in the store)
 
     # -- the host
 
@@ -78,6 +99,7 @@ class SlackApp(App):
         super().start(host)
         self.store = Store(os.path.join(host.folder(), "slack.db"))
         self._users = self.store.users()
+        self._noticed = {k for k in self.store.setting("noticed", []) or [] if isinstance(k, str)}
         user, app = self._tokens()
         if user:
             self._connect(user, app)
@@ -201,9 +223,62 @@ class SlackApp(App):
             except slack.SlackError:
                 continue
             done += 1
-            if msgs and self.store.put_messages(c["id"], msgs):
+            new = self.store.put_messages(c["id"], msgs) if msgs else []
+            if new:
                 self._tell_all({"kind": "history", "conversation": c["id"]})
+                self._caught_up(c["id"], new)
         self._tell_all({"kind": "unread", "unread": self._unread()})
+
+    def _line_up(self) -> bool:
+        cl = self.cl
+        try:
+            return cl is not None and bool(cl.connected())
+        except Exception:  # noqa: BLE001 - a line that can't say is not one to count on
+            return False
+
+    def scheduled(self, schedule: str, due: float) -> Optional[float]:
+        if schedule == "line":
+            self.keep_line()
+        return None
+
+    def keep_line(self, now: Optional[float] = None) -> None:
+        """The live line kept up (the "line" schedule, every minute): a connection that failed, made again -- not one
+        Slack refused the tokens of --, and a line down DOWN_WAIT seconds made again (missed messages fetched); the
+        panels told when it goes down and comes back."""
+        now = time.time() if now is None else now
+        user, app = self._tokens()
+        if not user or self.store is None:
+            return
+        with self._lock:
+            cl, status, error, gen = self.cl, self.status, self.error, self._gen
+        if status == "connecting" or (status == "error" and any(k in error for k in REFUSED)):
+            return
+        if cl is None or not app:                           # no line to keep: a connection that failed, made again
+            if status == "error":
+                self._connect(user, app)
+            return
+        if self._line_up():
+            self._down_since = None
+            if status != "connected":
+                self._on_status(gen, "connected")
+        elif self._down_since is None:
+            self._down_since = now
+            self._tell_all({"kind": "status", "setup": self.setup()})
+        elif now - self._down_since >= DOWN_WAIT:
+            self._down_since = None
+            self._connect(user, app)
+
+    def _caught_up(self, ch: str, new: List[dict]) -> None:
+        """Messages missed while the line was down, listed for the user quietly: the newest of each kind, unless they
+        wrote in the conversation after (read)."""
+        newest: Dict[str, dict] = {}
+        for m in sorted(new, key=lambda m: _num(m["ts"])):
+            if m.get("user") and m["user"] == self.me.get("user_id"):
+                newest.clear()
+            elif self._news(ch, m):
+                newest[self._news(ch, m)] = m
+        for m in newest.values():
+            self._notify(ch, m, caught_up=True)
 
     def _client(self):
         cl = self.cl
@@ -214,7 +289,10 @@ class SlackApp(App):
 
     def setup(self) -> dict:
         user, app = self._tokens()
-        return {"sdk": slack.available(), "tokens": bool(user), "live": bool(app), "status": self.status,
+        status = self.status
+        if status == "connected" and app and not self._line_up():
+            status = "disconnected"                         # said connected once, its line gone since
+        return {"sdk": slack.available(), "tokens": bool(user), "live": bool(app), "status": status,
                 "error": self.error, "me": self.me.get("user_id", ""), "team": self.me.get("team", ""),
                 "url": self.me.get("url", "")}
 
@@ -270,6 +348,10 @@ class SlackApp(App):
             told["parent"] = self.store.replied(ch, m["thread_ts"], m["ts"])
         self._tell_all(told)
         self._tell_agents(ch, m)
+        if m["user"] and m["user"] == me:
+            self._clear(ch)                                 # they wrote in it: read
+        else:
+            self._notify(ch, m)
 
     def _reaction(self, ev: dict, added: bool) -> None:
         item = ev.get("item") or {}
@@ -335,6 +417,75 @@ class SlackApp(App):
                                                            id=f"slack:{ch}:{m['ts']}:{chan}")], channel=chan)
                 except AppError:
                     pass
+
+    # -- the user notified
+
+    def _news(self, ch: str, m: dict) -> Optional[str]:
+        """What a message is to the user: "you" (a DM, or it @mentions them), "new" (any other top-level message of a
+        conversation of theirs), or None (theirs, a thread reply not for them, a join or a leave ...)."""
+        c = self.store.conversation(ch)
+        if c is None or c.get("gone") or not m.get("user") or m["user"] == self.me.get("user_id") \
+                or m.get("subtype") in NOT_NEWS or m.get("deleted"):
+            return None
+        if self._mentions(ch, m):
+            return "you"
+        reply = m.get("thread_ts") and m["thread_ts"] != m["ts"] and m.get("subtype") != "thread_broadcast"
+        return None if reply else "new"
+
+    def _notify(self, ch: str, m: dict, caught_up: bool = False) -> None:
+        """A new message, to the user as a notification of each instance: popped up (a DM or a mention, unless
+        `caught_up`: fetched after the line was down) or only listed (quiet: said again at most every QUIET_EVERY
+        seconds while one is open). One open a conversation and kind: a newer takes its place."""
+        what = self._news(ch, m)
+        if what is None or self.host is None:
+            return
+        key, now = f"{what}:{ch}", time.time()
+        if what == "new" and not caught_up and key in self._noticed and now - self._said.get(key, 0) < QUIET_EVERY:
+            return
+        c = self.store.conversation(ch)
+        who, place = self.who(m), self.label(c)
+        text = self.plain(m["text"]) + "".join(f" [file: {f['name']}]" for f in m.get("files") or [])
+        reply = bool(m.get("thread_ts") and m["thread_ts"] != m["ts"])
+        if what == "you":
+            title = (f"{who}, direct message" if c["kind"] == "im" else f"{who} in {place}" if c["kind"] == "mpim"
+                     else f"{who} mentioned you in {place}") + (", in a thread" if reply else "")
+            show = () if caught_up else ("ag", "system") if self.store.setting("notify_system", True) else ("ag",)
+        else:
+            n = (self._unread().get(ch) or [0])[0]
+            title, text = ((f"{n} new messages in {place}", f"{who}: {text}") if n > 1 else (f"{who} in {place}", text))
+            show = ()
+        where = {"conversation": ch, "ts": m["ts"], "thread": m["thread_ts"] if reply else ""}
+        told = False
+        for inst in self.host.instances():
+            try:
+                self.host.notify(inst, title, text, key=key, show=show, where=where)
+                told = True
+            except AppError:
+                pass                                        # (a host that takes none)
+        if told:
+            self._said[key] = now
+            self._noticed_now(add=key)
+
+    def _clear(self, ch: str) -> None:
+        """The conversation read: its notifications, if any may be open, no longer asking for the user."""
+        for key in (f"you:{ch}", f"new:{ch}"):
+            if key not in self._noticed or self.host is None:
+                continue
+            for inst in self.host.instances():
+                try:
+                    self.host.clear_notice(inst, key)
+                except AppError:
+                    pass
+            self._noticed_now(drop=key)
+
+    def _noticed_now(self, add: Optional[str] = None, drop: Optional[str] = None) -> None:
+        was = set(self._noticed)
+        if add:
+            self._noticed.add(add)
+        if drop:
+            self._noticed.discard(drop)
+        if self._noticed != was and self.store is not None:
+            self.store.set_setting("noticed", sorted(self._noticed))
 
     # -- names
 
@@ -532,6 +683,7 @@ class SlackApp(App):
             self._tell_agents(c["id"], m, skip=skip)
         self.store.active(c["id"], m["ts"])
         self.store.read(c["id"], m["ts"])
+        self._clear(c["id"])
         return {**m, "channel": c["id"]}
 
     # -- the panel
@@ -583,7 +735,11 @@ class SlackApp(App):
             cid, ts = str(ask.get("conversation") or ""), str(ask.get("ts") or "")
             if cid and ts:
                 self.store.read(cid, ts)
+                self._clear(cid)
                 self._tell_all({"kind": "unread", "unread": self._unread()})
+            return Response.json({"ok": True})
+        if path == "notified":
+            self._clear(str(ask.get("conversation") or ""))
             return Response.json({"ok": True})
         if path == "send":
             m = self.send(str(ask.get("conversation") or ""), str(ask.get("text") or ""),
@@ -626,12 +782,17 @@ class SlackApp(App):
                 if ask["tell_agents"] not in TELL:
                     raise AppError(f"tell_agents: one of {', '.join(TELL)}")
                 self.store.set_setting("tell_agents", ask["tell_agents"])
+            if "notify_system" in ask:
+                if not isinstance(ask["notify_system"], bool):
+                    raise AppError("notify_system: true or false")
+                self.store.set_setting("notify_system", ask["notify_system"])
             self._tell_all({"kind": "settings", "settings": self._settings()})
             return Response.json({"settings": self._settings()})
         return Response(404, b"not found")
 
     def _settings(self) -> dict:
-        return {"tell_agents": self.store.setting("tell_agents", "all")}
+        return {"tell_agents": self.store.setting("tell_agents", "all"),
+                "notify_system": bool(self.store.setting("notify_system", True))}
 
     # -- drafts
 

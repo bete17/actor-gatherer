@@ -192,8 +192,9 @@ class Host(ABC):
     def notify(self, instance: Instance, title: str, text: str = "", key: Optional[str] = None,
                show: Sequence[str] = ("ag",), where: Any = None) -> str:
         """A notification to the user, for an app whose manifest asks `notify` (manifest.NOTICE_TYPES): `title`, a line
-        of `text`; shown in the dashboard's list until the user looks at the instance, and as a pop-up there ("ag")
-        and, with "system", on the computer too; `where` (JSON) handed back to the panel as the user clicks it
+        of `text`; listed by the dashboard until the user looks at the instance, and popped up where `show` says: "ag",
+        there; "system", on the computer; neither (`()`), only listed; `where` (JSON) handed back to the panel as the
+        user clicks it
         (the SDK's `ag.notices.onOpen`). A newer one of the same `key` takes the open one's place. -> its id."""
         raise AppError("this host takes no notifications", 403)
 

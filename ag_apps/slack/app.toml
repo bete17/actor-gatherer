@@ -41,6 +41,12 @@ entry = "panel/index.html"
 [capabilities]
 message_agents = true
 actors = true
+notify = true
+
+# the live line kept up (backend.py's keep_line): checked every minute -- and the backend started with the dashboard
+[[schedules]]
+name = "line"
+every = "1m"
 
 [[tools]]
 name = "read"

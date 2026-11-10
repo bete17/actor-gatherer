@@ -51,12 +51,14 @@ FAR_BELL = BELL.replace('name = "bell"', 'name = "far_bell"').replace(
 class MadeTest(unittest.TestCase):
     """What one may say, as the host checks it before recording it."""
 
-    def test_a_title_one_line_each_and_show_always_in_the_dashboard(self):
-        got = notices.made("  New message\nfrom Leo ", "a\n\nline", key="dm:leo", show=["system"], where={"c": "D1"})
+    def test_a_title_one_line_each_and_show_where_it_pops_up(self):
+        got = notices.made("  New message\nfrom Leo ", "a\n\nline", key="dm:leo", show=["system", "ag"], where={"c": "D1"})
         self.assertEqual((got["title"], got["text"], got["key"], got["show"], got["where"]),
                          ("New message from Leo", "a line", "dm:leo", ["ag", "system"], {"c": "D1"}))
         self.assertEqual(len(got["id"]), 12)
-        self.assertEqual(notices.made("x")["show"], ["ag"])
+        self.assertEqual(notices.made("x")["show"], ["ag"])                 # popped up in the dashboard, by default
+        self.assertEqual(notices.made("x", show=["system"])["show"], ["system"])
+        self.assertEqual(notices.made("x", show=())["show"], [])             # quiet: only listed
         self.assertTrue(notices.made("t" * 500)["title"].endswith("…"))
         self.assertEqual(len(notices.made("t" * 500)["title"]), app_kit.manifest.NOTICE_TITLE_CHARS)
 
@@ -200,6 +202,12 @@ class ServedTest(HostBase):
     def test_a_panel_sends_clears_and_the_reader_dismisses(self):
         _, inst = self.api("POST", "/api/apps/open", {"app": "bell", "gatherer": "g", "folder": self.folder})
         where = {"app": "bell", "gatherer": "g", "instance": inst["id"]}
+        status, got = self.api("POST", "/api/apps/notify", {**where, "title": "Quiet", "key": "q", "show": []})
+        self.assertEqual(status, 200, got)
+        self.httpd.app_host.flush()
+        g = next(x for x in data.home([])["gatherers"] if x["name"] == "g")
+        self.assertEqual([n["show"] for n in g["apps"][inst["id"]]["notices"]], [[]])   # only listed
+        self.api("POST", "/api/apps/notices/settle", {**where, "which": "q", "by": "app"})
         status, got = self.api("POST", "/api/apps/notify", {**where, "title": "From the panel", "key": "p"})
         self.assertEqual(status, 200)
         self.assertEqual(self.notices_of(inst["id"]), ["From the panel"])
@@ -222,6 +230,11 @@ class ServedTest(HostBase):
                                                           "args": {"title": "Far away", "show": ["system"], "key": "f"}})
         self.assertEqual((status, got["isError"]), (200, False), got)
         self.assertEqual(self.notices_of(inst["id"]), ["Far away"])
+        self.api("POST", "/api/apps/call", {**call, "tool": "ring", "args": {"title": "Quiet", "show": [], "key": "q"}})
+        self.httpd.app_host.flush()
+        g = next(x for x in data.home([])["gatherers"] if x["name"] == "g")
+        self.assertEqual([n["show"] for n in g["apps"][inst["id"]]["notices"]], [["system"], []])   # as sent, from afar
+        self.api("POST", "/api/apps/call", {**call, "tool": "hush", "args": {"which": "q"}})
         status, got = self.api("POST", "/api/apps/call", {**call, "tool": "ring", "args": {"title": ""}})
         self.assertTrue(got["isError"])
         self.assertIn("a title", got["content"][0]["text"])
