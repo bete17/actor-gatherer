@@ -871,6 +871,19 @@ class ServerTest(unittest.TestCase):
         self.assertTrue(saved["zone"])                                   # what p1 typed: kept after the save
         self.assertEqual(self.post("/api/edit/zone/clear", {"path": self.path, "root": self.root})["zone"], [])
 
+    def test_the_last_keys_saved_with_them_in_one_request(self):
+        """A page going (its panel taken away, the page closed) sends its last keys with `save`: one request, which
+        outlives it, applies them and saves the file."""
+        e1 = self.stream("p1", 1)
+        d1, t1 = page_of(self.next(e1, "init"))
+        before = d1.get_state()
+        t1.insert(len("# Title\n\n"), "Last. ")
+        state = self.post("/api/edit/update", {"path": self.path, "root": self.root, "conn": "p1", "save": True,
+                                               "update": base64.b64encode(d1.get_update(before)).decode()})
+        self.assertFalse(state["dirty"])
+        with open(self.path) as fh:
+            self.assertEqual(fh.read(), "# Title\n\nLast. Body.\n")
+
     def test_the_listing_and_what_is_refused(self):
         got = json.load(self.get(f"/api/edit/list?{urllib.parse.urlencode({'dir': self.root, 'root': self.root})}"))
         self.assertEqual([e["name"] for e in got["entries"]], ["a.md"])

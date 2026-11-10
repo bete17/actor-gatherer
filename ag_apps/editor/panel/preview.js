@@ -5,10 +5,37 @@
 // asks for a source's place in the PDF (pvLocate: "→ PDF"), and opens what it sends back (a place in the PDF's source:
 // edShowFile). Hidden until it is first run, or opened by its button; its × hides it again.
 let pvApi = null;
+// What this Editor's preview showed, kept in this browser (as its file is: edKeepFile), so that, its panel drawn again
+// (its task left and come back to, the page reloaded), it opens as it was left: shown or not; for the run it showed,
+// the tab picked and where its output and its result were scrolled; and, for the PDF it showed, its place (page, zoom,
+// where on it) -- pdf.js keeps one itself only for the very same build, not for one made meanwhile.
+const PV_KEEP_MS = 250;          // ms after the preview last moves that where it is is kept
+const pvKey = () => `ag-editor-preview:${(agApp && agApp.instance) || ""}`;
+function pvKept() {
+  try { const v = JSON.parse(localStorage.getItem(pvKey()) || "null"); return v && typeof v === "object" ? v : {}; }
+  catch (e) { return {}; }
+}
+let pvRec = null, pvDirty = false, pvKeepT = null;   // this Editor's record, as this page keeps it
+function pvKeep(change) {
+  const rec = pvRec || (pvRec = pvKept());
+  if (change.run && change.run !== rec.run) { delete rec.picked; delete rec.out; delete rec.result; }   // another run's
+  Object.assign(rec, change);
+  pvDirty = true;
+  clearTimeout(pvKeepT);
+  pvKeepT = setTimeout(pvFlush, PV_KEEP_MS);
+}
+function pvFlush() {
+  clearTimeout(pvKeepT);
+  if (!pvDirty) return;
+  try { localStorage.setItem(pvKey(), JSON.stringify(pvRec)); } catch (e) { /* this page only */ }
+  pvDirty = false;
+}
+window.addEventListener("pagehide", pvFlush);       // what moved last, as the panel goes
 function pvShow(on) {
   if (!ed.pv) return;
   ed.pv.hidden = !on;
-  try { localStorage.setItem("ag-editor-preview-shown", on ? "1" : ""); } catch (e) { /* this page only */ }
+  try { localStorage.setItem("ag-editor-preview-shown", on ? "1" : ""); } catch (e) { /* this page only */ }   // a new Editor's
+  pvKeep({ shown: !!on }); pvFlush();
   if (on && pvApi) pvApi.shown();                    // what it is, for the file open (or the folder shown), once
 }
 async function pvRun(d) { pvShow(true); if (pvApi) await pvApi.run(d); }
@@ -23,8 +50,8 @@ function pvMount(box) {
       el("button", { type: "button", class: "pv-busy", hidden: "",
         title: "It is being run again: the last one made stays here until the run ends. Click to see its output" }))));
   pvApi = pvMake(agApp, box.firstChild);
-  let shown = false;
-  try { shown = localStorage.getItem("ag-editor-preview-shown") === "1"; } catch (e) { /* this page only */ }
+  let shown = pvKept().shown;                        // this Editor's, else as the last one was left
+  if (typeof shown !== "boolean") try { shown = localStorage.getItem("ag-editor-preview-shown") === "1"; } catch (e) { shown = false; }
   if (shown) queueMicrotask(() => pvShow(true));     // (once the Editor has its folder: edMount)
 }
 function pvMake(ag, root) {
@@ -34,7 +61,8 @@ function pvMake(ag, root) {
   const dom = { head: root.querySelector(".pv-h"), cmd: root.querySelector(".pv-cmd"), card: root.querySelector(".pv-card"),
     result: root.querySelector(".pv-result"), output: root.querySelector(".pv-out"), busy: root.querySelector(".pv-busy") };
   const pv = { path: null, file: null, about: null, run: null, out: "", picked: null, form: null, err: "", busy: false,
-    sig: "", card: "", held: null, peek: null, pdf: null, pinned: true, tick: null };
+    sig: "", card: "", held: null, peek: null, pdf: null, pinned: true, tick: null,
+    back: pvKept(), outTop: null, resultTop: null };  // back: as it was left (pvKept), taken once each; outTop, resultTop: its scrolls
 
   // ---- helpers
   function el(tag, attrs, ...kids) {
@@ -72,6 +100,13 @@ function pvMake(ag, root) {
       if (moved || !pv.run || (a.run && a.run.id !== pv.run.id)) {
         pv.run = a.run; pv.out = (a.dropped ? "…\n" : "") + (a.output || ""); pv.picked = null; pv.sig = ""; pv.held = null;
       }
+      const b = pv.back;
+      if (b.run && pv.run && b.run === pv.run.id) {   // the run it showed when it was left: its tab, its scrolls
+        pv.picked = b.picked === "result" || b.picked === "output" ? b.picked : null;
+        if (typeof b.out === "number") { pv.pinned = false; pv.outTop = b.out; }
+        if (typeof b.result === "number") pv.resultTop = b.result;
+      }
+      b.run = null;
     } catch (e) { pv.err = e.message; }
     draw(); out();
   }
@@ -171,7 +206,22 @@ function pvMake(ag, root) {
       el("span", { class: "o", text: "Output" }));
   }
   dom.busy.addEventListener("click", () => { if (pv.run) { pv.picked = "output"; pv.peek = pv.run.id; draw(); } });
-  dom.output.addEventListener("scroll", () => { const o = dom.output; pv.pinned = o.scrollTop + o.clientHeight >= o.scrollHeight - 8; });
+  dom.output.addEventListener("scroll", () => {
+    const o = dom.output;
+    if (!o.clientHeight) return;                      // not drawn (the panel going): as it was
+    pv.pinned = o.scrollTop + o.clientHeight >= o.scrollHeight - 8;
+    if (pv.run) pvKeep({ run: pv.run.id, out: pv.pinned ? null : Math.round(o.scrollTop) });
+  });
+  dom.result.addEventListener("scroll", (ev) => {    // a text's or a page of Markdown's (a PDF's: its own, pdfKeep)
+    const n = ev.target;
+    if (pv.run && n.clientHeight && (n === dom.result || n.parentNode === dom.result)) pvKeep({ run: pv.run.id, result: Math.round(n.scrollTop) });
+  }, true);
+  // a tab picked: kept for the run it shows
+  function pick(k) {
+    pv.picked = k;
+    if (pv.run) pvKeep({ run: pv.run.id, picked: k });
+    draw();
+  }
 
   function draw() {
     const a = pv.about, p = a && a.preview, r = pv.run;
@@ -200,7 +250,7 @@ function pvMake(ag, root) {
       card === "" || pv.busy ? stat : null,
       tab && hasResult ? el("span", { class: "pv-tabs", role: "group", "aria-label": "Show" },
         ...[["result", "Result"], ["output", "Output"]].map(([k, t]) => btn(t, k === "result" ? "What it makes" : "What it printed",
-          () => { pv.picked = k; draw(); }, { class: tab === k ? "on" : null, "aria-pressed": tab === k ? "true" : "false" }))) : null,
+          () => pick(k), { class: tab === k ? "on" : null, "aria-pressed": tab === k ? "true" : "false" }))) : null,
       live ? btn("Stop", r.server ? "Stop its server" : "Stop its run", stopIt)
         : p && !p.needs_ok && !pv.form ? btn(r ? "Re-run" : "Run", `Run it again: ${p.command || "(nothing to run)"}`, () => runIt(), { disabled: pv.busy }) : null,
       p && !pv.form ? btn("Edit", "Change the command, or what it shows", edit) : null,
@@ -292,7 +342,7 @@ function pvMake(ag, root) {
       el("code", { text: s.rel }), r.state === "running" ? " shows here once the run ends." : " is not there: the command did not make it."));
     if (s.url && r.state !== "ready") return box.replaceChildren(el("div", { class: "pv-note", text: `Waiting for ${s.url} to answer…` }));
     if (s.kind === "image" || s.kind === "svg") return box.replaceChildren(el("div", { class: "img" }, el("img", { src: url, alt: s.rel || "", draggable: "false" })));
-    if (s.kind === "pdf") return pdf(box, url);
+    if (s.kind === "pdf") return pdf(box, url, s.rel);
     if (s.kind === "url") return box.replaceChildren(el("iframe", { src: url, title: "The preview", class: "url" }));
     if (s.kind === "html") return box.replaceChildren(el("iframe", { src: url, title: "The preview", sandbox: "allow-scripts allow-forms allow-modals allow-popups" }));
     box.replaceChildren(el("div", { class: "pv-note", text: "Loading…" }));
@@ -302,8 +352,13 @@ function pvMake(ag, root) {
         const md = el("div", { class: "md" });
         md.innerHTML = DOMPurify.sanitize(marked.parse(text));
         box.replaceChildren(md);
-      } else box.replaceChildren(el("pre", { text }));
+        scrollBack(box);
+      } else { box.replaceChildren(el("pre", { text })); scrollBack(box.firstChild); }
     }).catch((e) => { if (pv.sig === sig) box.replaceChildren(el("div", { class: "pv-note", text: `It could not be read: ${e.message}` })); });
+  }
+  function scrollBack(node) {                         // where it was left, once: the run it showed then
+    if (pv.resultTop > 0) node.scrollTop = pv.resultTop;
+    pv.resultTop = null;
   }
   function out() {
     if (pv.outQueued) return;
@@ -313,16 +368,21 @@ function pvMake(ag, root) {
       const o = dom.output, r = pv.run, text = clean(pv.out);
       o.textContent = text || (r && r.state === "running" ? "" : r && r.command ? "(It printed nothing.)" : "(Nothing ran.)");
       if (pv.pinned) o.scrollTop = o.scrollHeight;
+      else if (pv.outTop !== null && text) { o.scrollTop = pv.outTop; pv.outTop = null; }   // where it was left
     });
   }
 
   // ---- a PDF, in pdf.js's viewer (the dashboard's copy, /_ag/lib/pdfjs): one viewer kept from run to run, each new
   // build opened where the user was; in the dashboard's colours; its own scripts not run; its sidebar closed on load.
   const viewer = (url) => `/_ag/lib/pdfjs/web/viewer.html?file=${encodeURIComponent(url)}`;
-  function pdf(box, url) {
+  // `rel`: the PDF's path in the project -- shown first in this panel, it opens where it was left, if it was this PDF:
+  // the viewer's own open parameters (#page=3&zoom=150,40,700), which it takes over its history of this very build.
+  function pdf(box, url, rel) {
     const had = pv.pdf;
     if (had && had.frame.parentNode === box) { if (had.url !== url) pdfOpen(had, url); return; }
-    const frame = el("iframe", { class: "pdf", title: "The preview", src: viewer(url) });
+    const back = pv.back.pdf, at = back && back.rel === rel && typeof back.at === "string" ? `#${back.at}` : "";
+    pv.back.pdf = null;
+    const frame = el("iframe", { class: "pdf", title: "The preview", src: viewer(url) + at });
     const f = pv.pdf = { frame, url };
     frame.addEventListener("load", () => { pdfTheme(f); pdfHooks(f); });
     box.replaceChildren(frame);
@@ -356,6 +416,11 @@ function pvMake(ag, root) {
     try { box = f.frame.contentDocument.getElementById("viewerContainer"); } catch (e) { /* not the viewer's page */ }
     if (!box || box.agSync) return;
     box.agSync = true;
+    const app = pdfApp(f);                                                  // its place, kept as it moves (pv.back.pdf)
+    if (app && app.initializedPromise) app.initializedPromise.then(() => app.eventBus.on("updateviewarea", (e) => {
+      const at = e.location && e.location.pdfOpenParams, s = pv.run && pv.run.shows;
+      if (at && s && s.rel && pv.pdf === f && box.clientHeight) pvKeep({ pdf: { rel: s.rel, at: at.replace(/^#/, "") } });
+    }));
     box.addEventListener("dblclick", (ev) => fromPdf(f, ev));
     box.ownerDocument.addEventListener("keydown", (ev) => {                  // ⌘↵ in the viewer: Execute, as in the file
       if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey) && !ev.repeat) { ev.preventDefault(); edExecute(); }
@@ -407,7 +472,7 @@ function pvMake(ag, root) {
       pv.err = "No PDF is shown yet: run the preview first."; draw();
       return;
     }
-    if (pv.picked === "output") { pv.picked = "result"; draw(); }
+    if (pv.picked === "output") pick("result");
     const got = await sync({ mode: "forward", file, line, column });
     if (got) mark(pv.pdf, got);
   }

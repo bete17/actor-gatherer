@@ -80,8 +80,13 @@ async function get(path) {
   if (!r.ok) throw new Error(got.error || `${path}: ${r.status}`);
   return got;
 }
-async function post(path, body) {
-  const r = await fetch(forEditor(path), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+// `keep`: sent even if the panel goes meanwhile (taken away with its task, or the page closed), the request outliving it --
+// as long as it is small enough for the browser to allow that (KEEPALIVE_MAX).
+const KEEPALIVE_MAX = 60000;     // bytes: what the browser lets the requests outliving a page carry is 64 KiB in all
+async function post(path, body, keep = false) {
+  const data = JSON.stringify(body);
+  const r = await fetch(forEditor(path), { method: "POST", headers: { "Content-Type": "application/json" }, body: data,
+    keepalive: keep && data.length < KEEPALIVE_MAX });
   const got = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(got.error || `${path}: ${r.status}`);
   return got;
