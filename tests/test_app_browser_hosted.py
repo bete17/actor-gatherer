@@ -225,6 +225,14 @@ class ServedTest(Hosted):
         self.ask("POST", f"{self.base}/watch", {"page": "pg1", "visible": False})   # its panel out of sight
         self.assertFalse(b.watching())
 
+    def test_the_address_bar_s_suggestions_for_every_browser(self):
+        self.core.in_db(lambda c: sys.modules["_ag_app_browser.visited"].visit(c, "https://example.com/a", "A page"))
+        status, got = self.ask("GET", "/api/visited?q=exam")
+        self.assertEqual((status, got), (200, {"pages": [{"url": "https://example.com/a", "title": "A page"}]}))
+        self.assertEqual(self.ask("POST", "/api/visited", {"forget": "https://example.com/a"})[0], 200)
+        self.assertEqual(self.ask("GET", "/api/visited?q=exam")[1], {"pages": []})
+        self.assertEqual(self.ask("POST", "/api/visited", {"forget": "x"}, origin="http://evil.example")[0], 403)
+
     def test_only_its_own_panel_may_post_and_an_unknown_browser_is_not_found(self):
         self.assertEqual(self.ask("POST", f"{self.base}/nav", {"url": "x"}, origin="http://evil.example")[0], 403)
         self.assertEqual(self.ask("POST", f"{self.base}/nav", {"url": "x"}, origin=None)[0], 403)
