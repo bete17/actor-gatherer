@@ -50,8 +50,13 @@ test("lines picked by a drag from one line into others are deleted together, and
 
   await sweep(page, panel, "two", "three", "two"); // back into its own line: its text, no line picked
   await expect(panel.locator("#blocks > .blk.picked")).toHaveCount(0);
+  await expect.poll(() => panel.locator("body").evaluate(() => getSelection()!.toString())).not.toBe("");
+  // that text put down first: a drag that starts on selected text moves the text (the browser's own drag and drop)
+  await row(panel, "four").locator(".tx").click();
+  await expect.poll(() => panel.locator("body").evaluate(() => getSelection()!.toString())).toBe("");
 
   await sweep(page, panel, "two", "three");
+  await expect.poll(() => lines(panel)).toEqual(["one", "two", "three", "four"]); // no words moved
   await expect.poll(() => pickedLines(panel)).toEqual(["two", "three"]);
   await expect(panel.locator("#pk-bar")).toBeVisible();
   await expect(panel.locator("#pk-bar .pk-n")).toHaveText("2 lines");
