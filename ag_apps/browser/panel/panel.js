@@ -1089,6 +1089,11 @@
   }
 
   // ---------------------------------------------------------------- started
+  // a link clicked in the dashboard, in an agent's pane (the open-url intent): opened here -- in the tab shown, if this
+  // Browser was just opened for it, else in a new tab (backend.py's `open`)
+  ag.intents.on("open-url", (d) => {
+    if (d && d.url) post("open", { url: String(d.url) }).catch(bwSay(b));
+  });
   // its agent's next message, seen by the backend, puts the picks away: drawn again with the state that says so
   tellScheme();
   bwListen(b);

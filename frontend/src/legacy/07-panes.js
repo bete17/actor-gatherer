@@ -775,6 +775,69 @@ async function restoreAppPanes() {
   }
   topLayout(); saveAppPanes();
 }
+// ------------------------------------------------------------------ links
+// A link clicked in an actor's pane -- in a message, in its terminal -- opened in a Browser of that actor's task, by
+// app_kit's open-url intent (the Browser's panel takes it): the Browser attached to the actor -- the one whose panel
+// shows, if several are -- in a new tab; with none, a new Browser in the actor's folder, put in its task (an actor
+// alone made a task with it: task_links.py), opened at the link. Its panel shown above, selected; the actor's task
+// entered first, if another is shown. Left as they were: a link to this dashboard or to no web page (mailto:, file:), a
+// click with a key held (⌘, Ctrl, Shift, ⌥) or another button -- a tab of the browser's own, in the ag app the user's
+// browser -- and a link where there is no agent to give a Browser: a terminal of its own, the gatherer agent's.
+const LINK_APP = "browser";
+const linkOpening = new Map(), linkMade = new Map();   // per actor: its links, opened one after another; the Browser
+                                                        // a link made it (attachedTo's read may be a second old)
+const webLink = (href) => {
+  try {
+    const u = new URL(href, location.href);
+    return /^https?:$/.test(u.protocol) && u.origin !== location.origin ? u.href : "";
+  } catch (e) { return ""; }
+};
+const plainClick = (ev) => !ev || (!ev.button && !ev.metaKey && !ev.ctrlKey && !ev.shiftKey && !ev.altKey);
+// Whether the page takes a click on a link to `href` shown with this page's actor (a frame's: the page around it does)
+function linkClicked(href, ev) {
+  const url = webLink(href);
+  if (!url || !plainClick(ev) || SNAPSHOT || !state.selected) return false;
+  return PANE ? !!(PANE.openLink && PANE.openLink(window, url)) : openLink(state.selected[0], state.selected[1], url);
+}
+// `url` opened for actor `c` of `gname`, if a Browser can be given it: false, nothing done
+function openLink(gname, c, url) {
+  const g = state.home && state.home.gatherers.find((x) => x.name === gname);
+  const a = g && !isShell(c) ? actorOf(g, c) : null;
+  const app = window.agNext && window.agNext.apps.named(LINK_APP);
+  if (PANE || !a || !app || isCoordinator(a)) return false;
+  const k = key(gname, a.channel);
+  const next = (linkOpening.get(k) || Promise.resolve()).then(() => linkInBrowser(g, a, app, url))
+    .catch((e) => paneNote(`${app.label}: ${e.message}`));
+  linkOpening.set(k, next);
+  return true;
+}
+async function linkInBrowser(g, a, app, url) {
+  await showItemsTask(g, a.channel);
+  const k = key(g.name, a.channel), made = linkMade.get(k);
+  const had = (await window.agNext.apps.attachedTo(g.name, a.channel)).filter((i) => i.app === app.name);
+  const shown = (id) => panes.apps.find((p) => !p.held && p.instance.id === id);
+  let inst = (had.find((i) => shown(i.id)) || (made && shown(made) && shown(made).instance) || had[0]) || null;
+  if (!inst) {
+    const was = selectedTask();
+    inst = await window.agNext.apps.open(app.name, g.name, cwdOf(a) || null, a.channel);
+    linkMade.set(k, inst.id);
+    await readApps(g.name, true);                    // the task it made, as the server has it now
+    retask(was);
+  }
+  let p = panes.apps.find((q) => q.instance.id === inst.id);
+  if (!p) p = addAppPane(app, inst);
+  else if (p.held) holdAppPane(p, false);
+  saveAppPanes();
+  selectAppPane(p);
+  p.panel.intent("open-url", { url });               // held by the panel's host until a new panel has connected
+}
+if (!SNAPSHOT) document.addEventListener("click", (ev) => {
+  const a = ev.target instanceof Element ? ev.target.closest("a[href]") : null;
+  if (!a || a.hasAttribute("download") || ev.defaultPrevented || !a.closest("#pane-here")) return;
+  if (!linkClicked(a.getAttribute("href"), ev)) return;
+  ev.preventDefault();
+  ev.stopPropagation();                              // a link's click: not also its message's
+}, true);
 // What a frame's page asks of this one (its PANE).
 if (!PANE && !SNAPSHOT) window.agPanes = Object.freeze({
   get stream() { return state.stream; },
@@ -800,6 +863,7 @@ if (!PANE && !SNAPSHOT) window.agPanes = Object.freeze({
   top(win, height) { const p = paneOf(win); if (p) topRow(p, height); },
   focus(win) { if (state.renaming) endRename(true); const p = paneOf(win); if (p) focusPane(p); },   // a press in its frame
   close(win) { const p = paneOf(win); if (p) closePane(p); },
+  openLink(win, url) { const p = paneOf(win); return !!p && openLink(p.g, p.c, url); },   // a link clicked in it (linkClicked)
 });
 // In a frame: its URL says what it shows -- its actor and view -- so that loaded again it shows them still.
 function paneUrl() {
