@@ -187,8 +187,9 @@ class EditorApp(App):
     def _post(self, path: str, b: dict, here: bool):
         docs = self.host.docs()
         p, root = str(b.get("path") or ""), str(b.get("root") or "")
-        if path == "edit/update":
-            return docs.edit(p, root, str(b.get("conn") or ""), _b64(b.get("update")))
+        if path == "edit/update":                    # `save`: saved too, the page's last keys as it goes (one request)
+            state = docs.edit(p, root, str(b.get("conn") or ""), _b64(b.get("update")))
+            return docs.save(p, root) if b.get("save") else state
         if path == "edit/aware":
             docs.aware(p, root, str(b.get("conn") or ""), _b64(b.get("update")))
             return {}
