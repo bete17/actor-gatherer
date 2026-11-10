@@ -101,12 +101,23 @@ test("a link of an actor with a Browser opens in a new tab of it, no other Brows
   await expect(browserPane(page)).toHaveCount(1);
 });
 
-test("a link clicked with a key held opens as before, in a tab of its own", async ({ page }) => {
+test("a link clicked with a key held is left to the browser, as before", async ({ page }) => {
   const seen = await host(page, () => false);
   await openActor(page, CLAUDE);
-  const tab = page.context().waitForEvent("page"); // (noopener: a page of the browser's, not this one's popup)
-  await (await addLink(page)).click({ modifiers: [beside] });
-  await (await tab).close();
+  const link = await addLink(page);
+  // the click as it reaches the link, after the page's own handling: whether the page took it, then put away here --
+  // what the browser does with it (a tab of its own) varies (headless Chromium on Linux opens none)
+  await link.evaluate((a) =>
+    a.addEventListener("click", (ev) => {
+      a.dataset.taken = String(ev.defaultPrevented);
+      ev.preventDefault();
+    }),
+  );
+  for (const key of [beside, "Shift", "Alt"] as const) {
+    await link.evaluate((a) => delete a.dataset.taken);
+    await link.click({ modifiers: [key] });
+    await expect(link).toHaveAttribute("data-taken", "false");
+  }
   expect(seen.opened).toEqual([]);
   await expect(browserPane(page)).toHaveCount(0);
 });
