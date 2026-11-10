@@ -1,9 +1,11 @@
 """What an app's backend is, and what the host gives it (DESIGN.md, "An app is a manifest, a backend and a panel").
 
     App         what an app's backend subclasses: open and close instances, answer tool calls and its panel's own
-                requests, hear of agents attached. Every method has a default (`call`'s refuses every tool)
+                requests, hear of agents attached, do its scheduled work. Every method has a default (`call`'s
+                refuses every tool)
     Host        what the host gives an app: insert and read events, the agents of an instance, a message to its
-                panels, the app's own folder, a notification to the user
+                panels, the app's own folder, a notification to the user, a message to one of its agents and an
+                agent of its own started
     Instance    one opened copy of an app: the host makes its id; the app may set its title and data
     Caller      who made a tool call: an agent (its channel), or the user through the panel
     ToolResult  a tool call's answer, as MCP's `tools/call` gives one
@@ -200,6 +202,21 @@ class Host(ABC):
         user."""
         raise AppError("this host takes no notifications", 403)
 
+    def send_agent(self, instance: Instance, channel: str, text: str) -> None:
+        """A message to one of the instance's agents, as the user -- for an app whose manifest asks `message_agents` --
+        as Chat sends one: typed into its terminal (opened, its agent started, if it is not); while it works, after its
+        turn. AppError, 409, while its terminal can't take a message (a dialog or a question open, something typed and
+        not sent): nothing typed, try again later."""
+        raise AppError("this host passes on no messages", 403)
+
+    def start_agent(self, instance: Instance, text: str, name: Optional[str] = None, harness: Optional[str] = None,
+                    model: Optional[str] = None, folder: Optional[str] = None) -> str:
+        """A new agent of the app's own -- for an app whose manifest asks `message_agents` -- attached to the instance,
+        in its gatherer, named `name`, on `harness` and `model` (none: the host's defaults), working in `folder` (none:
+        the instance's, else the app's own folder), with `text` as its first message, sent as the user. -> its
+        channel."""
+        raise AppError("this host starts no agents", 403)
+
 
 class App:
     """An app's backend. The host sets `manifest` and calls `start` once, before anything else; then, from any thread,
@@ -251,6 +268,14 @@ class App:
         browser (desktop/DESIGN.md, "The app link"; the pages this app makes are its own, apart from another app's).
         `send(text)` a message to it, `close()` the link ended. Returns what takes each message from it (None: the link
         gone) -- or None, not taken."""
+        return None
+
+    def scheduled(self, schedule: str, due: float) -> Optional[float]:
+        """One of its manifest's [[schedules]] is due (schedules.py): the run that was due at `due` (epoch seconds),
+        called by the host in a thread of its own, one run of a schedule at a time, while the app has an open instance
+        somewhere. Not one instance's: the app does what it does for each of its instances (`host.instances()`).
+        Returns when to try again, in seconds, when the work couldn't be done yet (what it reads isn't out yet, the
+        network is down) -- None when it is done. An exception is tried again too, a while later."""
         return None
 
     def guard(self, instance: Instance, path: str, caller: Caller) -> Optional[str]:

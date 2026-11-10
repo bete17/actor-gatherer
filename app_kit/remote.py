@@ -49,6 +49,7 @@ from .backend import App, AppError, Caller, Host, Instance, Response, ToolResult
 HOST_ENV, TOKEN_ENV, DATA_ENV = "AG_APP_HOST", "AG_APP_TOKEN", "AG_APP_DATA"
 START_WAIT = 20.0           # seconds the host waits for a started app to print its URL
 CALL_WAIT = 300.0           # seconds either side waits for an answer (a tool call can take a while)
+SCHEDULED_WAIT = 1800.0     # and for a scheduled run's (App.scheduled: a day's fetching)
 MAX_BODY = 64 * 1024 * 1024
 
 
@@ -161,6 +162,11 @@ class RemoteApp(App):
     def sleep(self, instance: Instance) -> None:
         self._op("sleep", {"instance": instance.to_dict()})
 
+    def scheduled(self, schedule: str, due: float) -> Optional[float]:
+        got = self._op("scheduled", {"schedule": schedule, "due": due}, timeout=SCHEDULED_WAIT) or {}
+        retry = got.get("retry")
+        return float(retry) if isinstance(retry, (int, float)) else None
+
     def call(self, instance: Instance, tool: str, args: dict, caller: Caller) -> ToolResult:
         return ToolResult.from_dict(self._op("call", {"instance": instance.to_dict(), "tool": tool, "args": args,
                                                        "caller": caller.to_dict()}))
@@ -196,6 +202,9 @@ def host_ops(host: Host, instance_of: Callable[[dict], Instance]) -> Dict[str, C
         "notify": lambda b: {"id": host.notify(instance_of(b["instance"]), b["title"], b.get("text") or "",
                                                b.get("key"), b.get("show") or ("ag",), b.get("where"))},
         "clear_notice": lambda b: host.clear_notice(instance_of(b["instance"]), b["which"]) or {},
+        "send_agent": lambda b: host.send_agent(instance_of(b["instance"]), str(b["channel"]), str(b["text"])) or {},
+        "start_agent": lambda b: {"channel": host.start_agent(instance_of(b["instance"]), str(b["text"]), b.get("name"),
+                                                              b.get("harness"), b.get("model"), b.get("folder"))},
     }
 
 
@@ -282,6 +291,14 @@ class RemoteHost(Host):
     def clear_notice(self, instance: Instance, which: str) -> None:
         self._op("clear_notice", {"instance": instance.to_dict(), "which": which})
 
+    def send_agent(self, instance: Instance, channel: str, text: str) -> None:
+        self._op("send_agent", {"instance": instance.to_dict(), "channel": channel, "text": text})
+
+    def start_agent(self, instance: Instance, text: str, name: Optional[str] = None, harness: Optional[str] = None,
+                    model: Optional[str] = None, folder: Optional[str] = None) -> str:
+        return str(self._op("start_agent", {"instance": instance.to_dict(), "text": text, "name": name,
+                                            "harness": harness, "model": model, "folder": folder})["channel"])
+
 
 def app_ops(app: App) -> Dict[str, Callable[[dict], Optional[dict]]]:
     """The host's calls of an app, answered by `app`: what an app in its own process serves."""
@@ -296,6 +313,7 @@ def app_ops(app: App) -> Dict[str, Callable[[dict], Optional[dict]]]:
         "open": lambda b: {"instance": app.open(inst(b["instance"]), dict(b.get("args") or {})).to_dict()},
         "close": lambda b: app.close(inst(b["instance"])),
         "sleep": lambda b: app.sleep(inst(b["instance"])),
+        "scheduled": lambda b: {"retry": app.scheduled(str(b["schedule"]), float(b["due"]))},
         "call": lambda b: app.call(inst(b["instance"]), b["tool"], dict(b.get("args") or {}),
                                    Caller.from_dict(b.get("caller"))).to_dict(),
         "request": request,

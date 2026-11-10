@@ -30,8 +30,8 @@ from typing import Optional
 
 import harness_kit
 
-from . import (actions, app_agents, app_docs, app_host, avatars, branches, coordination, data, folders, home, live,
-               livedocs, migrating, page_build, saved, sessions, task_links, tool_gateway)
+from . import (actions, app_agents, app_docs, app_host, app_schedules, avatars, branches, coordination, data, folders,
+               home, live, livedocs, migrating, page_build, saved, sessions, task_links, tool_gateway)
 
 STATIC, INDEX = page_build.STATIC, page_build.INDEX   # frontend/'s build (vite.config.ts), built by page_build.py
 BUILD = page_build.COMMAND
@@ -157,7 +157,7 @@ class Server:
         self.docs = livedocs.LiveDocs()                                # the files shared live (apps: app_docs.py)
         self.listener = self.fallback = self.rest = self.address_file = None   # for server_close,
         self.app_host = None
-        self.socket = self.app = self._uvicorn = self._done = self._failed = None
+        self.socket = self.app = self._uvicorn = self._done = self._failed = self.schedules = None
         self._lock = threading.Lock()
         self._shared, self._sharing = {"version": None, "at": 0.0, "value": None}, threading.Lock()
         self.branches = branches.Branches(self.docs, self.sessions, self.hub.ring)   # the actors' own branches
@@ -183,12 +183,15 @@ class Server:
         self.app_host.loaded_then = task_links.on_load
         self.app_host.attachable = task_links.attachable              # a gatherer's own agent: attached to no app
         self.app_host.told = lambda g: self.hub.ring(g, what="list")  # an app's notifications: the home read again
+        self.app_host.agents = app_agents.Messenger(self.sessions)   # an app's own messages to its agents
         if live_updates:                                              # an app's actors from before it was an app,
             threading.Thread(target=app_agents.adopt_all, args=(self.sessions, self.app_host),   # attached to it
                              name="ag-apps-adopt", daemon=True).start()
         self.keeps_actions = live_updates and not actions.ENABLED     # the reader's actions kept in the gatherers
         actions.ENABLED = actions.ENABLED or live_updates             # (actions.py), while it serves
         self.migrating = migrating.start(self.hub.ring) if live_updates else None   # an older gatherer's tables, once
+        self.schedules = app_schedules.Schedules(self.app_host).start() if live_updates else None   # the apps'
+                                                                       # [[schedules]], run as they come due
         self.listener = live.Listener(self.hub) if live_updates else None
         self.fallback = live.Fallback(self.hub) if live_updates else None
         folders.ensure()                                              # its tables, saved.py's folders copied in once
@@ -303,7 +306,7 @@ class Server:
         """Everything stopped: uvicorn (if it still serves), the parts, the socket, the sessions' agents and shells."""
         self._stop()
         for part in (self.listener, self.fallback, self.rest, self.docs, self.crew, self.branches,
-                     self.app_host):
+                     self.schedules, self.app_host):
             if part is not None:
                 part.close()
         if self.keeps_actions:

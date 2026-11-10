@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Paper news</title>
+<link rel="stylesheet" href="panel.css">
+</head>
+<body>
+<div id="app" class="ax">
+  <aside id="side" class="side" aria-label="Days">
+    <div class="side-head">
+      <span class="side-name">Paper news</span>
+      <span id="side-cats" class="side-cats"></span>
+      <button id="fetch" class="icon-btn" type="button" title="Fetch now" aria-label="Fetch now"></button>
+      <button id="gear" class="icon-btn" type="button" title="Settings" aria-label="Settings" aria-expanded="false"></button>
+    </div>
+    <nav id="days" class="days" aria-label="Days"></nav>
+    <div id="status" class="status" aria-live="polite"></div>
+  </aside>
+  <main class="main">
+    <div class="bar">
+      <button id="side-toggle" class="icon-btn" type="button" title="Show or hide the days" aria-label="Show or hide the days"></button>
+      <div class="bar-name">
+        <h1 id="head" class="head"></h1>
+        <span id="counts" class="counts"></span>
+      </div>
+      <div class="bar-tools">
+        <div id="tabs" class="seg tabs" role="tablist" aria-label="Which papers"></div>
+        <div id="cats" class="seg" role="tablist" aria-label="Category"></div>
+        <div id="kinds" class="seg" role="tablist" aria-label="Kind"></div>
+        <label class="find"><span class="sr">Find in these papers</span>
+          <input id="find" type="search" placeholder="Find in titles, authors, abstracts" autocomplete="off"></label>
+      </div>
+    </div>
+    <div id="scroll" class="scroll">
+      <div id="note" class="note" hidden></div>
+      <div id="list" class="list" aria-label="Papers"></div>
+      <div id="page" class="page" hidden></div>
+      <div id="more" class="more" hidden></div>
+    </div>
+  </main>
+  <div id="flash" class="flash" role="status" hidden></div>
+  <div id="sheet" class="sheet" role="dialog" aria-modal="false" aria-labelledby="sheet-h" hidden>
+    <div class="sheet-in">
+      <h2 id="sheet-h">Settings</h2>
+      <label class="field">Categories
+        <input id="set-cats" type="text" spellcheck="false" autocomplete="off" placeholder="cs.AI cs.DB">
+        <span class="hint">arXiv's category codes, space apart, such as cs.AI, cs.DB, cs.CL or stat.ML.</span>
+      </label>
+      <label class="check"><input id="set-repl" type="checkbox"> List updated papers too (new versions of older ones)</label>
+      <label class="check"><input id="set-sys" type="checkbox"> Notify me on this computer too, not only in the dashboard</label>
+      <p id="set-when" class="hint"></p>
+      <p id="set-err" class="err" hidden></p>
+      <div class="row">
+        <button id="set-save" class="btn primary" type="button">Save</button>
+        <button id="set-cancel" class="btn quiet" type="button">Cancel</button>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="/_ag/app.js"></script>
+<script src="panel.js"></script>
+</body>
+</html>

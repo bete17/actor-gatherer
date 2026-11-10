@@ -115,6 +115,8 @@ class AppHost:
         self.docs: Optional[app_kit.Docs] = None              # the dashboard's shared files (app_docs.py), once set
         self.told: Optional[Callable[[str], None]] = None      # the page told a gatherer's notifications changed, as
                                                                # written (the server's hub.ring)
+        self.agents = None                                     # an app's messages to its agents, and agents it starts
+                                                               # (app_agents.py's Messenger: the server's sessions)
         self.lock = threading.RLock()
         self._write_fn = write or _ag_insert
         self._writes: "queue.Queue" = queue.Queue()
@@ -422,6 +424,40 @@ class AppHost:
         i = self.instance(gatherer, instance_id, name)
         how = "cleared" if by == "app" else "dismissed"
         self._record(i, "app_notice_settled", {**app_kit.notices.settled(which, how), "by": by})
+
+    # -- an app's own messages to its agents
+
+    def send_agent(self, name: str, instance: Instance, channel: Any, text: Any) -> None:
+        """A message of app `name`'s to an agent attached to `instance`, as the user (app_kit's Host.send_agent), for one
+        whose manifest asks `message_agents`."""
+        self._may_message(name, instance)
+        if channel not in self.agents_of(instance):
+            raise AppError(f"{channel}: not an agent attached to this {self.hosted(name).manifest.label}", 403)
+        if not isinstance(text, str) or not text.strip():
+            raise AppError("send_agent: what to say?")
+        self.agents.send(instance.gatherer, str(channel), text)
+
+    def start_agent(self, name: str, instance: Instance, text: Any, label: Any = None, harness: Any = None,
+                    model: Any = None, folder: Any = None) -> str:
+        """A new agent of app `name`'s own, attached to `instance`, started with `text` (app_kit's Host.start_agent)
+        -> its channel."""
+        m = self._may_message(name, instance)
+        if not isinstance(text, str) or not text.strip():
+            raise AppError("start_agent: its first message?")
+        where = folder or instance.folder or os.path.join(home_apps(), name, "agent")
+        os.makedirs(where, exist_ok=True)
+        return self.agents.start(self, instance, text, str(label or m.agent.name.format(
+            app=m.label, folder=os.path.basename(where.rstrip("/")))), harness or None, model or None, where)
+
+    def _may_message(self, name: str, instance: Instance) -> Manifest:
+        m = self.hosted(name).manifest
+        if instance.app != name:
+            raise AppError(f"{instance.id}: not an instance of {name}", 403)
+        if not m.capabilities.message_agents:
+            raise AppError(f"{m.label} does not ask to message its agents (capabilities.message_agents)", 403)
+        if self.agents is None:
+            raise AppError("this host has no agents to message", 404)
+        return m
 
     def panels_of(self, instance: Instance) -> int:
         """How many panels of the instance are open: its streams that take its backend's messages."""
@@ -793,6 +829,12 @@ class Bound(app_kit.Host):
     def clear_notice(self, instance, which):
         i = self._own(instance)
         self._host.settle_notice(i.gatherer, i.id, which, by="app", name=self._name)
+
+    def send_agent(self, instance, channel, text):
+        self._host.send_agent(self._name, self._own(instance), channel, text)
+
+    def start_agent(self, instance, text, name=None, harness=None, model=None, folder=None):
+        return self._host.start_agent(self._name, self._own(instance), text, name, harness, model, folder)
 
     def docs(self):
         m = self._host.hosted(self._name).manifest
