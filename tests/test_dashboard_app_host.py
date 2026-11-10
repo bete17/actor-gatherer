@@ -201,6 +201,29 @@ class InstancesTest(HostBase):
         self.assertEqual(kinds, ["app_opened", "app_opened", "app_attached", "app_attached", "app_detached",
                                  "app_closed"])
 
+    def test_an_instance_named_by_the_user_is_kept_over_its_title_and_read_back(self):
+        a = self.host.open("notes", "g", self.folder, {"title": "Mine"})
+        sub, leave = self.host.subscribe("notes", a, [])
+        self.addCleanup(leave)
+        got = self.host.rename("g", a.id, "  Trip   plans ")
+        self.assertEqual((got.name, got.title), ("Trip plans", "Mine"))           # the app's title kept under it
+        self.assertEqual(sub.queue.get(timeout=5), ("message", {"ag": "instance", "attached": [], "name": "Trip plans"}))
+        self.assertEqual(self.host.listed("g")["instances"][0]["name"], "Trip plans")
+        self.assertEqual(self.host.rename("g", a.id, "Trip plans").name, "Trip plans")   # the same: nothing kept
+        self.assertEqual(len(self.host.rename("g", a.id, "x" * 300).name), app_host.NAME_CHARS)
+        self.host.flush()
+        self.assertEqual(self.new_host().instance("g", a.id).name, "x" * app_host.NAME_CHARS)   # read back
+        self.host.rename("g", a.id, "  ")                                         # none: its title again
+        self.host.flush()
+        self.assertEqual(self.new_host().instance("g", a.id).name, "")
+        named = [json.loads(r[0]) for r in self.rows(
+            "SELECT payload_json FROM events WHERE event_type_id = "
+            "(SELECT event_type_id FROM event_types WHERE name = 'app_named') ORDER BY row_id")]
+        self.assertEqual([(n["name"][:10], n["by"]) for n in named],
+                         [("Trip plans", "user"), ("xxxxxxxxxx", "user"), ("", "user")])
+        with self.assertRaises(AppError):
+            self.host.rename("g", "nope", "x")
+
     def test_an_instance_put_to_sleep_stays_open_its_agents_attached(self):
         a = self.host.open("notes", "g", self.folder)
         self.host.attach("g", a.id, "c1")
@@ -385,7 +408,7 @@ class LiveTest(HostBase):
         sub, leave = self.host.subscribe("notes", i, ["notes.added", "app_attached"])
         self.addCleanup(leave)
         self.host.attach("g", i.id, "c1")
-        self.assertEqual(sub.queue.get(timeout=5), ("message", {"ag": "instance", "attached": ["c1"]}))
+        self.assertEqual(sub.queue.get(timeout=5), ("message", {"ag": "instance", "attached": ["c1"], "name": ""}))
         self.assertEqual(sub.queue.get(timeout=5), ("message", {"hello": "c1"}))     # its backend's word
         self.host.call("notes", i, "add", {"text": "a"}, Caller(channel="c1"))
         self.host.flush()                                                          # the hub's ring, as ag's notice
@@ -520,9 +543,11 @@ class GatewayTest(GatewayBase):
         b = self.host.open("notes", "g", tempfile.mkdtemp(dir=self.tmp.name))
         self.host.attach("g", a.id, "c1")
         self.host.attach("g", b.id, "c1")
+        self.host.rename("g", b.id, "Trip")                          # named by the user: said by that name
         got = tool_gateway.call(self.rows, "c1", "notes_add", {"text": "x"})
         self.assertTrue(got["isError"])
         self.assertIn("say which with `instance`", got["content"][0]["text"])
+        self.assertIn(f"{b.id} (Trip)", got["content"][0]["text"])
         self.assertFalse(tool_gateway.call(self.rows, "c1", "notes_add", {"text": "x", "instance": b.id})["isError"])
         self.assertIn("not a Notes you are attached to",
                       tool_gateway.call(self.rows, "c2", "notes_add", {"text": "x", "instance": b.id})
@@ -653,6 +678,11 @@ class ServedTest(HostBase):
                                                             "events": [{"type": "user_message", "payload": {}}]})
         self.assertEqual(status, 403)
         self.assertEqual(self.api("GET", "/api/apps/events?app=notes&gatherer=g&instance=nope&types=x")[0], 404)
+        status, got = self.api("POST", "/api/apps/rename", {"gatherer": "g", "instance": inst["id"], "name": " Trip "})
+        self.assertEqual((status, got["name"]), (200, "Trip"))
+        self.assertEqual(self.api("GET", "/api/apps?gatherer=g")[1]["instances"][0]["name"], "Trip")
+        self.assertEqual(self.api("POST", "/api/apps/rename", {"gatherer": "g", "instance": "nope", "name": "x"})[0], 404)
+        self.assertEqual(self.api("POST", "/api/apps/rename", {"gatherer": "g", "instance": inst["id"], "name": 3})[0], 400)
 
     def test_an_app_and_the_agents_working_with_it_are_one_task(self):
         """task_links.py through the routes: an app opened by an agent put in a task with it; another the reader attaches

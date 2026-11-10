@@ -596,7 +596,7 @@ function actorCard(g, a, shown = false) {
   ].filter(Boolean);
 }
 // A task's card (05-agent-list.js's TASKS), live in the list and the rail: its name, its gatherer and what it holds, "+"
-// (an agent or an app added), then its items -- its actors, the lead first, as its row has them, each shown by a click
+// (an agent or an app added) and its pencil (it renamed, its name box under them while it is), then its items -- its actors, the lead first, as its row has them, each shown by a click
 // (⌘/Ctrl: beside the one shown); then its apps, each selected by a click (05-agent-list.js's selectApp) -- each with its
 // own × taking it out of the task (takeOut).
 function taskCard(g, t) {
@@ -609,7 +609,9 @@ function taskCard(g, t) {
     el("div", { class: "c-who" }, el("span", { class: "t-faces" }, ...taskFaces(g, t.id)),
       el("div", { class: "tx" }, el("div", { class: "c-nm", text: name }),
         el("div", { class: "c-sub", text: `${titleOf(g)} · ${what || "nothing"}` }))),
-    add ? el("div", { class: "c-acts" }, add) : null,
+    SNAPSHOT ? null : el("div", { class: "c-acts" }, add,
+      cardAct("rename", `${t.name ? "Rename" : "Name"} the task`, strokeIcon(ICONS.pencil, 13), () => editInCard({ g: g.name, item: `${TASK_ITEM}${t.id}` }))),
+    SNAPSHOT ? null : cardEditBox(g.name),
     el("div", { class: "c-tree" }, ...all.map((a) => {
       const [cls, label] = statusOf(a);
       return el("div", { class: "c-task-row" },
@@ -625,23 +627,27 @@ function taskCard(g, t) {
     }), ...apps.map((o) => el("div", { class: "c-task-row c-app-row" },
       el("button", { class: "c-row", type: "button", title: `${o.app.label}: select it, its panel above the panes`,
         onclick: (ev) => { cardHide(ev); selectApp(g.name, o, ev); } },
-      appMarkOf(o), el("span", { class: "nm", text: o.app.label }), el("span", { class: "st", text: o.title || "" })),
+      appMarkOf(o), el("span", { class: "nm", text: o.name || o.app.label }), el("span", { class: "st", text: o.title || "" })),
       el("button", { class: "act take-out", type: "button", title: `Take it out of the task: an app on its own again, the task's agents detached from it`,
         "aria-label": `Take ${o.app.label} out of the task`, onclick: (ev) => { ev.stopPropagation(); takeOut(g.name, appItem(o.id)); } },
       strokeIcon(ICONS.takeOut, 13))))),
     ...apps.map((o) => noticeList(g, o, apps.length > 1)),
-    el("div", { class: "c-hint", text: "Click the task to open it: its apps above, its actors side by side · drag an actor or an app onto it to put it in" }),
+    el("div", { class: "c-hint", text: "Click the task to open it: its apps above, its actors side by side · drag an actor or an app onto it to put it in · double-click its name in the list to rename it" }),
   ].filter(Boolean);
 }
-// An app's card (an app in no task: its row, its tile in the rail), live: what it is and shows, its notifications
+// An app's card (an app in no task: its row, its tile in the rail), live: what it is and shows -- the user's name for it
+// over them -- its pencil (it renamed, its name box under it while it is), its notifications
 function appCard(g, o) {
   return [
     el("div", { class: "c-who" }, appFace(o),
-      el("div", { class: "tx" }, el("div", { class: "c-nm", text: o.title || o.app.label }),
-        el("div", { class: "c-sub", text: [titleOf(g), o.app.label, o.folder].filter(Boolean).join(" · ") }))),
+      el("div", { class: "tx" }, el("div", { class: "c-nm", text: appShown(o) }),
+        el("div", { class: "c-sub", text: [titleOf(g), o.app.label, o.name ? o.title : null, o.folder].filter(Boolean).join(" · ") }))),
+    SNAPSHOT ? null : el("div", { class: "c-acts" },
+      cardAct("rename", `${o.name ? "Rename" : "Name"} ${o.app.label}`, strokeIcon(ICONS.pencil, 13), () => editInCard({ g: g.name, item: appItem(o.id) }))),
+    SNAPSHOT ? null : cardEditBox(g.name),
     noticeList(g, o) || el("div", { class: "c-st", text: "No notifications" }),
-    el("div", { class: "c-hint", text: "Click to show its panel · drag it onto an actor or a task to put it there" }),
-  ];
+    el("div", { class: "c-hint", text: "Click to show its panel · drag it onto an actor or a task to put it there · double-click its name in the list or its panel to rename it" }),
+  ].filter(Boolean);
 }
 // AN APP'S NOTIFICATIONS in a card: the newest first (NOTICES_SHOWN), each opening the app where it says (openNotice:
 // 07-notices.js) by a click, dismissed by its × -- those the reader has not seen marked; none, nothing. `named`: the app's
@@ -652,7 +658,7 @@ function noticeList(g, o, named = false) {
   if (!list.length) return null;
   const since = seen.at[appKey(g.name, o.id)] || 0;
   return el("div", { class: "c-notices", role: "list", "aria-label": `${o.app.label}'s notifications` },
-    named ? el("div", { class: "c-nhead", text: o.title ? `${o.app.label} · ${o.title}` : o.app.label }) : null,
+    named ? el("div", { class: "c-nhead", text: appTitle(o) }) : null,
     ...list.slice(0, NOTICES_SHOWN).map((n) => el("div", { class: "c-notice" + ((n.at || 0) > since ? " new" : ""), role: "listitem" },
       el("button", { class: "c-row", type: "button", title: `Open ${o.app.label} there`,
         onclick: (ev) => { cardHide(ev); openNotice(g.name, o.id, n); } },
@@ -754,14 +760,17 @@ function gathererCard(g) {
 const cardStarts = (g, f) => [railNew(g, f, "act start new-actor"), railMore(g, f, "act start new-more")].filter(Boolean);
 const cardAct = (cls, title, icon, fn) => el("button", { class: `act ${cls}`, type: "button", title, "aria-label": title,
   onclick: (ev) => { ev.stopPropagation(); fn(); } }, icon);
-// The card's name box: a folder named or made (`cardEdit`: {g, id -- null, made in `parent` -- parent}), or the gatherer
-// renamed ({g, gatherer: true}), as the list's own box does, which is out of sight with the list folded. One element for
+// The card's name box: a folder named or made (`cardEdit`: {g, id -- null, made in `parent` -- parent}), the gatherer
+// renamed ({g, gatherer: true}), or a task or an app ({g, item}: 05-agent-list.js's itemNamed), as the list's own box does, which is out of sight with the list folded. One element for
 // as long as it is open (`cardInput`), put back in each redraw of the card (`cardMoving`), its caret kept. Enter, or
 // leaving it, keeps what is typed; Esc, or nothing typed, leaves it.
 let cardEdit = null, cardInput = null, cardMoving = false;
 function editInCard(edit) {
   const g = state.home.gatherers.find((x) => x.name === edit.g);
-  cardEdit = { ...edit, key: hover.key, value: edit.gatherer ? (g ? titleOf(g) : edit.g) : edit.id !== null && edit.id !== undefined ? (folderById(edit.g, edit.id) || {}).name || "" : "" };
+  const item = edit.item && g ? itemNamed(g, edit.item) : null;
+  if (edit.item && !item) return;
+  cardEdit = { ...edit, key: hover.key, ...(item ? { kind: item[0], auto: item[3] } : {}),
+    value: item ? item[2] : edit.gatherer ? (g ? titleOf(g) : edit.g) : edit.id !== null && edit.id !== undefined ? (folderById(edit.g, edit.id) || {}).name || "" : "" };
   cardInput = null;
   cardDraw();
   if (cardInput) { cardInput.focus(); cardInput.select(); }
@@ -770,8 +779,9 @@ function cardEditBox(gname) {
   const e = cardEdit;
   if (!e || e.g !== gname || e.key !== hover.key) return null;   // the card it was opened in only
   if (!cardInput) {
-    cardInput = el("input", { class: "name-box c-box", type: "text", maxlength: String(e.gatherer ? 120 : FOLDER_CHARS), spellcheck: "false",
-      autocomplete: "off", placeholder: e.gatherer ? gname : "Folder name", "aria-label": e.gatherer ? "This gatherer's name" : "The folder's name" });
+    cardInput = el("input", { class: "name-box c-box", type: "text", maxlength: String(e.gatherer || e.kind ? 120 : FOLDER_CHARS), spellcheck: "false",
+      autocomplete: "off", placeholder: e.kind ? e.auto : e.gatherer ? gname : "Folder name",
+      "aria-label": e.kind ? `The ${e.kind}'s name` : e.gatherer ? "This gatherer's name" : "The folder's name" });
     cardInput.value = e.value;
     cardInput.addEventListener("input", () => { e.value = cardInput.value; });
     cardInput.addEventListener("keydown", (ev) => {
@@ -781,14 +791,15 @@ function cardEditBox(gname) {
     });
     cardInput.addEventListener("blur", () => { if (!cardMoving && document.hasFocus() && cardEdit === e) endCardEdit(true); });
   }
-  const what = e.gatherer ? "Its name" : e.id === null || e.id === undefined ? "A new folder's name" : "The folder's name";
+  const what = e.kind ? `The ${e.kind}'s name` : e.gatherer ? "Its name" : e.id === null || e.id === undefined ? "A new folder's name" : "The folder's name";
   return el("label", { class: "c-edit" }, what, cardInput);
 }
 function endCardEdit(keep) {
   const e = cardEdit;
   if (!e) return;
   cardEdit = null; cardInput = null;
-  if (keep && e.gatherer) {
+  if (keep && e.item) nameItem(e.g, e.item, e.value);
+  else if (keep && e.gatherer) {
     const g = state.home.gatherers.find((x) => x.name === e.g), text = e.value.replace(/\s+/g, " ").trim();
     if (g && text !== titleOf(g)) keepTitle(e.g, text);
   } else if (keep) nameFolder(e.g, e.id ?? null, e.parent ?? null, e.value);

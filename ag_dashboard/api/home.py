@@ -96,7 +96,7 @@ def task(srv: Parts, body: Body) -> Response:
     add {to, items, name?} (the items put in the task the item `to` is in -- in none, one made of them all, called
     `name`, none: named by what is in it -- each agent among them attached to the task's apps before its agent starts, so
     it is given their tools as it starts: `attached`, {channel: [instance ids]}), out {items} (taken out of their
-    tasks), rename {id, to}. `channels` is `items`, as it was called before apps were items."""
+    tasks), rename {id, to} ("": named by what is in it again). `channels` is `items`, as it was called before apps were items."""
     g, do = str(body.get("gatherer") or ""), str(body.get("do") or "")
     items = body.get("items", body.get("channels"))
     if do in ("add", "out") and not isinstance(items, list):

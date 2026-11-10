@@ -13,6 +13,7 @@ pollers. An app whose manifest can't be read is `broken`, with why, and nothing 
 What it keeps, as events of the gatherer an instance was opened in (app_kit's HOST_TYPES, records no policy groups):
 
     app_opened    {instance}: the instance (its id, folder, title, data), no channel -- its gatherer's
+    app_named     {name, by}: what the user called it ("": its own title again) -- the page shows it over its title
     app_closed    {}
     app_attached  {by}: in the agent's channel
     app_detached  {by}
@@ -44,6 +45,7 @@ import subprocess
 import sys
 import threading
 import time
+from dataclasses import replace
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 import app_kit
@@ -58,6 +60,7 @@ PAGE_WAIT = 30.0                # seconds a tool its panel answers waits for a p
 TOOL_WAIT = 120.0               # and for the panel's answer
 READ_MAX = 2000
 NO_DATABASE = "no database for gatherer"
+NAME_CHARS = 120                # the longest name the user gives an instance
 TOLD = (*app_kit.NOTICE_TYPES, "app_closed")   # records that change what the page shows of the gatherer's apps
 
 
@@ -347,6 +350,19 @@ class AppHost:
         self._record(i, "app_closed", {"by": by})
         self._ring(i)
 
+    def rename(self, gatherer: str, instance_id: str, name: Any, by: str = "user") -> Instance:
+        """The instance called `name` by the user -- its spaces made one, NAME_CHARS at most; "": not named, its own title
+        shown again (`app_named`) -> it, renamed. Its panels told (`_ring`)."""
+        i = self.instance(gatherer, instance_id)
+        text = " ".join(str(name or "").split())[:NAME_CHARS].strip()
+        if text == i.name:
+            return i
+        with self.lock:
+            i = self.instances[i.id] = replace(self.instances.get(i.id, i), name=text)
+        self._record(i, "app_named", {"name": text, "by": by})
+        self._ring(i)
+        return i
+
     def sleep_instance(self, gatherer: str, instance_id: str) -> None:
         """The instance put to sleep (its task closed: task_links.py): its backend lets go of what runs for it, the
         instance kept open, its agents attached -- used again, it comes back as it was (App.sleep)."""
@@ -583,7 +599,9 @@ class AppHost:
         self._rung.put(gatherer)
 
     def _ring(self, instance: Instance) -> None:
-        self.tell(instance, {"ag": "instance", "attached": self.agents_of(instance)})
+        with self.lock:
+            now = self.instances.get(instance.id, instance)
+        self.tell(instance, {"ag": "instance", "attached": self.agents_of(instance), "name": now.name})
 
     def _following(self) -> None:
         while True:
@@ -707,6 +725,8 @@ class AppHost:
                 except (KeyError, TypeError):
                     continue
                 attached.setdefault(inst, set())
+            elif kind == "app_named" and inst in opened:
+                opened[inst] = replace(opened[inst], name=str(payload.get("name") or ""))
             elif kind == "app_closed":
                 opened.pop(inst, None)
                 attached.pop(inst, None)

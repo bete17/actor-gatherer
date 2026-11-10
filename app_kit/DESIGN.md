@@ -373,9 +373,10 @@ Each step is one PR and leaves the dashboard working. Steps 1–3 change nothing
 2. **The host.** Built:
    - `ag_dashboard/app_host.py` finds apps (`ag_apps/`, the apps that come with ag; `AG_APPS_PATH`, `<home>/apps/`), runs their
      backends (imported from their folder, or started as a process), and keeps instances and attachments as the
-     host's records (`app_opened`, `app_closed`, `app_attached`, `app_detached`, `app_call`). A gatherer's are read
+     host's records (`app_opened`, `app_named` -- what the user called it --, `app_closed`, `app_attached`, `app_detached`,
+     `app_call`). A gatherer's are read
      once, the first time it is asked about.
-   - `api/apps.py`: the page's routes (`/api/apps`, open, close, attach, detach, events, insert, call, a stream), an
+   - `api/apps.py`: the page's routes (`/api/apps`, open, close, rename, attach, detach, events, insert, call, a stream), an
      app in its own process reaching the host with its token (`/apps/host/<name>/<op>`), and each app's own origin
      (`Origins`, outermost): its panel's files and its backend's `/api/`, and none of the dashboard's routes or its
      WebSocket.

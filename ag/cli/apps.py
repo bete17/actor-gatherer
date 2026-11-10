@@ -84,7 +84,7 @@ def listed(got: dict) -> str:
     out = [got.get("instructions", "").strip(), ""]
     for a in got["apps"]:
         said = "open" if "open" in a else "attached"         # a gatherer agent's: the open ones, attached to none
-        mine = ", ".join(f"{i['id']} ({i.get('title') or i.get('folder') or i['id']})" for i in a.get(said) or [])
+        mine = ", ".join(f"{i['id']} ({i.get('name') or i.get('title') or i.get('folder') or i['id']})" for i in a.get(said) or [])
         out.append(f"{a['label']} ({a['name']})" + (f" -- {said}: {mine}" if mine else ""))
         for t in a.get("tools") or []:
             props = (t.get("inputSchema") or {}).get("properties") or {}

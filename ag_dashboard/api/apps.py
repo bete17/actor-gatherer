@@ -6,6 +6,7 @@ On the dashboard's origin, for its page:
     GET  /api/apps?gatherer=G                    the apps found, broken ones, G's instances and their agents
     POST /api/apps/open    {app, gatherer, folder?, args?, channel?}   an instance (attached to `channel`, if given)
     POST /api/apps/close   {gatherer, instance}
+    POST /api/apps/rename  {gatherer, instance, name}         what the user calls it ("": its own title again)
     POST /api/apps/attach  {gatherer, instance, channel}      POST /api/apps/detach (the same)
     GET  /api/apps/events?app&gatherer&instance&types=a,b&after&channel&limit     what the app may read
     POST /api/apps/insert  {app, gatherer, instance, events, channel?}            what its panel inserts
@@ -118,6 +119,18 @@ def apps_close(srv: Parts, body: Body) -> Response:
         _host(srv).close_instance(gatherer, instance)
         task_links.closed(gatherer, instance)
         return answer({})
+    except AppError as exc:
+        return _failed(exc)
+
+
+@router.post("/api/apps/rename")
+def apps_rename(srv: Parts, body: Body) -> Response:
+    """The instance named by the user (app_host.py's `rename`; "" takes the name back) -> the instance."""
+    try:
+        gatherer, instance = _need(body, "gatherer", "instance")
+        if not isinstance(body.get("name", ""), str):
+            raise AppError("name: a string")
+        return answer(_host(srv).rename(gatherer, instance, body.get("name") or "").to_dict())
     except AppError as exc:
         return _failed(exc)
 

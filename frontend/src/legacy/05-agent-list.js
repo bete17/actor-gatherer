@@ -631,7 +631,10 @@ const appsNotified = (g, inside = undefined) => gathererApps(g.name).filter((o) 
   return f !== null && within(g.name, f, inside);
 }).length;
 const actorTitle = (a) => (a.name && a.name.text) || (a.last_user_message ? firstLine(a.last_user_message, 120) : "No message yet");
-const appTitle = (o) => o.title ? `${o.app.label} · ${o.title}` : o.app.label;
+// an app as said: the user's name for it, else its kind and what it shows; in its row and card, its name, else what it
+// shows, else its kind (its face says the kind)
+const appTitle = (o) => o.name || (o.title ? `${o.app.label} · ${o.title}` : o.app.label);
+const appShown = (o) => o.name || o.title || o.app.label;
 // its items: its actors' channels, then its apps' (those open)
 const taskItems = (g, id) => [...taskMembers(g, id).map((a) => a.channel), ...taskApps(g, id).map((o) => appItem(o.id))];
 // its name: the reader's, else its lead actor's, else its first app's
@@ -686,10 +689,11 @@ function readApps(gname, now = false) {
     renderAgents();
   }).catch(() => { /* none known: none shown */ });
 }
-// an open instance as the list has it -- {app (its manifest), id, title, folder, inst} -- null: of an app not found here
+// an open instance as the list has it -- {app (its manifest), id, title, name (the user's), folder, inst} -- null: of an
+// app not found here
 function appOf(i) {
   const app = window.agNext && window.agNext.apps.named(i.app);
-  return app ? { app, id: i.id, title: i.title || "", folder: i.folder || null, inst: i } : null;
+  return app ? { app, id: i.id, title: i.title || "", name: i.name || "", folder: i.folder || null, inst: i } : null;
 }
 const gathererApps = (gname) => PANE || SNAPSHOT ? [] : ((appsKnown.get(gname) || {}).instances || []).map(appOf).filter(Boolean);
 const appInfo = (gname, id) => gathererApps(gname).find((o) => o.id === id) || null;
@@ -736,18 +740,20 @@ function taskRow(g, t, group) {
   const open = !current && (all.some((a) => openActors().some((s) => isAt(s, g.name, a.channel)))
     || apps.some((o) => panes.apps.some((p) => !p.held && p.instance.id === o.id)));
   const what = [all.length ? plural(all.length, "actor") : null, apps.length ? plural(apps.length, "app") : null].filter(Boolean).join(", ");
-  const row = el("button", { class: "agent task", type: "button", "aria-current": current ? "true" : "false", "data-key": `${g.name}/task:${t.id}`,
-    "data-group": group, ...(open ? { "data-open": "true" } : {}), "data-card": key(g.name, `task:${t.id}`),
-    ...(HOVERS.matches ? {} : { title: `${name}: ${what || "nothing"}${SNAPSHOT ? "" : `\nClick: open it · ${BESIDE_KEY}+click: open it beside the one shown`}` }),
+  const k = `${TASK_ITEM}${t.id}`, naming = renamingItem(g.name, k);
+  const row = el(naming ? "div" : "button", { class: "agent task" + (naming ? " renaming" : ""), ...(naming ? {} : { type: "button" }),
+    "aria-current": current ? "true" : "false", "data-key": `${g.name}/task:${t.id}`,
+    "data-group": group, ...(open ? { "data-open": "true" } : {}), ...(naming ? {} : { "data-card": key(g.name, `task:${t.id}`) }),
+    ...(HOVERS.matches ? {} : { title: `${name}: ${what || "nothing"}${SNAPSHOT ? "" : `\nClick: open it · ${BESIDE_KEY}+click: open it beside the one shown\nDouble-click its name (or F2) to ${t.name ? "rename" : "name"} it`}` }),
     // pressed, its card put away (as the rail's tile does): a live card stays while the pointer is on the row, over the
     // panels the task opens
-    onclick: (ev) => { cardHide(ev); openTask(g.name, t.id, null, ev); } },
+    ...(naming ? {} : { onclick: (ev) => { cardHide(ev); openTask(g.name, t.id, null, ev); }, onkeydown: (ev) => renameKey(ev, g, k) }) },
   el("span", { class: `dot ${cls}`, "aria-label": label, style: `--spin-at: -${Date.now() % 1200}ms` }),
   el("div", {},
-    el("div", { class: "name", text: name }),
+    naming ? nameBox() : el("div", { class: "name", text: name, ...nameOnDouble(g, k) }),
     rowActs(first ? addButton(g, first) : null, taskSaveButton(g, t), taskCloseButton(g, t))),
   el("span", { class: "t-faces" }, ...taskFaces(g, t.id)));
-  return first ? dropOnItem(dragItems(row, g, () => taskItems(g, t.id)), g, first) : row;
+  return naming || !first ? row : dropOnItem(dragItems(row, g, () => taskItems(g, t.id)), g, first);
 }
 // A task SAVED: every actor in it saved for later, as an actor's bookmark saves it -- the bookmark filled once every one
 // is; closed, the task is then listed in its folder's saved line, not its closed one (where its first actor comes)
@@ -791,18 +797,19 @@ async function closeTask(gname, id) {
 // row, put in its task, as an item dropped on it is put in one with it.
 function appRow(g, o) {
   const chosen = appSelected() === o.id, shown = !chosen && panes.apps.some((p) => !p.held && p.instance.id === o.id), k = appItem(o.id);
-  const told = appStatusOf(g.name, o.id), last = told && appNotices(g.name, o.id)[0];
-  const row = el("button", { class: "agent app-row", type: "button", "aria-current": chosen ? "true" : "false", "data-key": `${g.name}/${k}`,
-    "data-group": OPEN, ...(shown ? { "data-open": "true" } : {}), "data-card": appKey(g.name, o.id),
-    ...(HOVERS.matches ? {} : { title: `${appTitle(o)}${last ? `\n${last.title}` : ""}${o.folder ? `\n${o.folder}` : ""}${SNAPSHOT ? "" : `\n${BESIDE_KEY}+click: beside the ones shown`}` }),
-    onclick: (ev) => { cardHide(ev); selectApp(g.name, o, ev); } },
+  const told = appStatusOf(g.name, o.id), last = told && appNotices(g.name, o.id)[0], naming = renamingItem(g.name, k);
+  const row = el(naming ? "div" : "button", { class: "agent app-row" + (naming ? " renaming" : ""), ...(naming ? {} : { type: "button" }),
+    "aria-current": chosen ? "true" : "false", "data-key": `${g.name}/${k}`,
+    "data-group": OPEN, ...(shown ? { "data-open": "true" } : {}), ...(naming ? {} : { "data-card": appKey(g.name, o.id) }),
+    ...(HOVERS.matches ? {} : { title: `${o.name ? `${o.name} · ` : ""}${o.title ? `${o.app.label} · ${o.title}` : o.app.label}${last ? `\n${last.title}` : ""}${o.folder ? `\n${o.folder}` : ""}${SNAPSHOT ? "" : `\n${BESIDE_KEY}+click: beside the ones shown\nDouble-click its name (or F2) to ${o.name ? "rename" : "name"} it`}` }),
+    ...(naming ? {} : { onclick: (ev) => { cardHide(ev); selectApp(g.name, o, ev); }, onkeydown: (ev) => renameKey(ev, g, k) }) },
   told ? el("span", { class: `dot ${told[0]}`, "aria-label": told[1] }) : el("span", { class: "dot-none", "aria-hidden": "true" }),
   el("div", {},
-    el("div", { class: "name", text: o.title || o.app.label }),
+    naming ? nameBox() : el("div", { class: "name", text: appShown(o), ...nameOnDouble(g, k) }),
     rowActs(addButton(g, k), SNAPSHOT ? null : rowButton("close-btn", { title: `Close ${o.app.label}: the app closed`, "aria-label": `Close ${o.app.label}` },
       () => closeApp(g.name, o), closeIcon()))),
   el("span", { class: "a-face" }, appFace(o)));
-  return dropOnItem(dragItems(row, g, () => [k]), g, k);
+  return naming ? row : dropOnItem(dragItems(row, g, () => [k]), g, k);
 }
 // An app SELECTED, as an actor is (07-panes.js's selectAppPane): its task entered first, if another is shown -- as a click
 // on that task would; one of apps only, its apps alone shown (enterAppTask) -- its panel shown (opened, if it was not) and
@@ -1067,7 +1074,8 @@ function nameBox() {
   if (nameInput) return nameInput;
   const r = state.renaming;
   nameInput = el("input", { class: "name-box", type: "text", maxlength: "120", spellcheck: "false", autocomplete: "off",
-    placeholder: r.c === null ? r.g : "Name this actor", "aria-label": r.c === null ? "This gatherer's name" : "This actor's name" });
+    placeholder: r.c === null ? r.g : r.kind ? r.auto : "Name this actor",
+    "aria-label": r.c === null ? "This gatherer's name" : r.kind ? `This ${r.kind}'s name` : "This actor's name" });
   nameInput.value = r.value;
   nameInput.addEventListener("input", () => { r.value = nameInput.value; });
   nameInput.addEventListener("keydown", (ev) => {
@@ -1084,6 +1092,7 @@ async function endRename(keep) {
   const r = state.renaming;
   if (!r) return;
   state.renaming = null; nameInput = null;
+  if (r.kind) return keep ? nameItem(r.g, r.c, r.value) : redrawNamed();
   const g = state.home.gatherers.find((x) => x.name === r.g), a = g && g.agents.find((x) => x.channel === r.c);
   const text = r.value.replace(/\s+/g, " ").trim().slice(0, 120);
   if (r.c === null) return keep && g && text !== titleOf(g) ? keepTitle(r.g, text) : redrawNamed();
@@ -1099,6 +1108,58 @@ async function endRename(keep) {
     a.name = before;
     setLive(`Not named: ${err.message}`);
   }
+  redrawNamed();
+}
+// Naming a TASK or an APP, as an actor is named: its name in its row double-clicked (or F2 on its row), or its card's
+// pencil (06-list-modes.js's editInCard) -- `state.renaming.c` its item ("task:<id>", "app:<instance id>"), `kind`
+// which, `auto` what it is called when not named. Kept: a task's name by the dashboard (tasks.py: POST /api/tasks
+// rename), an app's with its instance (app_host.py's `rename`: POST /api/apps/rename), which its panel's head shows too.
+// Nothing typed takes the name back: a task named by what is in it again, an app by its own title.
+const TASK_ITEM = "task:";
+const renamingItem = (gname, k) => !!state.renaming && state.renaming.g === gname && state.renaming.c === k;
+const nameOnDouble = (g, k) => SNAPSHOT ? {} : { ondblclick: (ev) => {
+  if (ev.metaKey || ev.ctrlKey || ev.shiftKey) return;
+  ev.stopPropagation(); cardHide(ev); startItemRename(g, k);
+} };
+function renameKey(ev, g, k) {
+  if (ev.key === "F2" && !SNAPSHOT) { ev.preventDefault(); startItemRename(g, k); }
+}
+// a task's or an app's item -> [kind, it, its name now, its name when not named, the user's]; null: no longer here
+function itemNamed(g, k) {
+  if (k.startsWith(TASK_ITEM)) {
+    const t = taskById(g.name, Number(k.slice(TASK_ITEM.length)));
+    return t && ["task", t, taskName(g, t), taskName(g, { ...t, name: "" }), t.name || ""];
+  }
+  const o = isAppItem(k) ? appInfo(g.name, k.slice(APP_ITEM.length)) : null;
+  return o && ["app", o, appShown(o), o.title || o.app.label, o.name];
+}
+function startItemRename(g, k) {
+  const got = itemNamed(g, k);
+  if (!got || renamingItem(g.name, k)) return;
+  if (state.renaming) endRename(true);
+  state.renaming = { g: g.name, c: k, kind: got[0], value: got[2], auto: got[3], was: got[4] };
+  nameInput = null;
+  renderAgents();
+  if (nameInput) { nameInput.focus(); nameInput.select(); }
+}
+async function nameItem(gname, k, value) {
+  const g = state.home.gatherers.find((x) => x.name === gname), got = g && itemNamed(g, k);
+  const text = String(value || "").replace(/\s+/g, " ").trim().slice(0, 120);
+  if (!got || text === got[2] || (!text && !got[4])) return redrawNamed();   // as it was
+  const [kind, it] = got;
+  if (kind === "task") {
+    it.name = text;                                  // shown at once; the answer confirms it
+    redrawNamed();
+    try { takeTasks(await post("/api/tasks", { gatherer: gname, do: "rename", id: it.id, to: text })); }
+    catch (e) { it.name = got[4]; setLive(`Not named: ${e.message}`); }
+    return redrawNamed();
+  }
+  const inst = ((appsKnown.get(gname) || {}).instances || []).find((i) => i.id === it.id);
+  if (inst) inst.name = text;                        // shown at once; the apps read again confirm it
+  redrawNamed();
+  try { await post("/api/apps/rename", { gatherer: gname, instance: it.id, name: text }); }
+  catch (e) { if (inst) inst.name = got[4]; setLive(`Not named: ${e.message}`); }
+  await readApps(gname, true);
   redrawNamed();
 }
 // A box's rows (FOLDERS): its folders -- each a line, and under it, opened, its own box, indented -- then its actors open,

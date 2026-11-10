@@ -574,6 +574,7 @@ function addAppPane(app, instance, size = 1, held = false) {
       .map((a) => ({ channel: a.channel, name: (a.name && a.name.text) || a.last_user_message || a.channel })),
     agentState: appAgentState, send: appSend, answer: appAnswer, interrupt: appInterrupt, focusAgent: appFocusAgent,
     actors: appActors, sendActor: appSendActor, startActor: appStartActor, showActor: appShowActor,
+    named: (i) => readApps(i.gatherer, true),       // named in its head: the list's name for it too
   });
   p.node = p.panel.node; p.frame = p.panel.frame;
   p.gutter = topGutter(p);
