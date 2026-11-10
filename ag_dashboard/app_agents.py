@@ -12,6 +12,8 @@ here, so they make the same thing:
 
     role_of(session)   the app and instance a session's role names: {"app": name, "key": id}, or an app's own older
                        form, {"<name>": key} -- None for any other
+    Messenger(started)  what the app host is given to pass on an app's own messages to its agents (`send`) and to start
+                       one of its own with a message (`start`), as Chat sends and as `start` above makes one
     adopt_all(started, host)   each session whose role names an app the host has (an app's actor from before it was
                        an app: DocWriter's, {"docwriter": key}) attached to that app's instance of that key -- made, if
                        it is not yet, on the session's folder (app_host.py's `adopt`): at the server's start, once
@@ -24,6 +26,7 @@ import threading
 import time
 from typing import Optional, Tuple
 
+import harness_kit
 from app_kit import AppError, Instance
 
 from . import naming, sessions, task_links
@@ -90,6 +93,46 @@ def start(started: "sessions.Sessions", host, app: str, gatherer: str, cwd: str,
     threading.Thread(target=_name, args=(started, gatherer, s["session_id"], said), name=f"ag-{app}-name",
                      daemon=True).start()
     return s, inst
+
+
+class Messenger:
+    """An app's messages to its agents (app_host.py's `send_agent`, `start_agent`): typed into the agent's terminal as
+    Chat sends a message (sessions.py's `send`), the terminal opened and the agent started if they are not."""
+
+    def __init__(self, started: "sessions.Sessions"):
+        self.started = started
+
+    def send(self, gatherer: str, channel: str, text: str) -> None:
+        row = next((r for r in self.started.list() if r["session_id"] == channel), None)
+        if row is None:                                      # not started here: taken into the table first
+            try:
+                row = self.started.adopt(gatherer, channel)
+            except sessions.SessionError as exc:
+                raise AppError(f"{channel}: {exc}", 404) from None
+        rules = harness_kit.get(row.get("harness"))
+        try:
+            self.started.send(row["session_id"], text, fullscreen=bool(rules is None or rules.fullscreen))
+        except sessions.NotAtBox:
+            raise AppError("its terminal can't take a message now: a dialog or a question is open in it, or "
+                           "something is typed there and not sent. Nothing was typed; try again later.", 409) from None
+        except sessions.SessionError as exc:
+            raise AppError(str(exc), 409) from None
+
+    def start(self, host, instance: Instance, text: str, name: str, harness: Optional[str], model: Optional[str],
+              cwd: str) -> str:
+        harness = harness or harness_kit.DEFAULT
+        if harness not in sessions.HARNESSES:
+            raise AppError(f"harness {harness!r}: one of {', '.join(sessions.HARNESSES)}")
+        try:
+            s = self.started.create(instance.gatherer, cwd, "auto", harness, model, role=role(instance.app, instance.id))
+        except sessions.SessionError as exc:
+            raise AppError(str(exc)) from None
+        task_links.link(instance.gatherer, instance.id, s["session_id"])   # the app and its agent: one task
+        host.attach(instance.gatherer, instance.id, s["session_id"], by="app")
+        threading.Thread(target=_name, args=(self.started, instance.gatherer, s["session_id"], name),
+                         name=f"ag-{instance.app}-name", daemon=True).start()
+        self.send(instance.gatherer, s["session_id"], text)
+        return s["session_id"]
 
 
 def _name(started: "sessions.Sessions", gatherer: str, sid: str, said: str) -> None:
