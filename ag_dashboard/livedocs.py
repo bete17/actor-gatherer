@@ -76,6 +76,7 @@ MAX_BYTES = 2_000_000       # the largest file opened
 MAX_ENTRIES = 2000          # the most entries listed of one directory
 FINE = 4000                 # changed lines up to this many characters (old and new) are changed by character
 RECENT = 1800.0             # seconds an actor's change to a file counts in a listing's `writers`
+CREDIT = 3.0                # seconds an actor's recorded change may come before the change on disk it made
 ZONE_GRACE = 5.0            # seconds the conflict zone stays after the last page with the file open goes
 GONE_CHECK = 5.0            # the most a stream waits before it looks whether its page went
 SKIPPED = frozenset({".git", "node_modules", "__pycache__", ".venv", "venv", ".mypy_cache", ".pytest_cache",
@@ -1056,8 +1057,9 @@ class LiveDocs:
 
     def listing(self, directory: str, root: str) -> dict:
         """The directory's entries -- folders first, then files, by name -- each with whether pages edit it now,
-        whether it has changes no one saved, and the actors that changed it lately (`writers`; a folder's: of the
-        files in it, all the way down)."""
+        whether it has changes no one saved, the actors that changed it lately (`writers`), and the actors whose
+        changes to it wait for the reader (`waiting`: [{gatherer, channel}]; `_waiting`) -- a folder's: of the files in
+        it, all the way down."""
         real = resolve(directory, root)
         entries, more = [], False
         try:
@@ -1083,13 +1085,36 @@ class LiveDocs:
         except PermissionError:
             raise DocError(f"{directory} may not be read") from None
         found: Dict[str, List[dict]] = {}           # by entry: its own writers, or those of what is in it
-        for rel, ws in writers([real, os.path.abspath(directory)], time.time() - RECENT).items():
+        changed = writers([real, os.path.abspath(directory)], time.time() - RECENT)
+        for rel, ws in changed.items():
             found.setdefault(rel.split("/")[0], []).extend(ws)
+        waiting = self._waiting(real, changed)
         for e in entries:
             e["writers"] = _latest(found.get(e["name"], []))
+            held = self.branches.waiting(os.path.join(real, e["name"]), e["dir"]) if e["pending"] else set()
+            e["waiting"] = [{"gatherer": g, "channel": c} for g, c in sorted(waiting.get(e["name"], set()) | held)]
         entries.sort(key=lambda e: (not e["dir"], e["name"].lower()))
         return {"dir": directory, "entries": entries, "more": more, "now": time.time(), "user": _user(),
                 "home": os.path.expanduser("~")}
+
+    def _waiting(self, real: str, changed: Dict[str, List[dict]]) -> Dict[str, set]:
+        """By entry of the directory `real`: the actors (gatherer, channel) with a change to a file open here (it, or
+        one in it) that waits for the reader -- one of their branch's, or put in through an app and not taken in yet (a
+        proposal, or lines the pages are editing: Room.put); or one to lines the pages changed too, a conflict not
+        settled: every actor whose change to the file (`changed`: `writers`, by its path from `real`) is recorded from
+        the conflict's start on. (A branch's changes held in files not open: `branches.waiting`.)"""
+        top, out = real.rstrip("/") + "/", {}
+        for path, room in list(self.rooms.items()):
+            if not path.startswith(top):
+                continue
+            rel = path[len(top):]
+            for c in list(room.conflicts.values()):
+                if c.agent is not None:
+                    whose = [(c.agent.get("gatherer"), c.agent.get("channel"))]
+                else:
+                    whose = [(w["gatherer"], w["channel"]) for w in changed.get(rel, []) if w["at"] >= c.since - CREDIT]
+                out.setdefault(rel.split("/")[0], set()).update(k for k in whose if k[0] and k[1])
+        return out
 
     def _watch(self) -> None:
         while not self.stop.wait(self.poll):

@@ -10,7 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import type { APIRequestContext, Page } from "@playwright/test";
 import { expect, streamsAsRequests, test } from "./test";
-import { CLAUDE, openActor } from "./home";
+import { CLAUDE, CODEX, GATHERER, NOW, openActor } from "./home";
 
 function project(): { repo: string; plot: string } {
   const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ag-preview-")));
@@ -175,6 +175,63 @@ test("a file asked for opens in an Editor's panel, and what is typed is saved", 
   await expect.poll(() => fs.readFileSync(plot, "utf8").split("\n")[0]).toBe("print('drawing')  # typed");
   await raise(page, "open-file", { path: path.join(path.dirname(plot), "out.svg") }); // the Editor open takes it
   await expect(editorPane(page)).toHaveCount(1);
+  await editorPane(page).locator(".app-close").click();
+  await expect(editorPane(page)).toHaveCount(0);
+});
+
+test("the tree shows a closed actor that changed a file only while a change of its there waits for the reader", async ({
+  page,
+}) => {
+  const { plot } = project();
+  type Agent = { channel: string; name?: { text?: string } | null; last_user_message?: string };
+  type Home = { gatherers: { name: string; agents: Agent[] }[] };
+  const agents = ((await (await page.request.get("/api/home")).json()) as Home).gatherers.find(
+    (g) => g.name === GATHERER,
+  )!.agents;
+  const open = agents.find((a) => a.name?.text === CLAUDE)!;
+  const closed = agents.find((a) => (a.last_user_message || "").startsWith(CODEX))!;
+  // the Codex actor closed (seen since: not "Finished"); the home read by requests, which the route answers
+  await streamsAsRequests(page);
+  await page.route("**/api/stream*", (route) => route.abort());
+  await page.route("**/api/home", async (route) => {
+    const home = (await (await route.fetch()).json()) as Home;
+    for (const a of home.gatherers.find((g) => g.name === GATHERER)!.agents)
+      if (a.channel === closed.channel) Object.assign(a, { status: "closed", last: 0, session: null });
+    await route.fulfill({ json: home });
+  });
+  // both changed plot.py lately (ag's hook's `file_touched`), as the listing says; what waits from them, as the test says
+  let waiting: { gatherer: string; channel: string }[] = [];
+  await page.route("**/api/edit/list*", async (route) => {
+    const u = new URL(route.request().url()); // the app's origin, editor.localhost: a name only the browser resolves
+    const host = u.host;
+    u.hostname = "127.0.0.1";
+    const got = (await (
+      await route.fetch({ url: u.href, headers: { ...route.request().headers(), host } })
+    ).json()) as {
+      entries: Record<string, unknown>[];
+    };
+    for (const e of got.entries)
+      if (e.name === "plot.py") {
+        e.writers = [open, closed].map((a, i) => ({
+          gatherer: GATHERER,
+          channel: a.channel,
+          at: NOW - 60 * (i + 1),
+          how: "modified",
+        }));
+        e.waiting = waiting;
+      }
+    await route.fulfill({ json: got });
+  });
+  await openActor(page, CLAUDE);
+  await openFile(page, plot);
+  const avatars = editorPanel(page).locator(".ed-row", { hasText: "plot.py" }).locator(".ed-avs");
+  await expect(avatars.locator(":scope > img, :scope > .ed-noav")).toHaveCount(1); // the open actor's only
+  await expect(avatars).not.toHaveClass(/many/);
+  await expect(avatars).not.toHaveAttribute("title", /closed/);
+  waiting = [{ gatherer: GATHERER, channel: closed.channel }]; // a change of the closed one's waits: it is shown too
+  await expect(avatars.locator(":scope > img, :scope > .ed-noav")).toHaveCount(2);
+  await expect(avatars).toHaveClass(/many/);
+  await expect(avatars).toHaveAttribute("title", /\(closed: its change waits for you\)/);
   await editorPane(page).locator(".app-close").click();
   await expect(editorPane(page)).toHaveCount(0);
 });

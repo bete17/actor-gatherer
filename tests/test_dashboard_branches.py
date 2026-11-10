@@ -188,6 +188,12 @@ class BranchesTest(unittest.TestCase):
         self.assertEqual(self.branches.listed()[0]["held"], {"notes.py": {"n": 1, "kind": "lines"}})
         self.assertEqual(self.branches.pending(os.path.join(self.project, "notes.py")), 1)
         self.assertEqual(self.branches.pending(self.project, folder=True), 1)
+        whose = {("g", s["session_id"])}                 # whose changes wait: in the file, and in the folder
+        self.assertEqual(self.branches.waiting(os.path.join(self.project, "notes.py")), whose)
+        self.assertEqual(self.branches.waiting(self.project, folder=True), whose)
+        self.assertEqual(self.branches.waiting(os.path.join(self.project, "README.md")), set())
+        got = {e["name"]: e["waiting"] for e in self.editors.listing(self.project, self.project)["entries"]}
+        self.assertEqual((got["notes.py"], got["README.md"]), ([{"gatherer": "g", "channel": s["session_id"]}], []))
 
     def open(self, rel, cid="p1"):
         room, conn = self.editors.join(os.path.join(self.project, rel), self.project, cid, 1)

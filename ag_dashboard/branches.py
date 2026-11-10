@@ -418,6 +418,7 @@ class Branches:
         self.decided: Dict[Tuple[str, str], Dict[str, str]] = {}   # by (branch, file): what the reader settled, not merged yet
         self.held: Dict[str, Dict[str, dict]] = {}          # by branch: its files with places held, {n, kind}
         self.counts: Dict[str, int] = {}                    # by the project's file: the places held of it (`pending`)
+        self.whose: Dict[str, Set[Tuple[str, str]]] = {}    # by the project's file: the actors whose places they are
         self.starts: Dict[Tuple[str, str], Optional[str]] = {}   # a file as its branch started
         self.ontos: Dict[str, Tuple[float, dict]] = {}      # by project: when read, what it has checked out
         self.redo: Set[str] = set()                         # files opened in the Editor since the last look
@@ -545,6 +546,15 @@ class Branches:
         top = path.rstrip("/") + "/"
         return sum(n for p, n in counts.items() if p.startswith(top))
 
+    def waiting(self, path: str, folder: bool = False) -> Set[Tuple[str, str]]:
+        """The actors (gatherer, channel) whose branches' changes wait for the reader in the project's file `path` (a
+        real path) -- or, a folder, in the files under it."""
+        whose = self.whose
+        if not folder:
+            return set(whose.get(path, ()))
+        top = path.rstrip("/") + "/"
+        return {k for p, ks in whose.items() if p.startswith(top) for k in ks}
+
     def under(self, root: str) -> List[dict]:
         """The branches of the projects `root` is in, or holds: as `listed` has them, each file with places held named
         by its path (`held`: {path: {n, kind}})."""
@@ -557,14 +567,17 @@ class Branches:
         return out
 
     def _count(self) -> None:
-        rows = {b["session_id"]: b["project"] for b in self.rows()}
+        rows = {b["session_id"]: b for b in self.rows()}
         counts: Dict[str, int] = {}
+        whose: Dict[str, Set[Tuple[str, str]]] = {}
         for sid, files in self.held.items():
             for rel, v in files.items():
                 if sid in rows:
-                    p = os.path.join(rows[sid], rel)
+                    b = rows[sid]
+                    p = os.path.join(b["project"], rel)
                     counts[p] = counts.get(p, 0) + v["n"]
-        self.counts = counts
+                    whose.setdefault(p, set()).add((b["gatherer"], b["channel"]))
+        self.counts, self.whose = counts, whose
 
     # ------------------------------------------------------------------ looking
     def opened(self, path: str) -> None:

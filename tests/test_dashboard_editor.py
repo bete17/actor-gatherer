@@ -757,6 +757,31 @@ class WritersTest(unittest.TestCase):
         got = {e["name"]: e["writers"] for e in self.editors.listing(self.work, "/")["entries"]}
         self.assertEqual([w["channel"] for w in got["src"]], ["c2", "c1"])
 
+    def waiting(self, directory):
+        return {e["name"]: [w["channel"] for w in e["waiting"]] for e in self.editors.listing(directory, "/")["entries"]}
+
+    def test_nothing_waits_from_the_actors_with_no_file_open(self):
+        self.assertEqual(self.waiting(os.path.join(self.work, "src")), {"a.py": [], "b.py": [], "c.py": []})
+
+    @unittest.skipIf(Doc is None, "pycrdt is not installed")
+    def test_an_actor_s_proposal_waits_in_its_file_and_its_folder(self):
+        room, conn = self.editors.join(os.path.join(self.work, "src", "b.py"), "/", "p1", 1)
+        seen = room.view("c9")
+        room.put(seen, seen.replace("x = 1", "x = 2"), {"gatherer": "g", "channel": "c9", "via": "test"}, "propose")
+        self.assertEqual(self.waiting(os.path.join(self.work, "src")), {"a.py": [], "b.py": ["c9"], "c.py": []})
+        self.assertEqual(self.waiting(self.work), {"src": ["c9"]})
+        (c,) = room.conflicts.values()
+        room.settle(c.id, "theirs")                  # accepted: nothing waits
+        self.assertEqual(self.waiting(self.work), {"src": []})
+
+    @unittest.skipIf(Doc is None, "pycrdt is not installed")
+    def test_a_conflict_waits_from_the_actors_that_changed_the_file_since_it_began(self):
+        room, conn = self.editors.join(os.path.join(self.work, "src", "a.py"), "/", "p1", 1)
+        room.conflicts["k"] = livedocs.Conflict(0, 1, "x", "y", since=time.time() - 45)   # c2 changed it 30 s ago, c1 60 s
+        self.assertEqual(self.waiting(os.path.join(self.work, "src"))["a.py"], ["c2"])
+        room.conflicts["k"].since = time.time() - 90
+        self.assertEqual(self.waiting(os.path.join(self.work, "src"))["a.py"], ["c1", "c2"])
+
 
 @unittest.skipIf(Doc is None, "pycrdt is not installed")
 class ServerTest(unittest.TestCase):
