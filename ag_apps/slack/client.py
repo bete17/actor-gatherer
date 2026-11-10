@@ -12,6 +12,8 @@
         history(id, latest, limit, oldest)  (messages newest first, more?) -- each message as `message` shapes it
         open_dm(user)               the DM with a person, opened if it wasn't
         replies(id, ts)             a thread, its parent first
+        thread_state(id, ts)        {subscribed, last_read}: whether the user follows a thread (started it, replied
+                                    in it, followed it) and how far they read it in Slack's own app
         post(id, text, thread_ts, broadcast)   posted as the user -> the message
         search(query, limit)        search.messages: each {channel, channel_name, ts, user, username, text, permalink,
                                     thread_ts (the thread a reply is in, from its permalink; '' if none)}
@@ -176,6 +178,12 @@ class Client:
     def replies(self, cid: str, ts: str, limit: int = 200) -> List[dict]:
         r = self._call("conversations_replies", channel=cid, ts=ts, limit=limit)
         return [message(m, self.me) for m in r.get("messages") or []]
+
+    def thread_state(self, cid: str, ts: str) -> dict:
+        """conversations.replies' parent, with the user's token: its `subscribed` and `last_read`."""
+        got = (self._call("conversations_replies", channel=cid, ts=ts, limit=1).get("messages") or [{}])[0]
+        last = got.get("last_read") or ""
+        return {"subscribed": bool(got.get("subscribed")), "last_read": last if _ts(last) > 0 else ""}
 
     def post(self, cid: str, text: str, thread_ts: str = "", broadcast: bool = False) -> dict:
         r = self._call("chat_postMessage", channel=cid, text=text, thread_ts=thread_ts or None,
