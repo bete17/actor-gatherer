@@ -38,6 +38,12 @@ agent too, and the agent's reports (the Notes app's notes_report) -- is the bloc
 "agent:<its channel>", in the order written. An `agents` block holds no text: the panel draws the gatherer's actors
 there, as they are now.
 
+A block an agent wrote from its own conversation with the user -- what it found, worked out or decided with them, not
+words the user told it to put down (the Notes app's notes_add and notes_change, `from_conversation`) -- names its
+SOURCE: `source`, that agent's channel, and `source_at`, when it wrote it: the conversation, and the point in it. Lines
+written by one call share both, and show as one. The user's follow-ups on them go to that agent and, with its replies,
+are the block's thread. Retyped -- by the user, or by an agent not from its conversation -- a block keeps its source.
+
 An op naming a page or block that is not there (another window deleted it) is skipped, not refused: the panel and the
 agents change the notebook at once, and the one later never undoes the other. Standard library only."""
 
@@ -403,7 +409,7 @@ class Notebook:
             lines = [f"{head}   ({where})", ""]
             body = markdown_lines(page.get("blocks", []))
             lines.extend(body or ["(no blocks yet)"])
-            sent = [b for b in page.get("blocks", []) if b.get("to") or b.get("thread")]
+            sent = [b for b in page.get("blocks", []) if b.get("to") or (b.get("thread") and not b.get("source"))]
             if sent:
                 who = lambda by: ("the user" if by == "user"                       # noqa: E731
                                   else f"actor {by[6:]}{' (you)' if me and by[6:] == me else ''}")
@@ -416,6 +422,7 @@ class Notebook:
                                     if b.get("extra") else ""))
                     for line in b.get("thread") or []:
                         lines.append(f"    {who(line['by'])}: {' / '.join(inline_markdown(line['text']).splitlines())}")
+            lines += sources_lines(page.get("blocks", []), me)
             subs = self.children(page["id"])
             if subs:
                 lines += ["", "Subpages: " + ", ".join(f"{p.get('title') or 'Untitled'} ({p['id']})" for p in subs)]
@@ -662,6 +669,47 @@ def _block(b: Any, was: Optional[dict], kind: str) -> dict:
         if not isinstance(thread, list):
             raise NotebookError(f"{kind}: a block's `thread` is a list of lines")
         out["thread"] = [_line(x, kind) for x in thread][-MAX_THREAD:]
+    source = b.get("source") or ""
+    if source and t not in UNSENT:
+        if not isinstance(source, str) or not CHANNEL.match(source):
+            raise NotebookError(f"{kind}: a block's `source` is the channel of the agent that wrote it")
+        out["source"], out["source_at"] = source, _when(b.get("source_at"), kind)
+    return out
+
+
+def written_with(blocks: List[dict], b: dict) -> List[dict]:
+    """The blocks written with `b` from one agent's conversation, in the page's order -- the same `source` and
+    `source_at`: one call's -- or [] if it has no source."""
+    if not b.get("source"):
+        return []
+    return [x for x in blocks if x.get("source") == b["source"] and x.get("source_at") == b.get("source_at")]
+
+
+def sources_lines(blocks: List[dict], me: Optional[str] = None) -> List[str]:
+    """Where the blocks agents wrote from their conversations came from, as an agent reads a page: each run's ids, who
+    wrote it (`me`, the reader: "you") and when; then the user's follow-ups on it and the replies (lines also sent to an
+    agent show theirs with the sent ones). [] if there are none."""
+    out: List[str] = []
+    seen = set()
+    for b in blocks:
+        run = written_with(blocks, b)
+        if not run or b["id"] in seen:
+            continue
+        seen.update(x["id"] for x in run)
+        ch = b["source"]
+        ids = ", ".join("[" + x["id"] + "]" for x in run)
+        out.append(f"- {ids} by actor {ch}{' (you)' if me and ch == me else ''}, "
+                   f"{time.strftime('%Y-%m-%d %H:%M', time.localtime(b['source_at']))}")
+        for x in run:
+            if x.get("to"):
+                continue
+            for line in x.get("thread") or []:
+                by = line["by"]
+                who = "the user" if by == "user" else f"actor {by[6:]}{' (you)' if me and by[6:] == me else ''}"
+                out.append(f"    {who}: {' / '.join(inline_markdown(line['text']).splitlines())}")
+    if out:
+        out[:0] = ["", "Lines agents wrote from their conversations with the user (each: who wrote it and when -- the "
+                       "user can follow up on them with that agent -- then the follow-ups and replies):"]
     return out
 
 
