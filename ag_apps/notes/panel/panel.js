@@ -2433,7 +2433,7 @@ turned into another type or sent to an agent together, as one message naming eac
   }
   function workRow({ p, b, s }, compact = false) {
     const a = b.to ? actorOf(b.to) : null, done = s.key === "done";
-    const said = done ? "" : itemSaid(b, s), made = done ? [] : madeOf(b);
+    const said = done || s.key === "new" ? "" : itemSaid(b, s), made = done ? [] : madeOf(b);   // (not started: its meta says "No one yet")
     const latest = [...(b.thread || [])].reverse().find((l) => l.by !== "user");
     const time = done ? `accepted ${when(endedAt(b))}` : s.key === "review" && latest && (latest.at || 0) >= lastSent(b) ? `reported ${ago(latest.at)}`
       : b.to && s.key !== "run" ? `sent ${ago(lastSent(b))}` : "";
@@ -2443,7 +2443,9 @@ turned into another type or sent to an agent together, as one message naming eac
       : [btn("Answer", "answer", () => goLine(p, b, true), "Open its conversation, where it asks")])
       : s.key === "review" ? [btn("Send back", "", () => goLine(p, b, true), "Open its conversation, to say what's left"), btn("Accept", "accept", () => accept([b]), "Accept it as done")]
       : s.key === "run" || s.key === "queue" ? [btn("Cancel", "", () => cancel([b]), "Cancel it, and tell its agent to stop")]
-      : s.key === "new" ? [btn("Remove", "", () => markWork([b], false), "Not a work item: the line stays on its page"), btn("Assign", "primary", pick, "Send it to an agent")]
+      : s.key === "new" ? [btn("Remove", "", () => markWork([b], false), "Not a work item: the line stays on its page"),     // (done without an agent: ended here)
+        btn("Cancel", "", () => cancel([b]), "Cancel it: into the Logbook, as canceled"), btn("Done", "accept", () => accept([b]), "Accept it as done: no agent needed"),
+        btn("Assign", "primary", pick, "Send it to an agent")]
       : [btn("Reopen", "", () => reopen([b]))];
     const pill = compact || s.key === "run" || s.key === "ask" || s.word === "Sent";
     return el("div", { class: `wk-row ${s.key}`, "data-id": b.id },

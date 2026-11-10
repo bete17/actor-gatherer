@@ -100,7 +100,7 @@ test("a line marked as a work item is tracked until it is ticked, and goes when 
   const work = panel.locator("#work-page");
   await expect(work).toBeVisible();
   await expect(work.locator(".wk-group.new .wk-row")).toContainText("Write the release notes");
-  await expect(work.locator(".wk-group.new .wk-row .wk-btn")).toHaveText(["Remove", "Assign"]);
+  await expect(work.locator(".wk-group.new .wk-row .wk-btn")).toHaveText(["Remove", "Cancel", "Done", "Assign"]);
 
   // ticked: done, so folded away on its page -- a fold where it was, the keys passing over it
   await work.locator(".wk-group.new .wk-text").click();
@@ -123,6 +123,23 @@ test("a line marked as a work item is tracked until it is ticked, and goes when 
   await line.locator(".chk").click();
   await expect(line.locator(".sent .chip")).toHaveText("Not started");
   await expect(panel.locator("#done-btn")).toBeHidden();
+
+  // done without an agent, from the Work page: into the Logbook as no agent's; reopened there. Canceled so too.
+  const mine = (sel: string) => panel.locator(sel, { hasText: "Write the release notes" });
+  for (const [button, logged] of [
+    ["Done", "accepted"],
+    ["Cancel", "canceled"],
+  ]) {
+    await side(panel, "Work").click();
+    await mine("#work-page .wk-group.new .wk-row").locator(".wk-btn", { hasText: button }).click();
+    await expect(mine("#work-page .wk-group.new .wk-row")).toHaveCount(0);
+    await side(panel, "Logbook").click();
+    await expect(mine("#work-page .lg-row").locator(".wk-meta")).toContainText(`No agent · Plan · ${logged}`);
+    await mine("#work-page .lg-row").locator(".wk-btn", { hasText: "Reopen" }).click();
+    await expect(mine("#work-page .lg-row")).toHaveCount(0);
+  }
+  await side(panel, "Plan").click();
+  await expect(line.locator(".sent .chip")).toHaveText("Not started");
 
   // removed from the Work page: no longer one, the line itself kept
   await side(panel, "Work").click();
