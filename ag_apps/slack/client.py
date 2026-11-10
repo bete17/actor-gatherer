@@ -6,14 +6,19 @@
         who()                       auth.test: {user_id, user, team, team_id, url}
         conversations()             the conversations the user is in: each {id, kind, name, user, members, topic}
         conversation(id)            one, the same shape (None: not one the user can see)
+        last_read(id)               the user's read cursor in it, as Slack keeps it: what they last read in Slack's
+                                    own app ('' if none said)
         users()                     the workspace's people: each {id, name, real_name, bot}
         history(id, latest, limit, oldest)  (messages newest first, more?) -- each message as `message` shapes it
         open_dm(user)               the DM with a person, opened if it wasn't
         replies(id, ts)             a thread, its parent first
+        thread_state(id, ts)        {subscribed, last_read}: whether the user follows a thread (started it, replied
+                                    in it, followed it) and how far they read it in Slack's own app
         post(id, text, thread_ts, broadcast)   posted as the user -> the message
         search(query, limit)        search.messages: each {channel, channel_name, ts, user, username, text, permalink,
                                     thread_ts (the thread a reply is in, from its permalink; '' if none)}
-        recent(after, pages)        when the user's conversations were last active: search's messages since a day
+        recent(after, pages)        the user's conversations' messages since a day, from search: each {channel, ts,
+                                    thread_ts} -- when each was last active, and what the app may not have kept
         listen(on_event, on_status) Socket Mode: each Events API event to `on_event`, acknowledged; `on_status`
                                     told "connected" / "disconnected" / an error's text
         close()
@@ -32,6 +37,13 @@ TYPES = "public_channel,private_channel,mpim,im"
 
 class SlackError(Exception):
     """A call Slack refused: its error code (`not_in_channel`, `missing_scope` ...) as the message."""
+
+
+def _ts(ts: str) -> float:
+    try:
+        return float(ts)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def available() -> bool:
@@ -138,6 +150,12 @@ class Client:
         except SlackError:
             return None
 
+    def last_read(self, cid: str) -> str:
+        """conversations.info's `last_read` (every kind of conversation, with the user's token); Slack sends no event
+        when the user reads in its own app (channel_marked is RTM's only), so it is asked."""
+        got = (self._call("conversations_info", channel=cid).get("channel") or {}).get("last_read") or ""
+        return got if _ts(got) > 0 else ""
+
     def users(self) -> List[dict]:
         out = []
         for u in self._pages("users_list", "members"):
@@ -161,6 +179,12 @@ class Client:
         r = self._call("conversations_replies", channel=cid, ts=ts, limit=limit)
         return [message(m, self.me) for m in r.get("messages") or []]
 
+    def thread_state(self, cid: str, ts: str) -> dict:
+        """conversations.replies' parent, with the user's token: its `subscribed` and `last_read`."""
+        got = (self._call("conversations_replies", channel=cid, ts=ts, limit=1).get("messages") or [{}])[0]
+        last = got.get("last_read") or ""
+        return {"subscribed": bool(got.get("subscribed")), "last_read": last if _ts(last) > 0 else ""}
+
     def post(self, cid: str, text: str, thread_ts: str = "", broadcast: bool = False) -> dict:
         r = self._call("chat_postMessage", channel=cid, text=text, thread_ts=thread_ts or None,
                        reply_broadcast=True if (thread_ts and broadcast) else None)
@@ -177,14 +201,15 @@ class Client:
         return out
 
     def recent(self, after: str, pages: int = 3) -> List[dict]:
-        """Messages since the day `after` (YYYY-MM-DD) anywhere the user can see, newest first, each {channel, ts}:
-        Slack's search, `after:<day>`, up to `pages` of 100. Search gives no thread of a message, so these say only when
-        a conversation was active, never what it holds."""
+        """Messages since the day `after` (YYYY-MM-DD) anywhere the user can see, newest first, each {channel, ts,
+        thread_ts}: Slack's search, `after:<day>`, up to `pages` of 100 -- the thread a reply is in from its permalink
+        ('' for one not in a thread)."""
         out = []
         for page in range(1, pages + 1):
             r = self._call("search_messages", query=f"after:{after}", sort="timestamp", count=100, page=page)
             got = (r.get("messages") or {})
-            out.extend({"channel": (m.get("channel") or {}).get("id") or "", "ts": m.get("ts") or ""}
+            out.extend({"channel": (m.get("channel") or {}).get("id") or "", "ts": m.get("ts") or "",
+                        "thread_ts": thread_of(m.get("permalink") or "")}
                        for m in got.get("matches") or [])
             if page >= int((got.get("paging") or {}).get("pages") or 1):
                 break

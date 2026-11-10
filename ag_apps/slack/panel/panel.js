@@ -1044,7 +1044,7 @@ nodes from its text (`render`), never as HTML; links go out only to http, https 
     if (!S.convs.has(where.conversation)) { noticeAsked = where; return; }   // the list not read yet: after reload
     noticeAsked = null;
     await open(where.conversation, where.thread ? { ts: where.thread, thread: where.thread } : { ts: where.ts });
-    post("notified", { conversation: where.conversation }).catch(() => {});
+    post("notified", { conversation: where.conversation, thread: where.thread || "" }).catch(() => {});
   }
   ag.notices.onOpen((where) => { openNoticed(where); });
   ag.actors.on(() => { drawAgents(); drawDrafts(); });

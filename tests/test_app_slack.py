@@ -52,6 +52,11 @@ class FakeSlack:
         self.on_event = None
         self.closed = False
         self.extra = {}            # conversations.info for ones not listed
+        self.cursors = {}          # the user's read cursors in Slack's own app
+        self.asked_read = []
+        self.hits = None           # search's hits, for recent() (None: its default)
+        self.followed = {}         # (conversation, thread) -> [subscribed, last_read], as Slack keeps them
+        self.asked_thread = []
         FakeSlack.made.append(self)
 
     def who(self):
@@ -93,7 +98,18 @@ class FakeSlack:
 
     def recent(self, after, pages=3):
         self.recent_after = after
-        return [{"channel": "D1", "ts": ts_ago(600)}, {"channel": "CNOTMINE", "ts": ts_ago(60)}]
+        if self.hits is not None:
+            return [dict(h) for h in self.hits]
+        return [{"channel": "D1", "ts": ts_ago(600), "thread_ts": ""}, {"channel": "CNOTMINE", "ts": ts_ago(60), "thread_ts": ""}]
+
+    def thread_state(self, cid, ts):
+        self.asked_thread.append((cid, ts))
+        sub, last = self.followed.get((cid, ts), (False, ""))
+        return {"subscribed": sub, "last_read": last}
+
+    def last_read(self, cid):
+        self.asked_read.append(cid)
+        return self.cursors.get(cid, "")
 
     def open_dm(self, user):
         c = {"id": f"D-{user}", "kind": "im", "name": "", "user": user, "members": [], "topic": ""}
@@ -607,7 +623,7 @@ class NotifyTest(BackendBase):
         self.assertEqual(self.host.notices, [])
         self.live(channel="C1", user=MAYA, text=f"<@{ME}> here", ts=ts_ago(-4), thread_ts=parent)   # for them: it is
         self.assertEqual((self.host.notices[0]["key"], self.host.notices[0]["title"], self.host.notices[0]["where"]["thread"]),
-                         ("you:C1", "Maya Chen mentioned you in #paper-deadline, in a thread", parent))
+                         (f"thread:C1:{parent}", "Maya Chen mentioned you in #paper-deadline, in a thread", parent))
 
     def test_a_conversation_read_or_written_in_clears_its_and_only_what_may_be_open(self):
         ts = ts_ago(-1)
@@ -685,6 +701,127 @@ class LineTest(BackendBase):
         self.app.keep_line()
         time.sleep(0.1)
         self.assertEqual((len(FakeSlack.made), self.app.status), (2, "error"))
+
+
+class ReadInSlackTest(BackendBase):
+    """What the user read in Slack's own app, followed: its read cursors asked every minute and on reconnecting; and
+    messages missed while the line was down found through Slack's search, not only in conversations kept."""
+
+    def test_reading_in_slack_reads_here_and_clears_a_notification_of_what_was_read(self):
+        a, b = ts_ago(-1), ts_ago(-2)
+        self.live(channel="D1", user=MAYA, text="call?", ts=a)
+        self.live(channel="C1", user=LEO, text="lunch?", ts=b)
+        self.assertEqual(self.app._unread(), {"D1": [1, 1], "C1": [1, 0]})
+        self.slack.cursors = {"D1": a, "C1": ts_ago(30)}                           # D1 read in Slack; C1 not this far
+        self.app.keep_line()
+        self.assertEqual(sorted(self.slack.asked_read), ["C1", "D1"])             # those unread or notified only
+        self.assertEqual(self.app._unread(), {"C1": [1, 0]})
+        self.assertEqual(self.host.cleared, ["you:D1"])
+        self.assertEqual(self.host.told[-1]["kind"], "conversations")             # the panels: D1 read
+        self.slack.cursors["C1"] = b
+        self.app.keep_line()
+        self.assertEqual((self.app._unread(), self.host.cleared), ({}, ["you:D1", "new:C1"]))
+        self.slack.asked_read.clear()
+        self.app.keep_line()
+        self.assertEqual(self.slack.asked_read, [])                                # nothing unread: nothing asked
+
+    def test_a_notification_of_a_newer_message_stays_until_that_is_read(self):
+        a = ts_ago(-1)
+        self.live(channel="D1", user=MAYA, text="call?", ts=a)
+        self.slack.cursors = {"D1": ts_ago(1)}                                     # read in Slack, but before it
+        self.app.keep_line()
+        self.assertEqual((self.app._unread(), self.host.cleared), ({"D1": [1, 1]}, []))
+
+    def test_a_missed_message_found_by_search_is_fetched_and_listed_quietly_unless_read_in_slack(self):
+        c1, d1 = self.app.store.conversation("C1"), self.app.store.conversation("D1")
+        self.assertEqual((c1["latest_ts"], c1["synced"]), ("", 0))                 # nothing kept: the old catch-up's gap
+        mention, other, dm = ts_ago(-1), ts_ago(-2), ts_ago(-3)
+        self.slack.msgs["C1"] += [{"ts": mention, "user": MAYA, "text": f"<@{ME}> Table 3?"},
+                                  {"ts": other, "user": LEO, "text": "pushed"}]
+        self.slack.msgs["D1"] += [{"ts": dm, "user": MAYA, "text": "call?"}]
+        self.slack.hits = [{"channel": "C1", "ts": other, "thread_ts": ""}, {"channel": "D1", "ts": dm, "thread_ts": ""},
+                           {"channel": "C1", "ts": self.slack.msgs["C1"][0]["ts"], "thread_ts": ""}]   # old: read
+        self.slack.cursors = {"D1": dm}                                            # the DM read in Slack's app
+        self.app._catch_up(self.app._gen, self.slack, self.slack.recent(""))      # as a reconnect does
+        got = {n["key"]: (n["show"], n["where"]["ts"]) for n in self.host.notices}
+        self.assertEqual(got, {"you:C1": ([], mention), "new:C1": ([], other)})   # quiet; nothing for the DM read
+        self.assertEqual(self.app._unread(), {"C1": [2, 1]})
+        self.assertIsNone(self.app.store.message("C1", self.slack.msgs["C1"][0]["ts"]))   # an old one not fetched
+
+    def test_a_missed_reply_is_fetched_with_its_thread(self):
+        parent = self.slack.msgs["C1"][0]["ts"]
+        reply = ts_ago(-1)
+        self.slack.threads[("C1", parent)] = [{"ts": reply, "user": MAYA, "text": f"<@{ME}> see above", "thread_ts": parent}]
+        self.slack.hits = [{"channel": "C1", "ts": reply, "thread_ts": parent}]
+        self.app._catch_up(self.app._gen, self.slack, self.slack.recent(""))
+        (n,) = self.host.notices
+        self.assertEqual((n["key"], n["show"], n["where"]["thread"]), (f"thread:C1:{parent}", [], parent))
+
+    def test_the_open_notifications_kept_before_their_times_were_still_cleared(self):
+        self.app.store.set_setting("noticed", ["you:D1"])                         # as an earlier version kept them
+        self.app.stop()
+        self.app = be.SlackApp(make_client=FakeSlack)
+        self.app.start(self.host)
+        deadline = time.time() + 5
+        while self.app.status != "connected" and time.time() < deadline:
+            time.sleep(0.02)
+        FakeSlack.made[-1].cursors = {"D1": ts_ago(-5)}                          # read in Slack since
+        self.app.keep_line()
+        self.assertEqual(self.host.cleared, ["you:D1"])
+
+
+class ThreadTest(BackendBase):
+    """Replies in threads the user follows -- started, replied in, followed by hand -- popped up, as Slack does."""
+
+    def setUp(self):
+        super().setUp()
+        self.parent = self.slack.msgs["C1"][0]["ts"]                               # Leo's, in #paper-deadline
+
+    def test_a_reply_in_a_thread_they_started_or_replied_in_pops_up(self):
+        mine = ts_ago(-1)
+        self.live(channel="C1", user=ME, text="a question", ts=mine)
+        self.live(channel="C1", user=MAYA, text="an answer", ts=ts_ago(-2), thread_ts=mine, parent_user_id=ME)
+        n = self.host.notices[-1]
+        self.assertEqual((n["key"], n["show"], n["title"], n["where"]["thread"]),
+                         (f"thread:C1:{mine}", ["ag", "system"], "Maya Chen replied to your thread in #paper-deadline", mine))
+        self.live(channel="C1", user=ME, text="I'll look", ts=ts_ago(-3), thread_ts=self.parent)   # they reply in Leo's
+        self.live(channel="C1", user=LEO, text="thanks", ts=ts_ago(-4), thread_ts=self.parent)
+        self.assertEqual((self.host.notices[-1]["key"], self.host.notices[-1]["title"]),
+                         (f"thread:C1:{self.parent}", "Leo Park replied in a thread you follow in #paper-deadline"))
+        self.assertEqual(self.slack.asked_thread, [])                              # known here: Slack not asked
+
+    def test_slack_says_which_others_they_follow_asked_once_a_thread(self):
+        self.slack.followed[("C1", self.parent)] = [True, ""]                       # followed in Slack's app
+        self.live(channel="C1", user=MAYA, text="+1", ts=ts_ago(-1), thread_ts=self.parent)
+        self.live(channel="C1", user=MAYA, text="+2", ts=ts_ago(-2), thread_ts=self.parent)
+        self.assertEqual([n["key"] for n in self.host.notices], [f"thread:C1:{self.parent}"] * 2)
+        self.assertEqual(self.slack.asked_thread, [("C1", self.parent)])
+        other = ts_ago(-3)
+        self.live(channel="C1", user=LEO, text="unrelated", ts=other)
+        self.live(channel="C1", user=MAYA, text="re", ts=ts_ago(-4), thread_ts=other)      # not followed: nothing
+        self.assertEqual([n["key"] for n in self.host.notices], [f"thread:C1:{self.parent}"] * 2 + ["new:C1"])
+
+    def test_a_threads_notification_clears_when_it_is_opened_replied_in_or_read_in_slack(self):
+        self.slack.followed[("C1", self.parent)] = [True, ""]
+        a = ts_ago(-1)
+        self.live(channel="C1", user=MAYA, text="+1", ts=a, thread_ts=self.parent)
+        key = f"thread:C1:{self.parent}"
+        self.post("view", {"conversation": "C1", "thread": self.parent})            # opened in the panel
+        self.assertEqual(self.host.cleared, [key])
+        self.live(channel="C1", user=MAYA, text="+2", ts=ts_ago(-2), thread_ts=self.parent)
+        self.post("send", {"conversation": "C1", "text": "ok", "thread": self.parent})    # replied in, from the panel
+        self.assertEqual(self.host.cleared, [key, key])
+        b = ts_ago(-3)
+        self.live(channel="C1", user=MAYA, text="+3", ts=b, thread_ts=self.parent)
+        self.slack.followed[("C1", self.parent)] = [True, ts_ago(-2.5)]             # read in Slack, but not this far
+        self.app.keep_line()
+        self.assertEqual(self.host.cleared, [key, key])
+        self.slack.followed[("C1", self.parent)] = [True, b]
+        self.app.keep_line()
+        self.assertEqual(self.host.cleared, [key, key, key])
+        self.live(channel="C1", user=MAYA, text="+4", ts=ts_ago(-4), thread_ts=self.parent)
+        self.post("notified", {"conversation": "C1", "thread": self.parent})       # its notification clicked
+        self.assertEqual(self.host.cleared, [key] * 4)
 
 
 if __name__ == "__main__":
