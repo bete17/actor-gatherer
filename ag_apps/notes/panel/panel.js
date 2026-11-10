@@ -1493,7 +1493,8 @@ turned into another type or sent to an agent together, as one message naming eac
     bar.style.left = `${box.offsetLeft + box.offsetWidth - bar.offsetWidth}px`;
   }
   // a line as its copy has it: a new id, and nothing of whom it was sent to or how it was ended
-  const copyOf = ({ to: _to, sent: _sent, thread: _thread, extra: _extra, group: _group, work: _work, ended: _ended, ended_at: _at, ...rest }) => ({ ...rest, id: rid() });
+  const copyOf = ({ to: _to, sent: _sent, thread: _thread, extra: _extra, group: _group, work: _work, ended: _ended, ended_at: _at,
+    source: _source, source_at: _sourceAt, ...rest }) => ({ ...rest, id: rid() });
   // lines with words to send (no divider, no agents table)
   const sendable = (bs) => bs.filter((b) => !UNSENT.includes(b.type) && plainOf(b.type === "code" ? esc(b.text) : b.text).trim());
 
@@ -2133,12 +2134,12 @@ turned into another type or sent to an agent together, as one message naming eac
   async function reply(id, words) {
     const f = findLine(id), p = f && f.p, b = f && f.b;
     words = words.trim();
-    if (!p || !b || !b.to || !words) return false;
-    const g = sentWith(b);
-    const text = `(A reply in my Notes, page ${JSON.stringify(p.title || "Untitled")}, ${g.length > 1 ? `blocks ${g.map((x) => x.id).join(", ")}` : `block ${b.id}`}.`
-      + ` Report back with notes_report when you're done.)\n\n${words}`;
+    if (!p || !b || !(b.to || b.source) || !words) return false;
+    const g = linesOf(b);
+    const text = b.to ? `(A reply in my Notes, page ${JSON.stringify(p.title || "Untitled")}, ${g.length > 1 ? `blocks ${g.map((x) => x.id).join(", ")}` : `block ${b.id}`}.`
+      + ` Report back with notes_report when you're done.)\n\n${words}` : followUpText(p, g, words);
     try {
-      await ag.actors.send(b.to, text);
+      await ag.actors.send(b.to || b.source, text);
     } catch (e) {
       say(`Not sent: ${e.message}`, true);
       return false;
@@ -2152,6 +2153,8 @@ turned into another type or sent to an agent together, as one message naming eac
   // the conversation about it beside the page -- "Answer" while it asks the user. Neither the conversation nor a
   // preview of it is on the page.
   function sentPart(n, b, ro) {
+    n.classList.remove("has-src");
+    if (!isWork(b) && b.source && !outgoing.has(b.id)) return sourcePart(n, b, ro);   // written by an agent: who, not a status
     let part = n.querySelector(":scope > .sent");
     const g = sentWith(b), tail = [...g].reverse().find((x) => !foldedNow.has(x.id)) || g[g.length - 1];   // sent with others: shown once, at the last of them shown
     const has = isWork(b) || (b.thread && b.thread.length) || outgoing.has(b.id);
@@ -2183,6 +2186,64 @@ turned into another type or sent to an agent together, as one message naming eac
           "aria-label": `${open ? "Close" : "Open"} the conversation: ${count} message${count === 1 ? "" : "s"}`, onclick: talk },
           el("span", { html: SVG.bubble }), el("span", { text: String(count) }))].filter(Boolean));
   }
+  // ---------------------------------------------------------------- lines an agent wrote from its conversation
+  // Lines an agent wrote from its own conversation with the user (`source`, `source_at`: notes_add or notes_change with
+  // from_conversation) name it, once, at the end of the last of them: its avatar -- who wrote them and when, on hover,
+  // and how it stands while it is on a follow-up about them -- which opens the conversation about them beside the page,
+  // where the user follows up with it (`reply`). They were not sent to it: no status of their own, and no work for it
+  // until the user asks.
+  function writtenWith(b) {
+    const p = page();
+    if (!p || !b.source) return [b];
+    const g = p.blocks.filter((x) => x.source === b.source && x.source_at === b.source_at);
+    return g.includes(b) ? g : [b];
+  }
+  // the lines a block shows with: those sent with it (to an actor), else those written with it (by one), else itself
+  const linesOf = (b) => (b.to ? sentWith(b) : b.source ? writtenWith(b) : [b]);
+  const wroteAt = (t) => new Date(t * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  // how the agent that wrote lines stands with them: on a follow-up about them (working, needs you, error), else no word
+  function standsSrc(a, g) {
+    const [cls, word] = stands(a);                         // (one no longer here: its avatar alone, as one idle)
+    return (cls === "work" || cls === "ask" || cls === "bad") && g.some((x) => linesOn(a).includes(x.id)) ? [cls, word] : ["src", ""];
+  }
+  // ... said in the conversation's head
+  const srcStands = (a, g) => { const [cls, word] = standsSrc(a, g); return { key: "source", ...(!a ? { cls: "gone", word: "Not here now" } : cls === "src" ? { cls: "idle", word: "Wrote this" } : { cls, word }) }; };
+  const wroteLine = (b) => `Written from your conversation with ${nameOf(actorOf(b.source), b.source)} · ${wroteAt(b.source_at)}`;
+  // A follow-up on lines an agent wrote: to that agent, as the user's message -- the note first (the Notes app's [asked]
+  // reads it back), naming the lines and when it wrote them, then the lines, then what the user asks.
+  function followUpText(p, g, words) {
+    const many = g.length > 1;
+    return `(A reply in my Notes, page ${JSON.stringify(p.title || "Untitled")}, ${many ? `blocks ${g.map((x) => x.id).join(", ")}` : `block ${g[0].id}`}:`
+      + ` about ${many ? "lines" : "a line"} you wrote there on ${wroteAt(g[0].source_at)}, from our conversation.`
+      + ` Answer as always, then put one to three lines beside ${many ? "them" : "it"} with notes_report${many ? `, one report, on block ${g[g.length - 1].id}` : ""}.)`
+      + `\n\n${mdLines(g).join("\n")}\n\n${words}`;
+  }
+  function sourcePart(n, b, ro) {
+    let part = n.querySelector(":scope > .sent");
+    const g = writtenWith(b), tail = g[g.length - 1];     // written with others: shown once, at the last of them
+    const open = !!convo && g.some((x) => x.id === convo.block);
+    n.classList.toggle("convo-on", open);
+    if (b !== tail) { if (part) part.remove(); return; }
+    n.classList.add("has-src");                           // (its Ask button would cover the avatar: @ or its menu sends it)
+    if (!part) { part = el("div", { class: "sent" }); n.append(part); }
+    const a = actorOf(b.source), name = nameOf(a, b.source);
+    const [cls, word] = standsSrc(a, g);
+    const asks = !!askedAll(a, g);
+    const count = g.reduce((k, x) => k + (x.thread || []).length, 0);
+    const sig = JSON.stringify(["src", cls, word, name, a && a.avatar, count, asks, open, ro, g.length, b.source_at]);
+    if (part.dataset.sig === sig) return;
+    part.dataset.sig = sig;
+    const talk = () => toggleConvo(b.id);
+    const told = `Written by ${name} from your conversation · ${wroteAt(b.source_at)}${g.length > 1 ? ` (${g.length} lines)` : ""}${word ? `\n${name}: ${word}` : ""}`;
+    const kids = [el("button", { type: "button", class: `chip ${cls}`, title: `${told}\n(${open ? "close the conversation" : "follow up with it"})`,
+      "aria-label": told, onclick: talk }, face(a, 16), word ? el("span", { text: word }) : null)];
+    if (asks && !open) kids.push(el("button", { type: "button", class: "talk answer", text: "Answer", onclick: () => openConvo(b.id) }));
+    else if (count) kids.push(el("button", { type: "button", class: `talk${open ? " on" : ""}`, title: open ? "Close the conversation" : "Open the conversation",
+      "aria-label": `${open ? "Close" : "Open"} the conversation: ${count} message${count === 1 ? "" : "s"}`, onclick: talk },
+      el("span", { html: SVG.bubble }), el("span", { text: String(count) })));
+    part.replaceChildren(...kids);
+  }
+
   // what an actor asks, in a line
   function askLine(ask) {
     const q = ask.questions && ask.questions[0];
@@ -2213,9 +2274,9 @@ turned into another type or sent to an agent together, as one message naming eac
     const box = $("convo");
     const p = convo && current === convo.page ? pages.get(convo.page) : null;
     let b = p && p.blocks.find((x) => x.id === convo.block);
-    const g = b ? sentWith(b) : [];
+    const g = b ? linesOf(b) : [];
     if (b && g[g.length - 1] !== b) { b = g[g.length - 1]; convo.block = b.id; }   // lines sent together: one conversation, the last's
-    if (!b || !(b.to || (b.thread && b.thread.length))) {
+    if (!b || !(b.to || b.source || (b.thread && b.thread.length))) {
       convo = null;
       box.hidden = true;
       box.replaceChildren();
@@ -2229,28 +2290,29 @@ turned into another type or sent to an agent together, as one message naming eac
       box.dataset.block = b.id;
       box.replaceChildren(el("div", { class: "cv-head" }), el("div", { class: "cv-list", role: "log", "aria-live": "polite" }), el("div", { class: "cv-foot" }));
     }
-    const a = b.to ? actorOf(b.to) : null, name = b.to ? nameOf(a, b.to) : "", ro = !!p.deleted;
-    const s = isWork(b) ? groupStands(g) : { key: "none", cls: "idle", word: "Sent to no one now" }, cls = s.cls, word = s.word;
+    const who = b.to || b.source || "", a = who ? actorOf(who) : null, name = who ? nameOf(a, who) : "", ro = !!p.deleted;
+    const s = isWork(b) ? groupStands(g) : b.source ? srcStands(a, g) : { key: "none", cls: "idle", word: "Sent to no one now" }, cls = s.cls, word = s.word;
     const words = (x) => (x.type === "code" ? esc(x.text) : x.text);
     const about = g.length > 1 ? `${g.length} lines: ${g.map((x) => oneLine(words(x), 60)).join(" · ")}` : oneLine(words(b), 160);
     const head = box.querySelector(".cv-head");
-    const headSig = JSON.stringify([cls, word, name, a && a.avatar, about, !!a]);
+    const headSig = JSON.stringify([cls, word, name, a && a.avatar, about, !!a, b.source, b.source_at]);
     if (head.dataset.sig !== headSig) {
       head.dataset.sig = headSig;
       head.replaceChildren(
-        el("div", { class: "cv-who" }, b.to ? face(a, 22) : null, el("b", { text: name || "No one" }), el("span", { class: `pill ${cls}`, text: word }),
+        el("div", { class: "cv-who" }, who ? face(a, 22) : null, el("b", { text: name || "No one" }), el("span", { class: `pill ${cls}`, text: word }),
           el("button", { type: "button", class: "cv-x", title: "Close", "aria-label": "Close the conversation", html: SVG.x, onclick: () => closeConvo() })),
         el("button", { type: "button", class: "cv-about", title: `${g.map((x) => oneLine(words(x), 400)).join("\n")}\n(show ${g.length > 1 ? "them" : "it"} on the page)`, onclick: () => {
           const rs = g.map((x) => rowOf(x.id)).filter(Boolean);
           if (rs[0]) rs[0].scrollIntoView({ block: "center", behavior: "smooth" });
           for (const r of rs) { r.classList.remove("flash"); void r.offsetWidth; r.classList.add("flash"); }
         } }, el("span", { class: "dim", text: "About: " }), about || "(empty)"),
-        a ? el("button", { type: "button", class: "cv-chat", text: "Open its Chat", onclick: () => ag.actors.show(b.to).catch((e) => say(e.message, true)) }) : "");
+        b.source ? el("div", { class: "cv-src", text: wroteLine(b) }) : "",
+        a ? el("button", { type: "button", class: "cv-chat", text: "Open its Chat", onclick: () => ag.actors.show(who).catch((e) => say(e.message, true)) }) : "");
     }
     const list = box.querySelector(".cv-list");
-    const lines = threadOf(g);
+    const lines = b.to ? threadOf(g) : threadOf(g).map((l) => ({ ...l, verb: "replied" }));
     const ask = askedAll(a, g);
-    const listSig = JSON.stringify([g.map((x) => [x.id, x.text]), b.sent, b.extra, lines.map((l) => [l.id, l.by === "user" ? "" : (actorOf(l.by.slice(6)) || {}).avatar || ""]),
+    const listSig = JSON.stringify([g.map((x) => [x.id, x.text]), b.sent, b.extra, b.to ? 0 : b.source_at, lines.map((l) => [l.id, l.by === "user" ? "" : (actorOf(l.by.slice(6)) || {}).avatar || ""]),
       ask && ask.id, a && a.answerable, ro]);
     if (list.dataset.sig !== listSig) {
       const fresh = list.dataset.sig === undefined, atEnd = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
@@ -2258,7 +2320,8 @@ turned into another type or sent to an agent together, as one message naming eac
       list.replaceChildren(
         ...(b.sent ? [bubble({ by: "user", at: b.sent,                  // the line(s) as sent, with what the user added
           text: g.map(words).join("<br>") + (b.extra ? `<br><br>${b.extra}` : ""),
-          note: g.length > 1 ? `${g.length} lines, as one message` : "" })] : []),
+          note: g.length > 1 ? `${g.length} lines, as one message` : "" })]
+          : b.source ? [bubble({ by: `agent:${b.source}`, at: b.source_at, verb: "wrote", text: g.map(words).join("<br>") })] : []),   // the line(s) as it wrote them
         ...lines.map(bubble),
         ...(ask ? [askCard(a, ask, b, ro)] : []));
       if (fresh || atEnd) requestAnimationFrame(() => { list.scrollTop = list.scrollHeight; });   // once laid out
@@ -2268,9 +2331,9 @@ turned into another type or sent to an agent together, as one message naming eac
     if (!end) { end = el("div", { class: "cv-end" }); foot.prepend(end); }
     drawEnd(end, g, s, ro);
     let r = foot.querySelector(".reply");
-    if (b.to && !ro) {
+    if ((b.to || b.source) && !ro) {
       if (!r) { r = replyBox(b.id); for (const x of foot.querySelectorAll(".cv-none")) x.remove(); foot.append(r); }
-      r.querySelector("input").placeholder = s.key === "review" ? `Send it back to ${name}: what's left` : `Message ${name}`;
+      r.querySelector("input").placeholder = !b.to ? `Follow up with ${name}` : s.key === "review" ? `Send it back to ${name}: what's left` : `Message ${name}`;
     } else if (r || !foot.querySelector(".cv-none")) {
       if (r) r.remove();
       foot.append(el("div", { class: "cv-none", text: ro ? "This page is in the trash."
@@ -2312,7 +2375,7 @@ turned into another type or sent to an agent together, as one message naming eac
       el("div", { class: "mb" },
         el("div", { class: "bub", html: withLinks(clean(l.text)) }),
         l.results && l.results.length ? madeRow(l.results) : null,
-        el("div", { class: "mm", text: mine ? `You · ${clock(l.at)}${l.note ? ` · ${l.note}` : ""}` : `${nameOf(a, ch)} reported${l.on ? ` on “${l.on}”` : ""}${l.done ? ", says it's done" : ""} · ${clock(l.at)}` })));
+        el("div", { class: "mm", text: mine ? `You · ${clock(l.at)}${l.note ? ` · ${l.note}` : ""}` : `${nameOf(a, ch)} ${l.verb || "reported"}${l.on ? ` on “${l.on}”` : ""}${l.done ? ", says it's done" : ""} · ${l.verb === "wrote" ? wroteAt(l.at) : clock(l.at)}` })));
   }
   function replyBox(id) {
     const input = el("input", { type: "text", "aria-label": "Reply", autocomplete: "off" });
@@ -2370,7 +2433,7 @@ turned into another type or sent to an agent together, as one message naming eac
       if (!n) continue;
       if (b.type === "agents") drawAgentsBlock(n);
       else if (b.type === "work") drawWorkBlock(n);
-      else if (isWork(b) || (b.thread && b.thread.length)) sentPart(n, b, !!p.deleted);
+      else if (isWork(b) || b.source || (b.thread && b.thread.length)) sentPart(n, b, !!p.deleted);
     }
     drawConvo();
   }

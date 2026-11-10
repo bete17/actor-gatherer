@@ -8,13 +8,15 @@ The panel's routes (its own origin, /api/...):
     POST parse  {markdown}      blocks made from pasted markdown, with new ids (nothing changed)
 
 The tools (notes_read, notes_add, notes_change) read and write it as markdown; what an agent changes is told to the
-panels with its channel, so the panel shows who changed what. notes_report is an agent's report on a block the user sent
-it: a line of the block's thread, by it -- whether it says it finished, and what it made. Only the user ends a work item
-(notebook.py): no tool ticks one, or says it is done. A line of a thread a panel adds is the user's, whatever it
-says."""
+panels with its channel, so the panel shows who changed what. Lines an agent writes from its own conversation with the
+user (`from_conversation`) name it as their source, and when (notebook.py), for the user to follow up on with it.
+notes_report is an agent's report on a block the user sent it: a line of the block's thread, by it -- whether it says it
+finished, and what it made. Only the user ends a work item (notebook.py): no tool ticks one, or says it is done. A line
+of a thread a panel adds is the user's, whatever it says."""
 import json
 import os
 import threading
+import time
 import urllib.parse
 from typing import Dict, Optional
 
@@ -102,6 +104,17 @@ class NotesApp(App):
             raise nb.NotebookError(f"no page {name!r} in the notebook.\n{book.outline()}")
         return page
 
+    def _source(self, args: dict, caller: Caller) -> dict:
+        """What lines an agent writes say of where they came from: written from its own conversation with the user
+        (`from_conversation`), it and now -- one dict for all of one call's lines; else nothing (a line changed keeps
+        its own)."""
+        fc = args.get("from_conversation")
+        if fc is not None and not isinstance(fc, bool):
+            raise nb.NotebookError("`from_conversation` is true or false")
+        if not fc or not caller.channel:
+            return {}
+        return {"source": caller.channel, "source_at": round(time.time(), 3)}
+
     def _by(self, caller: Caller) -> str:
         return f"agent:{caller.channel}" if caller.channel else "user"
 
@@ -109,7 +122,8 @@ class NotesApp(App):
         md = args.get("markdown")
         if md is not None and not isinstance(md, str):
             raise nb.NotebookError("notes_add: `markdown` is text")
-        blocks = [{**b, "id": nb.new_id()} for b in nb.blocks_from_markdown(book.page_links(md or ""))]
+        src = self._source(args, caller)
+        blocks = [{**b, "id": nb.new_id(), **src} for b in nb.blocks_from_markdown(book.page_links(md or ""))]
         name, title = args.get("page"), args.get("title")
         if name:
             page = self._page(book, name)
@@ -167,7 +181,8 @@ class NotesApp(App):
         if args.get("delete") or md == "":
             ops = [{"op": "block.delete", "page": page["id"], "block": bid}]
         elif isinstance(md, str):
-            made = nb.blocks_from_markdown(book.page_links(md))
+            src = self._source(args, caller)
+            made = [{**b, **src} for b in nb.blocks_from_markdown(book.page_links(md))]
             if not made:
                 ops = [{"op": "block.delete", "page": page["id"], "block": bid}]
             else:
@@ -216,6 +231,8 @@ class NotesApp(App):
         self.change(instance, [{"op": "thread.add", "page": page["id"], "block": block["id"], "line": line}],
                     self._by(caller), caller.channel)
         where = f"the line on “{page.get('title') or 'Untitled'}”"
+        if not nb.is_work(block):                         # a follow-up on a line it wrote: an answer, no work item
+            return ToolResult.text(f"Reported beside {where}: the user sees it there.")
         ended = nb.ended_of(block)
         if ended == "canceled":
             return ToolResult.text(f"Reported on {where}. The user canceled that line: leave it.")
