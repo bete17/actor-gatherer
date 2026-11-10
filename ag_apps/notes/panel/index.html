@@ -34,8 +34,9 @@
           <button id="icon" class="pg-icon" type="button" title="Change the icon" hidden></button>
           <h1 id="title" class="pg-title" contenteditable="plaintext-only" spellcheck="true" data-ph="Untitled" aria-label="Title"></h1>
         </div>
-        <div id="blocks" class="blocks"></div>
-        <div id="below" class="below" title="Click to add a block"></div>
+        <div id="blocks" class="blocks" aria-label="The page's lines"></div>
+        <div id="pk-bar" class="pk-bar" role="toolbar" aria-label="The lines picked" hidden></div>
+        <div id="below" class="below" title="Click to add a block, or drag to pick lines"></div>
       </article>
       <section id="agents-page" class="page agents-page" aria-label="Agents" hidden></section>
       <div id="empty" class="empty" hidden>
@@ -49,6 +50,7 @@
   <aside id="convo" class="convo" aria-label="The conversation about a line" hidden></aside>
   <div id="pop" class="pop" hidden></div>
   <div id="drop" class="drop" hidden></div>
+  <div id="band" class="band" hidden></div>
 </div>
 <script src="/_ag/lib/purify.min.js"></script>
 <script src="/_ag/app.js"></script>

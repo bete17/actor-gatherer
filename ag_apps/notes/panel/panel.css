@@ -80,7 +80,7 @@ svg { display: block; flex: none; }
   color: var(--ink-2, var(--ink)); font-size: 13px; }
 .banner button { border: 1px solid var(--ring); border-radius: 6px; padding: 1px 10px; font-size: 12.5px; }
 .banner button:hover { background: var(--surface); }
-.page { max-width: 760px; margin: 0 auto; padding: 34px clamp(18px, 7vw, 72px) 0; }
+.page { position: relative; max-width: 760px; margin: 0 auto; padding: 34px clamp(18px, 7vw, 72px) 0; }
 .pg-head { position: relative; padding-top: 22px; margin-bottom: 8px; }
 .pg-tools { position: absolute; top: 0; left: -4px; display: flex; gap: 4px; opacity: 0; transition: opacity .12s; }
 .pg-head:hover .pg-tools, .pg-tools:focus-within { opacity: 1; }
@@ -145,6 +145,26 @@ body.dragging .blk > .gut { opacity: 0 !important; }
 .below { min-height: 140px; cursor: text; }
 .page.ro .below { cursor: default; }
 .drop { position: fixed; height: 3px; border-radius: 2px; background: var(--accent); opacity: .7; pointer-events: none; z-index: 30; }
+
+/* -- lines picked: marked, the bar over a run of several, the box dragged to pick them */
+.blocks { outline: none; }
+.blk.picked, .blk.picked.convo-on { background: color-mix(in srgb, var(--accent) 15%, transparent); }
+.blocks.picking .tx { caret-color: transparent; }
+.blocks.grp .blk > .to-btn { display: none !important; }        /* several picked: they go together, from the bar */
+body.sweeping .tx::selection, body.sweeping .tx *::selection { background: transparent; }
+body.sweeping .tx { caret-color: transparent; }
+body.sweeping, body.banding { cursor: default; user-select: none; -webkit-user-select: none; }
+.band { position: fixed; z-index: 30; pointer-events: none; border-radius: 3px; border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.pk-bar { position: absolute; z-index: 12; display: flex; align-items: center; gap: 2px; height: 28px; padding: 0 3px 0 9px; border-radius: 7px;
+  background: var(--surface); box-shadow: 0 0 0 1px var(--ring), 0 3px 10px rgba(0,0,0,.08); font-size: 12.5px; white-space: nowrap; }
+:root[data-ag-theme="dark"] .pk-bar { box-shadow: 0 0 0 1px var(--ring), 0 3px 10px rgba(0,0,0,.4); }
+.pk-bar .pk-n { color: var(--muted); margin-right: 4px; font-variant-numeric: tabular-nums; }
+.pk-bar button { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 7px; border-radius: 5px; color: var(--ink-2, var(--ink)); }
+.pk-bar button:hover { background: var(--wash); color: var(--ink); }
+.pk-bar .pk-more { width: 24px; padding: 0; justify-content: center; color: var(--muted); }
+body.dragging .pk-bar, body.sweeping .pk-bar, body.banding .pk-bar { opacity: .5; pointer-events: none; }
+.who .undo { margin-left: 8px; color: var(--md-link, var(--accent)); font-size: 12px; text-decoration: underline; text-underline-offset: 2px; }
 
 /* -- a block sent to an agent: its Send button, then under its words who it went to, what it asks, its thread */
 .to-btn { position: absolute; top: 2px; right: 0; display: none; align-items: center; gap: 4px; height: 24px; padding: 0 8px; border-radius: 6px;
