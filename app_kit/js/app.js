@@ -46,9 +46,10 @@ Everything goes through the page around it, by postMessage, which checks it agai
                                                          is then a still picture, drawn in el's own <img> (its first)
     ag.native.release()                                  the keys back from the native page, to the panel
     ag.notices.send({title, text?, key?, show?, where?}) a notification to the user (capability notify): the dashboard
-                                                         lists it until they look at this instance, pops it up there,
-                                                         and -- show ["system"] -- on their computer too; a newer one of
-                                                         the same key takes its place -> its id
+                                                         lists it until they look at this instance, and pops it up
+                                                         where `show` says (default ["ag"]): "ag" there, "system" on
+                                                         their computer, [] nowhere (only listed); a newer one of the
+                                                         same key takes its place -> its id
     ag.notices.clear(idOrKey)                            one of its own (or every one of a key) no longer asking for them
     ag.notices.onOpen(cb)                                cb(where, id): the user clicked one of this instance's -- the
                                                          panel shown, `where` as it was sent (given once it connects)

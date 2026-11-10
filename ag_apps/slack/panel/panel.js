@@ -831,6 +831,11 @@ nodes from its text (`render`), never as HTML; links go out only to http, https 
         el("div", { class: "note" }, s.team ? `${s.team}, signed in as ${uname(s.me)}` : "Not connected"),
         el("fieldset", null, el("legend", null, "Tell the agents working with Slack about"),
           opt("all", "All new messages"), opt("mentions", "Only my DMs and mentions"), opt("none", "Nothing (they read when asked)")),
+        el("fieldset", null, el("legend", null, "Notify me"),
+          el("div", { class: "note" }, "DMs and mentions pop up in the dashboard. Other new messages show on Slack's row in the list."),
+          el("label", null, el("input", { type: "checkbox", checked: S.settings.notify_system !== false,
+            onchange: async (e) => { try { const got = await post("settings", { notify_system: e.target.checked }); S.settings = got.settings; } catch { e.target.checked = !e.target.checked; } } }),
+          "DMs and mentions on this computer too")),
         el("div", { class: "row" }, el("button", { type: "button", class: "btn small", onclick: async () => {
           closePop();
           try { const got = await post("disconnect", {}); S.setup = got.setup; drawAll(); } catch { /* shown by the status */ }
@@ -913,10 +918,11 @@ nodes from its text (`render`), never as HTML; links go out only to http, https 
     const seen = cid === S.open && document.visibilityState === "visible" && S.pinned && (x.kind === "message" || (th && th.ts === m.thread_ts));
     if (x.mention && !x.mine && !seen) toast(x);
   }
+  let noticeAsked = null;                  // a notification's conversation to open once the list has it
   ag.onMessage((x) => {
     switch (x.kind) {
       case "status": S.setup = x.setup; drawAll(); if (x.setup.status === "connected" && !S.convs.size) reload(); break;
-      case "conversations": setLists(x); drawConvs(); drawHead(); if ($("setup").hidden === false && S.convs.size) drawAll(); break;
+      case "conversations": setLists(x); drawConvs(); drawHead(); if ($("setup").hidden === false && S.convs.size) drawAll(); if (noticeAsked) openNoticed(noticeAsked); break;
       case "unread": S.unread = x.unread; drawConvs(); break;
       case "message": case "reply": arrived(x); break;
       case "changed": {
@@ -1031,6 +1037,16 @@ nodes from its text (`render`), never as HTML; links go out only to http, https 
     else if (!$("results").hidden) { e.stopPropagation(); closeResults(); }
   }, true);
   ag.agents.onChange(() => { drawAgents(); drawDrafts(); });
+  // a notification of the dashboard's clicked: its conversation opened there (its thread, for a reply), and its
+  // notifications cleared -- also when it holds nothing unread to mark read
+  async function openNoticed(where) {
+    if (!where || !where.conversation) return;
+    if (!S.convs.has(where.conversation)) { noticeAsked = where; return; }   // the list not read yet: after reload
+    noticeAsked = null;
+    await open(where.conversation, where.thread ? { ts: where.thread, thread: where.thread } : { ts: where.ts });
+    post("notified", { conversation: where.conversation }).catch(() => {});
+  }
+  ag.notices.onOpen((where) => { openNoticed(where); });
   ag.actors.on(() => { drawAgents(); drawDrafts(); });
 
   async function reload() {
@@ -1042,7 +1058,8 @@ nodes from its text (`render`), never as HTML; links go out only to http, https 
     drawAll();
     const last = keep.get("open", null);
     viewSaid = "";       // said again: a restarted backend has forgotten it
-    if (!S.open && last && S.convs.has(last)) open(last, { focus: false });
+    if (noticeAsked) openNoticed(noticeAsked);
+    else if (!S.open && last && S.convs.has(last)) open(last, { focus: false });
     else reportView();
   }
   await reload();

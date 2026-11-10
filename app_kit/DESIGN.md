@@ -303,8 +303,9 @@ does, so the two are one abstraction:
   it says (`where`, handed to its panel) or dismissed.
 - **Said as it happens.** What comes to want the reader -- an app's notification, an actor that comes to wait for them
   or stops on an error -- pops up in the page's corner, unless they have it in front of them; and, the page not in
-  front, on the computer too (the browser's Notification, the desktop app's), for an app's only where it asked
-  (`show` "system"). The reader turns actors' pop-ups and the computer's off in the settings.
+  front, on the computer too (the browser's Notification, the desktop app's) -- an app's only where it asked: `show`
+  "ag" for the pop-up (the default), "system" for the computer's; neither, only listed (a quiet one: a channel's new
+  messages, say). The reader turns actors' pop-ups and the computer's off in the settings.
 
 ### 5c. Schedules: an app working on its own
 
