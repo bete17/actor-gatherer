@@ -203,6 +203,109 @@ test("the file open in an Editor stays open, at its place, when the reader goes 
   await endEditor(page, request, sid, src);
 });
 
+test("left while typing in an Editor's file, the cursor is back where it was, typing going on there", async ({
+  page,
+  request,
+}) => {
+  const { repo } = project();
+  fs.writeFileSync(
+    path.join(repo, "long.py"),
+    Array.from({ length: 300 }, (_, i) => `x${i + 1} = ${i + 1}\n`).join(""),
+  );
+  const { actor, sid, src } = await startEditor(page, repo);
+  const task = page.locator(`#agents button.agent[data-key="${await actor.getAttribute("data-key")}"]`); // the Editor's task
+  const panel = editorPanel(page);
+  const frame = () => page.frames().find((f) => /^http:\/\/editor\.localhost:\d+\//.test(f.url()))!;
+  const line250 = () => frame().evaluate("ed.s.view.state.doc.line(250).text");
+  const away = async () => {
+    await page.locator("#agents button.agent", { hasText: CODEX }).click(); // another task: the Editor's panel goes
+    await expect(editorPane(page)).toHaveCount(0);
+    await task.click(); // back
+    await expect(editorPane(page)).toHaveCount(1);
+    await expect(panel.locator(".cm-line", { hasText: "x250 = 250" })).toBeVisible(); // scrolled where it was
+  };
+  await panel.locator(".ed-row", { hasText: "long.py" }).first().click();
+  await expect(panel.locator(".cm-content")).toContainText("x1 = 1");
+  await frame().evaluate(
+    "(v => v.dispatch({ effects: ed.s.A.EditorView.scrollIntoView(v.state.doc.line(250).from, { y: 'center' }) }))(ed.s.view)",
+  );
+  await panel.locator(".cm-line", { hasText: "x250 = 250" }).click(); // typing in it, as the reader does
+  await page.keyboard.press("End");
+  await page.keyboard.type(" #here");
+  await away(); // at once: its place as it goes
+  await expect(panel.locator(".cm-cursor-primary")).toBeVisible(); // the keys back, the cursor shown
+  await page.keyboard.type("!");
+  await expect.poll(line250).toBe("x250 = 250 #here!"); // typing goes on where it was
+  // left from the actor's message box: the cursor kept, the keys not taken back
+  await page.locator("#composer-text").click();
+  await page.waitForTimeout(1200);
+  await away();
+  expect(await frame().evaluate("ed.s.view.hasFocus")).toBe(false);
+  expect(
+    await frame().evaluate(
+      "(st => [st.doc.lineAt(st.selection.main.head).number, st.selection.main.head - st.doc.line(250).from])(ed.s.view.state)",
+    ),
+  ).toEqual([250, 17]);
+  await page.keyboard.type("?");
+  await page.waitForTimeout(300);
+  expect(await line250()).toBe("x250 = 250 #here!"); // nothing typed into the file
+  await expect // and all of it saved on disk, the keys typed just before the panel went too
+    .poll(() => fs.readFileSync(path.join(repo, "long.py"), "utf8").split("\n")[249])
+    .toBe("x250 = 250 #here!");
+  await endEditor(page, request, sid, src);
+});
+
+test("the preview comes back as it was left: its tab, its output's scroll, its PDF's page, a rebuilt PDF's too", async ({
+  page,
+  request,
+}) => {
+  test.skip(!hasLatex, "no latexmk and synctex here");
+  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ag-preview-")));
+  const tex = (n: number) =>
+    `\\documentclass{article}\n\\begin{document}\n${Array.from({ length: n }, (_, i) => `Page ${i + 1}.`).join("\n\\newpage\n")}\n\\end{document}\n`;
+  fs.writeFileSync(path.join(repo, "paper.tex"), tex(5));
+  execFileSync("git", ["init", "-q"], { cwd: repo });
+  const { actor, sid, src } = await startEditor(page, repo);
+  const task = page.locator(`#agents button.agent[data-key="${await actor.getAttribute("data-key")}"]`); // the Editor's task
+  const panel = editorPanel(page);
+  const away = async (meanwhile = () => {}) => {
+    await page.locator("#agents button.agent", { hasText: CODEX }).click(); // another task: the Editor's panel goes
+    await expect(editorPane(page)).toHaveCount(0);
+    meanwhile();
+    await task.click(); // back
+    await expect(editorPane(page)).toHaveCount(1);
+    await expect(panel.locator(".ed-pv")).toBeVisible(); // the preview open again
+  };
+  await panel.locator(".ed-row", { hasText: "paper.tex" }).first().click();
+  await panel.locator("button.ed-exec").click();
+  await panel.getByRole("button", { name: "Save and run" }).click();
+  await expect(panel.locator(".pv-st")).toContainText("Done", { timeout: 60_000 });
+  const pdf = () => page.frames().find((f) => /\/_ag\/lib\/pdfjs\/web\/viewer\.html/.test(f.url()));
+  const place = () => pdf()?.evaluate("[PDFViewerApplication.page, PDFViewerApplication.pdfViewer.currentScaleValue]");
+  await expect.poll(async () => pdf()?.evaluate("PDFViewerApplication.pagesCount")).toBe(5);
+  await pdf()!.evaluate("PDFViewerApplication.pdfViewer.currentScaleValue = '1.5'; PDFViewerApplication.page = 3");
+  await expect.poll(place).toEqual([3, "1.5"]);
+  // the output picked, scrolled up from its end
+  await panel.locator(".pv-edge").hover(); // over a result, its head is tucked away above it until the pointer comes
+  await panel.locator(".pv-tabs button", { hasText: "Output" }).click();
+  await panel.locator(".pv-out").evaluate((o) => (o.scrollTop = 40));
+  await page.waitForTimeout(500); // kept a moment after it moves
+  await away();
+  await expect(panel.locator(".pv-tabs button", { hasText: "Output" })).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(() => panel.locator(".pv-out").evaluate((o) => o.scrollTop)).toBe(40);
+  await panel.locator(".pv-tabs button", { hasText: "Result" }).click();
+  await expect.poll(place).toEqual([3, "1.5"]);
+  // built again while the panel was gone (as an actor's run would): a new PDF, still opened where the reader was
+  await page.waitForTimeout(500);
+  await away(() => {
+    fs.writeFileSync(path.join(repo, "paper.tex"), tex(6));
+    execFileSync("latexmk", ["-pdf", "-interaction=nonstopmode", "paper.tex"], { cwd: repo, stdio: "ignore" });
+  });
+  await expect.poll(async () => pdf()?.evaluate("PDFViewerApplication.pagesCount")).toBe(6);
+  await expect.poll(place).toEqual([3, "1.5"]);
+  await endEditor(page, request, sid, src);
+});
+
 test("a file asked for opens in an Editor's panel, and what is typed is saved", async ({ page }) => {
   const { plot } = project();
   await openActor(page, CLAUDE);
@@ -350,20 +453,22 @@ test("a LaTeX build shows in pdf.js, a source line to its place in the PDF and a
   await expect(panel.locator(".cm-activeLine")).toContainText("First page."); // its source line, selected in the file
 });
 
-test("a broken LaTeX build lists its problems, each opening its file at its line, marked there", async ({ page }) => {
+test("a broken LaTeX build lists its problems, each opening its file at its line, marked there", async ({
+  page,
+  request,
+}) => {
   test.skip(!hasLatex, "no latexmk and synctex here");
   const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ag-preview-")));
-  const tex = path.join(repo, "main.tex");
+  const main = (body: string) => `\\documentclass{article}\n\\begin{document}\n${body}\n\\end{document}\n`;
   fs.mkdirSync(path.join(repo, "sec"));
-  fs.writeFileSync(
-    tex,
-    "\\documentclass{article}\n\\begin{document}\nHello \\cite{nobody}.\n\\input{sec/one}\n\\badmacro\n\\end{document}\n",
-  );
+  fs.writeFileSync(path.join(repo, "main.tex"), main("Hello \\cite{nobody}.\n\\input{sec/one}\n\\badmacro"));
   fs.writeFileSync(path.join(repo, "sec", "one.tex"), "\\section{One}\nSome text, then \\alsobad here.\n");
   execFileSync("git", ["init", "-q"], { cwd: repo });
-  await openActor(page, CLAUDE);
-  await openFile(page, tex);
+  const { actor, sid, src } = await startEditor(page, repo);
+  const task = page.locator(`#agents button.agent[data-key="${await actor.getAttribute("data-key")}"]`); // the Editor's task
   const panel = editorPanel(page);
+  await panel.locator(".ed-row", { hasText: "main.tex" }).first().click();
+  await expect(panel.locator(".cm-content")).toHaveCount(1);
   await panel.locator("button.ed-exec").click();
   await expect(panel.locator(".pv-form input[name=command]")).toHaveValue(/ -file-line-error /);
   await panel.getByRole("button", { name: "Save and run" }).click();
@@ -393,4 +498,25 @@ test("a broken LaTeX build lists its problems, each opening its file at its line
   // the PDF it still made, one click away
   await panel.locator(".pv-tabs button", { hasText: "Result" }).click();
   await expect(panel.locator(".pv-result iframe.pdf")).toHaveCount(1);
+  // the errors fixed and built again: done, its result shown, only its warnings left -- the error's marks gone
+  fs.writeFileSync(path.join(repo, "main.tex"), main("Hello \\cite{nobody}.\n\\input{sec/one}"));
+  fs.writeFileSync(path.join(repo, "sec", "one.tex"), "\\section{One}\nSome text here.\n");
+  await expect(panel.locator(".cm-content")).toContainText("Some text here."); // the file open, as it is on disk now
+  await panel.locator("button.ed-exec").click();
+  await expect(panel.locator(".pv-st")).toContainText("Done", { timeout: 60_000 });
+  await expect(panel.locator(".pv-tabs button", { hasText: "Result" })).toHaveAttribute("aria-pressed", "true");
+  await expect(tab.locator(".n.error")).toHaveCount(0);
+  await expect(tab.locator(".n.warning")).toHaveText("2");
+  await expect(panel.locator(".cm-lintRange-error, .cm-line.ed-prob")).toHaveCount(0);
+  // Problems picked, the task left and come back to: Problems still shown
+  await panel.locator(".pv-edge").hover(); // over a result, its head is tucked away above it until the pointer comes
+  await tab.click();
+  await page.waitForTimeout(500); // kept a moment after it moves
+  await page.locator("#agents button.agent", { hasText: CODEX }).click(); // another task: the Editor's panel goes
+  await expect(editorPane(page)).toHaveCount(0);
+  await task.click();
+  await expect(panel.locator(".ed-pv")).toBeVisible();
+  await expect(tab).toHaveAttribute("aria-pressed", "true");
+  await expect(panel.locator(".pv-pr.warning").first()).toContainText("Citation `nobody' on page 1 undefined");
+  await endEditor(page, request, sid, src);
 });

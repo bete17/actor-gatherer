@@ -21,10 +21,11 @@ const ED_AUTO_MS = 1000;         // ms after the last edit to a file that Auto-s
 const ED_NAME_KEY = "ag-editor-name", ED_COLOR_KEY = "ag-editor-color", ED_ROOT_KEY = "ag-editor-folder", ED_AUTO_KEY = "ag-editor-autosave";
 const ED_WRAP_KEY = "ag-editor-wrap", ED_FILE_KEY = "ag-editor-file";
 const ED_KEEP_AT_MS = 250;       // ms after the cursor or the scroll last moved that the open file's place is kept
+const ED_LEFT_MS = 1000;         // ms from the panel losing the keys to its going, still left while typing (edHadKeys)
 const ED_SHOWN_KEY = "ag-dashboard-editor", ED_HEIGHT_KEY = "ag-dashboard-editor-height";
 const ed = { root: "", home: "", lists: new Map(), open: new Set(), file: null, s: null, lib: null, me: null, user: "", err: "",
   timer: null, treeSig: "", barSig: "", host: null, bar: null, tree: null, head: null, body: null, side: null, changes: null,
-  v: null, turn: 0,                                                                  // v: 18-editor-view.js's
+  v: null, turn: 0, keys: false, blurAt: -Infinity,                                 // v: 18-editor-view.js's; keys, blurAt: edHadKeys's
   branches: [], brSig: "", brs: null, brOpen: null,
   nav: null, fold: null, cursor: null, revealing: null, newItem: null, pick: null, menu: null, find: null,   // 18-editor-tree.js's
   choose: null, choosing: null, go: null,                                                                     // 18-editor-open.js's
@@ -439,7 +440,7 @@ async function edOpen(path, how = null, kept = null) {
   edClose();
   const turn = ++ed.turn;                            // a later pick's, meanwhile, wins
   ed.file = path; ed.err = "";
-  edKeepFile({ path, how, at: kept ? kept.at : null });
+  edKeepFile({ path, how, at: kept && kept.at ? { ...kept.at, focused: false } : null });   // the keys: as it next closes
   if (!ed.lists.has(edDir(path))) edList(edDir(path));      // its writers
   edReveal(path);                                    // and its row in the tree, the folders down to it opened
   edRememberFile(path);                              // Go to file's "Opened lately"
@@ -562,37 +563,61 @@ function edView(s) {
         A.keymap.of([...A.yUndoManagerKeymap, { key: "Mod-s", preventDefault: true, run: () => { edSave(s); return true; } }, A.indentWithTab]),
         A.basicSetup, A.EditorState.lineSeparator.of("\n"), A.highlight, A.language(s.path), A.yCollab(s.ytext, s.awareness), marks,
         zone, agents, conflicts, probs, s.probs.gutter.of([]), s.wrapping.of(ed.wrap ? A.EditorView.lineWrapping : []),
-        A.EditorView.updateListener.of((u) => { if (u.selectionSet) edKeepAt(s); }),
+        A.EditorView.updateListener.of((u) => {
+          if (u.docChanged && s.top) s.top = u.changes.mapPos(s.top);     // the line at the top, where edits moved it
+          if (u.selectionSet) edPlaceMoved(s);
+        }),
       ],
     }),
   });
   edPlaceAt(s);
-  s.view.scrollDOM.addEventListener("scroll", () => edKeepAt(s), { passive: true });
+  s.view.scrollDOM.addEventListener("scroll", () => {
+    const d = s.view.scrollDOM;
+    if (d.clientHeight) s.top = s.view.lineBlockAtHeight(d.scrollTop).from;   // drawn only: going, its frame reads 0
+    edPlaceMoved(s);
+  }, { passive: true });
   edZone(s);
   edAgentMarks(s);
   edConflicts(s);
   edMarkProblems(s);
 }
-// The file open, where it is (its cursor, the line at the top of its view), kept as this Editor's (edKeepFile) a moment
-// after it last moves -- and at once (`now`) as the file closes.
-function edKeepAt(s, now = false) {
+// The file open, where it is, kept as this Editor's (edKeepFile): its cursor, as the view has it now; the line at the top
+// of its view, as last seen while it was drawn (`s.top`: as the panel goes, its frame is no longer drawn, and its scroll
+// reads 0); and, `focused`, whether the reader left from typing in it (edHadKeys) -- so that, opened again, it takes the
+// keys back, the cursor shown where it was. Kept a moment after the cursor or the view last moves (edPlaceMoved), and
+// as the file closes (edClose).
+function edKeepPlace(s, focused = false) {
   clearTimeout(s.keepT);
-  const keep = () => {
-    if (!s.view || (ed.s !== s && !now)) return;
-    const v = s.view, sel = v.state.selection.main;
-    edKeepFile({ path: s.path, how: s.how, at: { anchor: sel.anchor, head: sel.head, top: v.lineBlockAtHeight(v.scrollDOM.scrollTop).from } });
-  };
-  if (now) keep(); else s.keepT = setTimeout(keep, ED_KEEP_AT_MS);
+  if (!s.view) return;
+  const sel = s.view.state.selection.main;
+  edKeepFile({ path: s.path, how: s.how, at: { anchor: sel.anchor, head: sel.head, top: s.top || 0, focused } });
 }
+function edPlaceMoved(s) {
+  clearTimeout(s.keepT);
+  s.keepT = setTimeout(() => { if (ed.s === s) edKeepPlace(s); }, ED_KEEP_AT_MS);
+}
+// Whether the reader is typing in the file `s` as the panel goes: the file was the last thing focused in the panel
+// (`ed.keys`, set by each focus within it; the keys going to the dashboard around it are no focus within), and the panel
+// kept the keys until it went -- it has them, or lost them only a moment ago (the window's blur), as taking the panel
+// away does. Gone to the dashboard's message box first, it lost them earlier: not typing in the file.
+function edHadKeys(s) {
+  if (!ed.keys || !s.view) return false;
+  return document.hasFocus() || performance.now() - ed.blurAt < ED_LEFT_MS;
+}
+document.addEventListener("focusin", (e) => { ed.keys = !!(ed.s && ed.s.view && e.target === ed.s.view.contentDOM); });
+window.addEventListener("blur", () => { ed.blurAt = performance.now(); });
 // The file opened again where it was left (`s.at`): its cursor, its view scrolled to the line that was at its top -- each
-// within the file as it is now.
+// within the file as it is now -- and, left while typing in it, the keys back, so the cursor shows and typing goes on there.
 function edPlaceAt(s) {
   const at = s.at, v = s.view;
   s.at = null;
-  if (!at || !v) return;
+  if (!v) return;
   const n = v.state.doc.length, within = (x) => Math.max(0, Math.min(Number(x) || 0, n));
+  s.top = at ? within(at.top) : 0;
+  if (!at) return;
   v.dispatch({ selection: { anchor: within(at.anchor), head: within(at.head) },
-    effects: s.A.EditorView.scrollIntoView(within(at.top), { y: "start" }) });
+    effects: s.A.EditorView.scrollIntoView(s.top, { y: "start" }) });
+  if (at.focused) v.focus();
 }
 // The lines actors' branches put in the file (the state's `marks`), tinted in each one's hue -- as long as the actor is
 // not closed.
@@ -1183,7 +1208,7 @@ function edFlush(s) {
     const u = s.out.length === 1 ? s.out[0] : s.A.Y.mergeUpdates(s.out);
     s.out = [];
     try {
-      s.state = await post("/api/edit/update", { path: s.path, root: s.root, conn: s.conn, update: edB64(u) });
+      s.state = await post("/api/edit/update", { path: s.path, root: s.root, conn: s.conn, update: edB64(u) }, true);
       s.err = "";
     } catch (e) {
       s.out.unshift(u);
@@ -1240,15 +1265,16 @@ function edClose() {
   if (!s) return;
   ed.s = null;
   clearTimeout(s.autoT);
-  edKeepAt(s, true);                                 // where it was, for the next time this Editor's panel is drawn
+  edKeepPlace(s, edHadKeys(s));                      // where it was, for the next time this Editor's panel is drawn
+  ed.keys = false;
+  // its last keys, still sent, and -- auto-saved -- saved, not over a conflict: in one request, which outlives the panel
+  // (taken away with its task, the page closed), where a second one sent after the first would never be
+  const save = ed.auto && s.epoch && (s.out.length || (s.state && s.state.dirty && !s.state.missing)) && !edDiskConflicts(s).length;
   let sent = Promise.resolve();
-  if (s.out.length && s.epoch) {                     // its last keys, still sent
+  if (s.out.length && s.epoch) {
     const u = s.A.Y.mergeUpdates(s.out);
-    sent = post("/api/edit/update", { path: s.path, root: s.root, conn: s.conn, update: edB64(u) });
-  }
-  if (ed.auto && s.epoch && (s.out.length || (s.state && s.state.dirty && !s.state.missing))
-      && !edDiskConflicts(s).length)                      // and, auto-saved, saved -- not over a conflict
-    sent = sent.then(() => post("/api/edit/save", { path: s.path, root: s.root }));
+    sent = post("/api/edit/update", { path: s.path, root: s.root, conn: s.conn, update: edB64(u), ...(save ? { save: true } : {}) }, true);
+  } else if (save) sent = post("/api/edit/save", { path: s.path, root: s.root }, true);
   sent.catch(() => {});
   for (const id of [...s.boxes.keys()]) edBoxClose(s, id);
   s.awareness.setLocalState(null);                   // its cursor gone from the others' at once
@@ -1364,7 +1390,7 @@ function edByChip(writers) {
 // another (kept in this browser, for this Editor).
 const edShown = () => true;
 const edRootKey = () => `${ED_ROOT_KEY}:${(agApp && agApp.instance) || ""}`;
-// The file open in this Editor -- {path, how (edOpen's), at: where it was (edKeepAt) or null} -- kept in this browser as
+// The file open in this Editor -- {path, how (edOpen's), at: where it was (edKeepPlace) or null} -- kept in this browser as
 // its folder is: its panel goes when the reader goes to another task (the dashboard's enterTask), or the page reloads,
 // and drawn again it opens the file again, where it was (edMount).
 const edFileKey = () => `${ED_FILE_KEY}:${(agApp && agApp.instance) || ""}`;
