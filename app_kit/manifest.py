@@ -203,8 +203,8 @@ class Asked:
     (DocWriter's prompt, its document's state around the user's words; a line Notes sends, with a note on where it is
     from): in a message holding `when`, the first group of `pattern` (a regular expression), else `otherwise`. A second
     group, if the pattern has one, says where in the app the message came from (a page's title): Chat shows it, with
-    the app's label and mark, above the words. A third, which item in the app it is about (a Notes line's id): the
-    app's panel is told it, as what the actor is on now. The words may be read from anywhere in the message, by a
+    the app's label and mark, above the words. A third, which item in the app it is about (a Notes line's id; several
+    lines sent together, their ids, ", " between): the app's panel is told it, as what the actor is on now. The words may be read from anywhere in the message, by a
     lookahead, so that the rest can come first: what the list keeps of a message is cut at 600 characters."""
     when: str = ""
     pattern: str = ""
