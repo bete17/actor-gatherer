@@ -99,6 +99,14 @@ const edWriters = (entry) => {
   return out;
 };
 const edWriterName = (w) => w.actor ? edWhoName(w.actor) : w.channel.slice(0, 8);
+// The writers the tree shows: not a closed actor (one not saved for later), unless a change of its there still waits
+// for the reader (the listing's `waiting`: its branch's, a proposal, a conflict not settled) -- then marked `closed`.
+const edClosed = (a) => !!a && statusOf(a)[0] === "closed" && !a.saved;
+const edTreeWriters = (entry, writers) => {
+  const waits = new Set(((entry && entry.waiting) || []).map((w) => w.gatherer + "\u0000" + w.channel));
+  return writers.filter((w) => !edClosed(w.actor) || waits.has(w.gatherer + "\u0000" + w.channel))
+    .map((w) => edClosed(w.actor) ? { ...w, closed: true } : w);
+};
 const edAvatar = (w) => w.actor && w.actor.avatar
   ? el("img", { src: avatarSrc(w.actor.avatar), alt: "", draggable: "false" })
   : el("span", { class: "ed-noav", style: `--who: ${edWhoColor(w.actor) || "var(--axis)"}` });
@@ -268,7 +276,7 @@ function edAvatars(writers, what) {
   const many = writers.length > 1;
   return el("span", { class: "ed-avs" + (many ? " many" : ""),
     title: `${many ? `${writers.length} actors changed ${what}` : `Changed ${what}`} in the last half hour:\n`
-      + writers.map((w) => `${edWriterName(w)}, ${ago(w.at)}`).join("\n") },
+      + writers.map((w) => `${edWriterName(w)}, ${ago(w.at)}${w.closed ? " (closed: its change waits for you)" : ""}`).join("\n") },
     ...writers.slice(0, 3).map(edAvatar), many ? el("span", { class: "n", text: String(writers.length) }) : null);
 }
 // Whose a change seen on disk at `t` was: the actor whose recorded change is nearest it, and not long before it (ag records

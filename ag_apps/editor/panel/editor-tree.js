@@ -382,7 +382,7 @@ function edTree() {
       return;
     }
     for (const e of got.entries) {
-      const p = edJoin(dir, e.name), writers = edWriters(e), dim = e.name.startsWith(".") ? " dim" : "";
+      const p = edJoin(dir, e.name), all = edWriters(e), writers = edTreeWriters(e, all), dim = e.name.startsWith(".") ? " dim" : "";
       const at = { type: "button", role: "treeitem", "aria-level": depth + 1, tabindex: "-1", style: lvl(depth), "data-path": p };
       if (e.dir) {
         const open = ed.open.has(p);
@@ -394,7 +394,7 @@ function edTree() {
         if (open) walk(p, depth + 1);
         continue;
       }
-      const fresh = got.now - e.mtime < 60 && !writers.some((w) => got.now - w.at < 60), on = p === ed.file;
+      const fresh = got.now - e.mtime < 60 && !all.some((w) => got.now - w.at < 60), on = p === ed.file;
       sig.push(p, fresh, e.pages, e.dirty, e.conflicts, e.pending, writers.map((w) => w.channel));
       rows.push(el("button", { ...at, class: "ed-row" + dim + (on ? " on" : ""), "aria-selected": on ? "true" : "false",
         title: [edTilde(p), fresh ? `Changed ${ago(e.mtime)}` : "", e.pages ? `Open in ${plural(e.pages, "editor")}` : "",
