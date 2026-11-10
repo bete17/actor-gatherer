@@ -1,14 +1,16 @@
 // What the Editor app's panel (ag_apps/editor/panel/) uses, as `window.agEditor`: CodeMirror 6 to edit in, Yjs to share
 // each file between everyone editing it (y-codemirror.next binds the two, with each other editor's cursor and
 // selection), and a language for a file's name, coloured with the page's own classes (LaTeX and BibTeX are
-// latex.mjs's); and, as `ui`, the dashboard's own highlighter (frontend/src/core/ui/highlight/), which colours an
-// actor's changes to a file as the dashboard's Chat colours them.
+// latex.mjs's); CodeMirror's lint display, a LaTeX build's problems marked on their lines; and, as `ui`, the
+// dashboard's own highlighter (frontend/src/core/ui/highlight/), which colours an actor's changes to a file as the
+// dashboard's Chat colours them.
 // Bundled by build.mjs into ag_apps/editor/panel/vendor/editor.js, which the panel loads the first time it opens a file.
 import { basicSetup } from "codemirror";
 import { EditorState, StateEffect, StateField, Compartment, RangeSet } from "@codemirror/state";
 import { EditorView, Decoration, WidgetType, keymap } from "@codemirror/view";
 import { indentWithTab } from "@codemirror/commands";
 import { syntaxHighlighting, StreamLanguage } from "@codemirror/language";
+import { setDiagnostics, lintGutter } from "@codemirror/lint";
 import { tags as t, tagHighlighter } from "@lezer/highlight";
 import { javascript } from "@codemirror/lang-javascript";
 import { python } from "@codemirror/lang-python";
@@ -71,7 +73,7 @@ function language(name) {
 
 window.agEditor = {
   basicSetup, EditorState, StateEffect, StateField, Compartment, RangeSet, EditorView, Decoration, WidgetType, keymap, indentWithTab,
-  highlight, language, Y, yCollab, yUndoManagerKeymap,
+  highlight, language, setDiagnostics, lintGutter, Y, yCollab, yUndoManagerKeymap,
   Awareness, encodeAwarenessUpdate, applyAwarenessUpdate, removeAwarenessStates,
   ui: { ansiHtml, guessWeb, hlLines, hlPart, langOfPath, tildePath },
 };

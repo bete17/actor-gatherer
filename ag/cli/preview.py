@@ -21,7 +21,7 @@ import json
 import os
 import sys
 import time
-from typing import List
+from typing import List, Optional
 
 from . import actors
 
@@ -113,6 +113,18 @@ def _shows(r: dict) -> str:
     return "It shows its output."
 
 
+def _problems(p: Optional[dict]) -> List[str]:
+    """A LaTeX build's errors and warnings, as its log says them (the Editor's runs.said_problems)."""
+    if not p:
+        return []
+    counts = ", ".join(f"{p[k]} {one if p[k] == 1 else many}" for k, one, many in
+                       (("errors", "error", "errors"), ("warnings", "warning", "warnings"),
+                        ("bad_boxes", "bad box", "bad boxes")))
+    when = "" if p["fresh"] else ", from the build before: nothing was rebuilt"
+    return ([f"Its log ({p['log']}{when}): {counts}" + (":" if p["list"] else ".")] + [f"  {x}" for x in p["list"]]
+            + ([f"  ... and {p['more']} more"] if p.get("more") else []))
+
+
 def shown(op: str, got: dict, me: str) -> str:
     p = got.get("preview")
     where = got["key"] + (f" (checkout {got['checkout']})" if got.get("checkout") != got.get("key") else "")
@@ -141,6 +153,7 @@ def shown(op: str, got: dict, me: str) -> str:
                      else f"Nothing to run. {_shows(r)}")
         if r.get("command"):
             lines.append(_shows(r))
+        lines += _problems(r.get("problems"))
         out = (got.get("output") or "").rstrip()
         if out:
             lines += ["The end of its output:" if len(out) >= 3990 else "Its output:", out]

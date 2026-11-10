@@ -121,6 +121,16 @@ button.ed-person { cursor: pointer; }
 .ed-body .ed-disk { background: color-mix(in srgb, var(--who, var(--s2)) 26%, transparent); }
 /* the conflict zone: the lines edited here since the file was opened, tinted very lightly */
 .ed-body .ed-zone { background: color-mix(in srgb, var(--s1) 7%, transparent); }
+/* A LaTeX build's problems on their lines (editor.js, edProblems): the lines of errors and warnings tinted; CodeMirror's
+   lint marks the place, the gutter, and says the message on hover -- in the page's colours. */
+.ed-body .ed-prob.error { background: color-mix(in srgb, var(--critical) 8%, transparent); }
+.ed-body .ed-prob.warning { background: color-mix(in srgb, var(--warning) 8%, transparent); }
+.ed-body .cm-tooltip-lint { max-width: 520px; }
+.ed-body .cm-diagnostic { padding: 4px 8px 4px 7px; font-size: 12.5px; white-space: pre-wrap; }
+.ed-body .cm-diagnostic-error { border-left-color: var(--critical); }
+.ed-body .cm-diagnostic-warning { border-left-color: var(--warning); }
+.ed-body .cm-diagnostic-info { border-left-color: var(--axis); }
+.ed-body .cm-diagnosticSource { color: var(--muted); opacity: 1; font-size: 11px; }
 .ed-zone-chip { display: inline-flex; align-items: center; gap: 2px; font-size: 11.5px; color: var(--ink-2); white-space: nowrap;
   padding: 1px 2px 1px 8px; border-radius: 9px; background: color-mix(in srgb, var(--s1) 13%, transparent); }
 .ed-zone-chip button { border: 0; background: none; font: inherit; color: var(--s1); padding: 0 6px; cursor: pointer; border-radius: 7px; }

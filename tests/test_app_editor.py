@@ -7,7 +7,7 @@ preview`), an agent's command run only once the user lets it; its runs told to i
 origin. The run logic is tested directly (runs.py); the rest through the dashboard as its host, its tool gateway and its
 server."""
 import contextlib
-import importlib.util
+import importlib
 import io
 import json
 import os
@@ -38,14 +38,12 @@ GIT_ENV = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAM
 
 
 def load(name: str):
-    """A module of the app's, by its file (the host imports them as a package of its own)."""
-    spec = importlib.util.spec_from_file_location(f"editor_{name}", os.path.join(ROOT, "ag_apps", "editor", f"{name}.py"))
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+    """A module of the app's, in its package (the host imports them as a package of its own: these are other copies)."""
+    return importlib.import_module(f"ag_apps.editor.{name}")
 
 
 R = load("runs")
+T = load("texlog")
 
 
 def git(cwd, *args):
@@ -120,7 +118,8 @@ class PlaceTest(RunsBase):
     def test_a_guess_by_the_file_open_else_by_the_project(self):
         self.assertEqual(R.guess(self.plot, self.repo), {"command": "python3 {file}", "show": ""})
         paper = self.tex("paper/paper.tex", "\\documentclass{article}\n\\begin{document}\nHi\n\\end{document}\n")
-        self.assertEqual(R.guess(paper, self.repo), {"command": "latexmk -pdf -synctex=1 -cd -interaction=nonstopmode "
+        self.assertEqual(R.guess(paper, self.repo), {"command": "latexmk -pdf -synctex=1 -cd -file-line-error "
+                                                                "-interaction=nonstopmode "
                                                                 "paper/paper.tex", "show": "paper/paper.pdf"})
         self.assertEqual(R.guess("/x/index.html", self.repo), {"command": "", "show": "{file}"})
         with open(os.path.join(self.repo, "package.json"), "w") as fh:
@@ -136,7 +135,8 @@ class PlaceTest(RunsBase):
         notes = self.tex("paper/notes.tex", "Loose notes, in no document.\n")
         for f in (main, intro, method, notes):
             self.assertEqual(R.tex_main(f, self.repo), main, f)
-        want = {"command": "latexmk -pdf -synctex=1 -cd -interaction=nonstopmode paper/main.tex", "show": "paper/main.pdf"}
+        want = {"command": "latexmk -pdf -synctex=1 -cd -file-line-error -interaction=nonstopmode paper/main.tex",
+                "show": "paper/main.pdf"}
         self.assertEqual(R.guess(method, self.repo), want)
         self.assertEqual(R.guess(None, self.repo, os.path.join(self.repo, "paper")), want)
         slides = self.tex("paper/slides.tex", doc % "\\input{talk}")
@@ -150,7 +150,7 @@ class PlaceTest(RunsBase):
         lone = self.tex("other/lone.tex", "\\section{Alone}\n")
         self.assertIsNone(R.tex_main(lone, self.repo))
         spaced = self.tex("my paper/a b.tex", doc % "Hi")
-        self.assertEqual(R.guess(spaced, self.repo)["command"].split(" ", 5)[-1], "'my paper/a b.tex'")
+        self.assertEqual(R.guess(spaced, self.repo)["command"].split(" ", 6)[-1], "'my paper/a b.tex'")
 
 
 class RunTest(RunsBase):
@@ -235,6 +235,147 @@ class SyncTeXTest(RunsBase):
             R.synctex(self.repo, {"pdf": "../elsewhere.pdf", "page": 1, "x": 1, "y": 1})
 
 
+def tex_cut(log: str) -> str:
+    """A log's lines cut at 79 bytes, as TeX writes them (max_print_line) -- but its first, which it writes whole."""
+    head, *rest = log.split("\n")
+    return "\n".join([head] + [ln[i:i + 79] for ln in rest for i in range(0, max(len(ln), 1), 79)])
+
+
+#: A LaTeX log as pdfTeX writes one (cut at 79 bytes): files opened "(" and closed ")", a "(" that is no file's, an
+#: error in an \input file whose name is cut in two, LaTeX's own error, warnings (one cut), a bad box showing a "(" of
+#: its text, an emergency stop.
+CHAPTER = "./chapters/a-chapter-with-a-name-long-enough-that-tex-has-to-cut-it-in-two-places.tex"
+LOG = tex_cut("""This is pdfTeX, Version 3.141592653-2.6-1.40.26 (TeX Live 2025) (preloaded format=pdflatex)
+**main.tex
+(./main.tex
+LaTeX2e <2024-11-01> patch level 2
+(/usr/local/texlive/2025/texmf-dist/tex/latex/base/article.cls
+Document Class: article 2024/06/29 v1.4n Standard LaTeX document class
+(/usr/local/texlive/2025/texmf-dist/tex/latex/base/size10.clo))
+LaTeX Font Info:    External font `cmex10' loaded for size
+(Font)              <7> on input line 4.
+
+LaTeX Warning: Citation `nobody' on page 1 undefined on input line 4.
+
+(CHAPTER
+! Undefined control sequence.
+l.3 \\alsobad
+            
+The control sequence at the end of the top line
+of your error message was never \\def'ed. If you have
+misspelled it (e.g., `\\hobx'), type `I' and the correct
+spelling (e.g., `I\\hbox'). Otherwise just continue,
+and I'll forget about whatever was undefined.
+
+)
+
+! LaTeX Error: There's no line here to end.
+
+See the LaTeX manual or LaTeX Companion for explanation.
+Type  H <return>  for immediate help.
+ ...                                              
+                                                  
+l.7 \\caption{Two}\\\\
+                    
+Your command was ignored.
+
+Package natbib Warning: Citation `li2024agents' on page 1 undefined on input line 9.
+
+
+Package rerunfilecheck Warning: File `main.out' has changed.
+(rerunfilecheck)                Rerun to get outlines right
+(rerunfilecheck)                or use package `bookmark'.
+
+Overfull \\hbox (191.0915pt too wide) in paragraph at lines 11--12
+\\OT1/cmr/m/n/10 This line is far too wide (so it overflows
+ []
+
+
+LaTeX Warning: There were undefined references.
+
+! Emergency stop.
+<*> main.tex
+            
+*** (job aborted, no legal \\end found)
+""".replace("CHAPTER", CHAPTER))
+
+
+class TexLogTest(unittest.TestCase):
+    def test_each_problem_at_its_file_and_line_cut_lines_joined_the_files_open_followed(self):
+        got = [(p["level"], p["file"], p["line"], p["message"], p["token"]) for p in T.parse(LOG.encode())]
+        chapter = CHAPTER
+        self.assertIn(f"\n({CHAPTER[:78]}\n{CHAPTER[78:]}\n", LOG)              # its name cut, as TeX does
+        self.assertIn("on input li\nne 9.\n", LOG)
+        self.assertEqual(got, [
+            ("warning", "./main.tex", 4, "Citation `nobody' on page 1 undefined", "nobody"),
+            ("error", chapter, 3, "Undefined control sequence \\alsobad", "\\alsobad"),
+            ("error", "./main.tex", 7, "There's no line here to end.", None),
+            ("warning", "./main.tex", 9, "natbib: Citation `li2024agents' on page 1 undefined", "li2024agents"),
+            ("warning", "./main.tex", None, "rerunfilecheck: File `main.out' has changed. Rerun to get outlines right "
+                                            "or use package `bookmark'.", None),
+            ("box", "./main.tex", 11, "Overfull \\hbox (191.0915pt too wide)", None),
+            ("warning", "./main.tex", None, "There were undefined references.", None),
+            ("error", "./main.tex", None, "Emergency stop.", None),
+        ])
+        error = T.parse(LOG.encode())[1]
+        self.assertEqual(error["log"][:2], ["! Undefined control sequence.", "l.3 \\alsobad"])
+        self.assertEqual(error["log"][-1], "and I'll forget about whatever was undefined.")
+
+    def test_file_line_error_s_form_and_a_log_not_cut(self):
+        log = ("This is pdfTeX\n(./main.tex (./sec/one.tex\n./sec/one.tex:2: Undefined control sequence.\nl.2 \\foo\n"
+               "         \n\n) " + "x" * 120 + "\n./main.tex:9: LaTeX Error: Environment tabularx undefined.\n\n"
+               "See the LaTeX manual or LaTeX Companion for explanation.\nl.9 \\begin{tabularx}\n\n)\n")
+        got = [(p["file"], p["line"], p["message"]) for p in T.parse(log.encode())]
+        self.assertEqual(got, [("./sec/one.tex", 2, "Undefined control sequence \\foo"),
+                               ("./main.tex", 9, "Environment tabularx undefined.")])
+
+
+class ProblemsTest(RunsBase):
+    """A run showing a PDF reads TeX's log beside it: its problems, each file found in the checkout."""
+
+    def build(self, code=1, log=LOG):
+        self.tex("paper/" + CHAPTER[2:], "Text\n\n\\alsobad\n")
+        main = self.tex("paper/main.tex", "\\documentclass{article}\n")
+        self.tex("fixture.log", log)
+        return self.run_now(f"cp fixture.log paper/main.log && touch paper/main.pdf && exit {code}", "paper/main.pdf", main)
+
+    def test_a_build_s_problems_with_their_files_in_the_checkout(self):
+        r = self.build()
+        p = r.view()["problems"]
+        self.assertEqual((p["log"], p["fresh"]), ("paper/main.log", True))
+        first = {x["message"]: x for x in p["list"]}["Undefined control sequence \\alsobad"]
+        self.assertEqual(first["rel"], "paper/" + CHAPTER[2:])
+        self.assertEqual(first["path"], os.path.join(self.repo, first["rel"]))
+        said = R.said_problems(p)
+        self.assertEqual((said["errors"], said["warnings"], said["bad_boxes"]), (3, 4, 1))
+        self.assertEqual(said["list"][0], f"{first['rel']}:3: error: Undefined control sequence \\alsobad")
+        self.assertIn("paper/main.tex:9: warning: natbib: Citation `li2024agents' on page 1 undefined", said["list"])
+
+    def test_no_log_none_of_tex_s_and_a_failed_run_s_old_log(self):
+        self.assertNotIn("problems", self.run_now("touch out.pdf", "out.pdf").view())
+        self.assertNotIn("problems", self.build(log="not a TeX log\n").view())
+        self.build()
+        os.utime(os.path.join(self.repo, "paper", "main.log"), (time.time() - 60, time.time() - 60))
+        r = self.run_now("exit 127", "paper/main.pdf")                   # its command did not run TeX: not its log
+        self.assertNotIn("problems", r.view())
+        r = self.run_now("latexmk() { exit 12; }; latexmk", "paper/main.pdf")   # latexmk with nothing to rebuild
+        self.assertEqual(r.view()["problems"]["fresh"], False)
+
+    def test_a_real_build_of_a_broken_document(self):
+        if not shutil.which("latexmk"):
+            self.skipTest("no latexmk here")
+        main = self.tex("paper/main.tex", "\\documentclass{article}\n\\begin{document}\nHi \\cite{x}.\n"
+                                          "\\input{sec/one}\n\\badmacro\n\\end{document}\n")
+        self.tex("paper/sec/one.tex", "\\section{One}\n\\alsobad\n")
+        command = R.guess(main, self.repo)["command"]
+        r = self.run_now(command, "paper/main.pdf", main, wait=120)
+        self.assertEqual(r.state, "failed")
+        got = [(x["level"], x["rel"], x["line"], x["message"]) for x in r.view()["problems"]["list"]]
+        self.assertIn(("error", "paper/sec/one.tex", 2, "Undefined control sequence \\alsobad"), got)
+        self.assertIn(("error", "paper/main.tex", 5, "Undefined control sequence \\badmacro"), got)
+        self.assertIn(("warning", "paper/main.tex", 3, "Citation `x' on page 1 undefined"), got)
+
+
 class AppBase(HomeBase):
     """The Editor as the dashboard hosts it: an AppHost on the test's home (gatherer `g`), the project in it."""
 
@@ -298,6 +439,24 @@ class AppTest(AppBase):
         self.assertEqual((again["run"]["state"], again["run"]["by"]), ("done", "c1"))
         self.call("set", {"path": self.repo, "command": "echo other"}, channel="c1")
         self.assertTrue(self.call("show", {"path": self.repo})["preview"]["needs_ok"])          # another: asked again
+
+    def test_a_latex_build_s_problems_the_user_s_whole_an_agent_told_them_as_lines(self):
+        os.makedirs(os.path.join(self.repo, "paper", "chapters"))
+        with open(os.path.join(self.repo, "paper", CHAPTER[2:]), "w") as fh:
+            fh.write("Text\n\n\\alsobad\n")
+        with open(os.path.join(self.repo, "fixture.log"), "w") as fh:
+            fh.write(LOG)
+        self.call("set", {"path": self.repo, "command": "cp fixture.log paper/main.log && touch paper/main.pdf && exit 1",
+                          "show": "paper/main.pdf"})
+        mine = self.call("run", {"path": self.repo, "wait": 20})["run"]["problems"]
+        self.assertEqual(len(mine["list"]), 8)
+        self.assertEqual(mine["list"][1]["rel"], "paper/" + CHAPTER[2:])
+        self.assertEqual(self.call("show", {"path": self.repo})["run"]["problems"], mine)
+        self.host.attach("g", self.i.id, "c1")
+        told = self.call("run", {"path": self.repo, "wait": 20}, channel="c1")["run"]["problems"]
+        self.assertEqual((told["errors"], told["warnings"], told["bad_boxes"]), (3, 4, 1))
+        self.assertEqual(told["list"][0], f"paper/{CHAPTER[2:]}:3: error: Undefined control sequence \\alsobad")
+        self.assertEqual(self.call("show", {"path": self.repo}, channel="c1")["run"]["problems"], told)
 
     def test_what_it_keeps_is_its_events_read_back_by_a_new_host(self):
         self.host.attach("g", self.i.id, "c1")
@@ -478,6 +637,15 @@ class ServedTest(ServedBase):
         self.assertIn("drawing []", out)
         code, out, _ = self.run_cli("clear")
         self.assertIn("is cleared", out)
+        with open(os.path.join(self.repo, "fixture.log"), "w") as fh:
+            fh.write(LOG)
+        command = "cp fixture.log main.log && touch main.pdf && exit 1"
+        self.h.call("editor", self.inst, "preview_set", {"path": self.repo, "command": command, "show": "main.pdf"},
+                    Caller(gatherer="g"))
+        code, out, _ = self.run_cli("run", "--wait", "20")
+        self.assertEqual(code, 0)
+        self.assertIn("\nIts log (main.log): 3 errors, 4 warnings, 1 bad box:\n", out)
+        self.assertIn("\n  main.tex:7: error: There's no line here to end.\n", out)     # main.tex: not here, as the log says
 
     def test_every_actor_is_told_of_ag_preview(self):
         from ag.ag_policies.proactive_context_manager.config import ProactiveContextManagerConfig

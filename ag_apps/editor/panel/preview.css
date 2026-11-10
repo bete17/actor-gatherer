@@ -69,3 +69,42 @@
 .pv-result > pre, .pv-out { flex: 1; min-height: 0; margin: 0; overflow: auto; padding: 8px 10px; font: 12px/1.5 var(--mono); color: var(--ink);
   white-space: pre-wrap; overflow-wrap: anywhere; }
 .pv-note { padding: 14px; color: var(--muted); font-size: 12.5px; }
+/* A LaTeX build's problems (preview.js, problemsDraw): errors, warnings, then bad boxes folded; each row opens its file
+   at its line; ▸ shows its lines of the log. Dimmed while the next build runs. */
+.pv-tabs .pv-pr-tab { display: inline-flex; align-items: center; gap: 4px; }
+.pv-tabs .n { font-size: 10px; line-height: 14px; min-width: 14px; padding: 0 4px; border-radius: 7px; color: #fff; text-align: center;
+  font-variant-numeric: tabular-nums; }
+.pv-tabs .n.error { background: var(--critical); }
+.pv-tabs .n.warning { background: var(--warning); }
+.pv-probs { flex: 1; min-height: 0; overflow: auto; padding: 6px 0 4px; font-size: 12.5px; color: var(--ink); transition: opacity .2s; }
+.pv-probs.old { opacity: .55; }
+.pv-pr { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; grid-template-areas: "ic msg more" ". at at";
+  align-items: baseline; gap: 1px 7px; padding: 5px 8px 6px 9px; border-left: 3px solid transparent; }
+.pv-pr .ic { grid-area: ic; } .pv-pr .msg { grid-area: msg; } .pv-pr .at { grid-area: at; } .pv-pr .more { grid-area: more; }
+.pv-pr.error { border-left-color: var(--critical); }
+.pv-pr.warning { border-left-color: var(--warning); }
+.pv-pr.box { border-left-color: var(--axis); }
+.pv-pr + .pv-pr, .pv-pr-log + .pv-pr { margin-top: 2px; }
+.pv-pr.go { cursor: pointer; }
+.pv-pr.go:hover, .pv-pr.go:focus-visible { background: var(--wash); outline: none; }
+.pv-pr .ic::before { display: inline-block; width: 14px; text-align: center; font-size: 10px; }
+.pv-pr.error .ic::before { content: "●"; color: var(--critical); }
+.pv-pr.warning .ic::before { content: "▲"; color: var(--warning); font-size: 9px; }
+.pv-pr.box .ic::before { content: "▭"; color: var(--muted); }
+.pv-pr .msg { overflow-wrap: anywhere; }
+.pv-pr .at { font: 11px var(--mono); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pv-pr.go .at { color: var(--s1); }
+.pv-pr .more { border: 0; background: none; padding: 0 4px; color: var(--muted); font-size: 10px; line-height: 1; cursor: pointer; }
+.pv-pr .more:hover { color: var(--ink); }
+.pv-pr .more[aria-expanded="true"], .pv-pr-group[aria-expanded="true"] .tw { display: inline-block; transform: rotate(90deg); }
+.pv-pr-log { margin: 0 8px 6px 33px; padding: 6px 8px; font: 11.5px/1.45 var(--mono); color: var(--ink-2); background: var(--hl-bg);
+  border: 1px solid var(--grid); border-radius: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.pv-pr-group { display: flex; align-items: center; gap: 8px; width: 100%; margin-top: 4px; padding: 5px 10px 5px 15px; border: 0;
+  border-radius: 0; background: none; color: var(--muted); font-size: 12px; text-align: left; cursor: pointer; }
+.pv-pr-group:hover { background: var(--wash); color: var(--ink); }
+.pv-pr-group .tw { font-size: 10px; width: 11px; }
+.pv-pr-note, .pv-pr-none { padding: 6px 12px 8px; color: var(--muted); }
+.pv-pr-foot { display: flex; align-items: center; gap: 10px; padding: 10px 12px 6px; font-size: 11.5px; color: var(--muted); }
+.pv-pr-foot span { font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pv-pr-foot button { border: 0; background: none; padding: 0; font: inherit; color: var(--s1); cursor: pointer; }
+.pv-pr-foot button:hover { text-decoration: underline; }

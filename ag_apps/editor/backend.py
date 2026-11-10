@@ -49,7 +49,9 @@ The preview's settings are its events, each with the repository it is for (`key`
 Who may run what: the user, anything -- a command an agent set, once they let it run (the panel's "Run it", which
 passes it as `ok`: a call by an agent passing it is refused). An agent, only the command the user set or let run.
 The panel hears of each run as it goes (`tell_panel`): {"run": view}, {"out": {id, text, reset?}}, {"preview":
-{key, row}}. A server no panel has shown for IDLE is stopped."""
+{key, row}}. A server no panel has shown for IDLE is stopped. A LaTeX build's view, once it ends, has its problems
+(runs.problems: from its log), which the panel lists and marks on the file's lines; an agent running it is told its
+errors and warnings as `file:line: message` (runs.said_problems)."""
 
 import base64
 import json
@@ -94,6 +96,14 @@ def _b64(text) -> bytes:
         return base64.b64decode(str(text or ""), validate=True)
     except ValueError:
         raise AppError("an update in base64, please") from None
+
+
+def _said(got: dict, by: str) -> dict:
+    """A tool's answer about the preview, as an agent is told it: a LaTeX build's problems as `file:line: message`."""
+    run = got.get("run")
+    if by != USER and run and "problems" in run:
+        got = {**got, "run": {**run, "problems": R.said_problems(run["problems"])}}
+    return got
 
 
 def _opt(body: dict, key: str) -> Optional[str]:
@@ -413,7 +423,7 @@ class EditorApp(App):
         path = str(args.get("path") or "") or (caller.folder if caller.channel else "") or None
         try:
             if tool == "preview_show":
-                return ToolResult.json(self.about(instance, path))
+                return ToolResult.json(_said(self.about(instance, path), by))
             if tool == "preview_set":
                 key, _ = self.place(instance, path)
                 command, show = str(args.get("command") or "").strip(), str(args.get("show") or "").strip()
@@ -425,17 +435,17 @@ class EditorApp(App):
                 row = {"command": command, "show": show, "set_by": by, "set_at": time.time(),
                        "allowed": command if by == USER else (old or {}).get("allowed")}
                 self._keep(instance, key, "editor.preview_set", {"command": command, "show": show, "by": by}, row)
-                return ToolResult.json(self.about(instance, path))
+                return ToolResult.json(_said(self.about(instance, path), by))
             if tool == "preview_clear":
                 key, _ = self.place(instance, path)
                 self._keep(instance, key, "editor.preview_cleared", {}, None)
-                return ToolResult.json(self.about(instance, path))
+                return ToolResult.json(_said(self.about(instance, path), by))
             if tool == "preview_run":
-                return ToolResult.json(self.run(instance, path, args, by))
+                return ToolResult.json(_said(self.run(instance, path, args, by), by))
             if tool == "preview_stop":
                 _, checkout = self.place(instance, path)
                 self.runs.end(checkout, "stopped")
-                return ToolResult.json(self.about(instance, path))
+                return ToolResult.json(_said(self.about(instance, path), by))
         except R.PreviewError as exc:
             return ToolResult.error(str(exc))
         raise AppError(f"{tool}: no such tool")

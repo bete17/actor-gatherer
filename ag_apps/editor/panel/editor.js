@@ -29,6 +29,7 @@ const ed = { root: "", home: "", lists: new Map(), open: new Set(), file: null, 
   nav: null, fold: null, cursor: null, revealing: null, newItem: null, pick: null, menu: null, find: null,   // 18-editor-tree.js's
   choose: null, choosing: null, go: null,                                                                     // 18-editor-open.js's
   mode: "live",                                                                     // how an agent's change lands (edModePick)
+  problems: new Map(), problemsAt: 0,                                               // a LaTeX build's, by file (edProblems)
   auto: (() => { try { return localStorage.getItem(ED_AUTO_KEY) !== "0"; } catch (e) { return true; } })(),   // on unless turned off
   wrap: (() => { try { return localStorage.getItem(ED_WRAP_KEY) !== "0"; } catch (e) { return true; } })() };  // long lines wrapped: likewise
 const edB64 = (u8) => { let t = ""; for (let i = 0; i < u8.length; i += 0x8000) t += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(t); };
@@ -212,6 +213,38 @@ async function edShowFile(path, line) {
   if (!ed.root || !edUnder(path, ed.root)) edGo(edDir(path));
   if (!ed.s || ed.s.path !== path) edOpen(path);
   if (line) edGoLine(path, line);
+}
+// A LaTeX build's problems (preview.js, from its log), each file's marked on its lines when it is open -- whichever
+// file of the document it is: a marker in the gutter, the place underlined (an undefined macro, a label: itself; else
+// the line's text), the message on hover over either, the lines of errors and warnings tinted. Moved with the edits
+// made since; the next build's replace them. `at`: the build's (its log's time).
+function edProblems(list, at) {
+  const by = new Map();
+  for (const p of list || []) if (p.path && p.line) { if (!by.has(p.path)) by.set(p.path, []); by.get(p.path).push(p); }
+  ed.problems = by; ed.problemsAt = at || 0;
+  if (ed.s && ed.s.view) edMarkProblems(ed.s);
+}
+function edMarkProblems(s) {
+  const A = s.A, v = s.view;
+  if (!v || !s.probs || !A.setDiagnostics) return;
+  const list = ed.problems.get((s.info && s.info.real) || s.path) || ed.problems.get(s.path) || [];
+  const sig = JSON.stringify([ed.problemsAt, list.map((p) => [p.level, p.line, p.message])]);
+  if (sig === s.probs.sig) return;
+  s.probs.sig = sig;
+  const doc = v.state.doc, diags = [], tints = new Map();
+  for (const p of list) {
+    const l = doc.line(Math.max(1, Math.min(p.line, doc.lines)));
+    const at = p.token ? l.text.indexOf(p.token) : -1;
+    const from = at >= 0 ? l.from + at : l.from + l.text.length - l.text.trimStart().length;
+    const to = at >= 0 ? from + p.token.length : Math.max(from, l.from + l.text.trimEnd().length);
+    diags.push({ from, to, severity: p.level === "error" ? "error" : p.level === "warning" ? "warning" : "info",
+      source: p.level === "box" ? "LaTeX: a bad box" : "LaTeX", message: p.message });
+    if (p.level !== "box" && tints.get(l.from) !== "error") tints.set(l.from, p.level);
+  }
+  const tinted = A.Decoration.set([...tints].map(([at, level]) => A.Decoration.line({ class: `ed-prob ${level}` }).range(at)), true);
+  const told = A.setDiagnostics(v.state, diags);
+  v.dispatch({ effects: [].concat(told.effects || [], s.probs.set.of(tinted),
+    s.probs.gutter.reconfigure(diags.length && A.lintGutter ? A.lintGutter() : [])) });
 }
 // Whether the file open is a TeX source, its places in what it built shown: "→ PDF" offered.
 const edTexToPdf = () => !!(ed.file && /\.(tex|ltx)$/i.test(ed.file));
@@ -508,6 +541,17 @@ function edView(s) {
     provide: (f) => A.EditorView.decorations.from(f),
   });
   s.agents = { set: setAgents, sig: "" };
+  const setProbs = A.StateEffect.define();
+  const probs = A.StateField.define({                // the lines of a LaTeX build's errors and warnings, tinted (edProblems)
+    create: () => A.Decoration.none,
+    update(deco, tr) {
+      deco = deco.map(tr.changes);
+      for (const e of tr.effects) if (e.is(setProbs)) deco = e.value;
+      return deco;
+    },
+    provide: (f) => A.EditorView.decorations.from(f),
+  });
+  s.probs = { set: setProbs, sig: "", gutter: new A.Compartment() };   // its gutter's markers only once it has some
   s.wrapping = new A.Compartment();                  // long lines wrapped, or not (the header's Wrap)
   ed.body.replaceChildren();
   s.view = new A.EditorView({
@@ -517,7 +561,7 @@ function edView(s) {
       extensions: [
         A.keymap.of([...A.yUndoManagerKeymap, { key: "Mod-s", preventDefault: true, run: () => { edSave(s); return true; } }, A.indentWithTab]),
         A.basicSetup, A.EditorState.lineSeparator.of("\n"), A.highlight, A.language(s.path), A.yCollab(s.ytext, s.awareness), marks,
-        zone, agents, conflicts, s.wrapping.of(ed.wrap ? A.EditorView.lineWrapping : []),
+        zone, agents, conflicts, probs, s.probs.gutter.of([]), s.wrapping.of(ed.wrap ? A.EditorView.lineWrapping : []),
         A.EditorView.updateListener.of((u) => { if (u.selectionSet) edKeepAt(s); }),
       ],
     }),
@@ -527,6 +571,7 @@ function edView(s) {
   edZone(s);
   edAgentMarks(s);
   edConflicts(s);
+  edMarkProblems(s);
 }
 // The file open, where it is (its cursor, the line at the top of its view), kept as this Editor's (edKeepFile) a moment
 // after it last moves -- and at once (`now`) as the file closes.
