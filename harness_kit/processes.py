@@ -1,9 +1,27 @@
-"""Whether a process runs, on every OS. Here so that ag's integrations (the hook servers' records, Antigravity's
-`told` files) and the dashboard share one copy without either importing the other.
+"""Processes, on every OS. Here so that ag's integrations (the hook servers' records, Antigravity's `told` files) and
+the dashboard share one copy without either importing the other.
 
-    running(pid)    whether any process has that pid now: True or False (False for a pid that is no number)"""
+    running(pid)            whether any process has that pid now: True or False (False for a pid that is no number)
+    end_group(pid, force)   a process started in a group of its own, and all it started, ended"""
 
 import os
+import signal
+import subprocess
+
+
+def end_group(pid: int, force: bool = False) -> None:
+    """The process `pid`, started with start_new_session=True, and all it started: asked to end, or with `force` made
+    to. ProcessLookupError when there is none. Windows has no process groups (and no asking a program with no window),
+    so there the tree of what it started is ended at once."""
+    if os.name != "nt":
+        os.killpg(pid, signal.SIGKILL if force else signal.SIGTERM)
+        return
+    try:
+        done = subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        raise ProcessLookupError(pid) from None
+    if done.returncode:
+        raise ProcessLookupError(pid)
 
 
 def running(pid) -> bool:
