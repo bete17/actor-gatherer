@@ -12,7 +12,7 @@ read and write it as markdown.
       .markdown(page)           a page's blocks as markdown, each line its block's id first
     blocks_from_markdown(text)  blocks ({type, text, checked, indent}, no id) from markdown
     inline_html(md)             a line's markdown (bold, italic, code, links) as a block's text
-    inline_markdown(html)       the reverse
+    inline_markdown(html, title?)   the reverse (`title`: a page's title now, for a link to that page)
     clean_html(text)            a block's text kept to the inline tags it may hold
     new_id()                    a page's or a block's id
 
@@ -51,6 +51,10 @@ SOURCE: `source`, that agent's channel, and `source_at`, when it wrote it: the c
 written by one call share both, and show as one. The user's follow-ups on them go to that agent and, with its replies,
 are the block's thread. Retyped -- by the user, or by an agent not from its conversation -- a block keeps its source.
 
+A LINK TO A PAGE: an `a` whose href is `page:<the page's id>` (markdown: `[its title](page:<id>)`). Its words are the
+page's title when it was linked; the panel and the markdown agents read show the title the page has now, and the id
+stays the same however the page is renamed or moved.
+
 An op naming a page or block that is not there (another window deleted it) is skipped, not refused: the panel and the
 agents change the notebook at once, and the one later never undoes the other. Standard library only."""
 
@@ -62,7 +66,7 @@ import secrets
 import threading
 import time
 from html.parser import HTMLParser
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 TYPES = ("text", "h1", "h2", "h3", "todo", "bullet", "number", "quote", "code", "divider", "agents", "work")
 #: the blocks that may be set in (the rest are always at the left edge)
@@ -71,6 +75,7 @@ MAX_INDENT = 6
 MAX_TEXT = 20_000
 MAX_TITLE = 300
 ID = re.compile(r"^[a-z0-9]{6,24}$")
+PAGE_HREF = re.compile(r"^page:[a-z0-9]{6,24}$")
 #: an actor's channel, as a block sent to one names it (a session's id, a codex thread's)
 CHANNEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$")
 #: who wrote a thread's line: the user, or an agent (its channel)
@@ -141,7 +146,7 @@ class _Cleaner(HTMLParser):
             t = self.TAGS[tag]
             if t == "a":
                 href = dict(attrs).get("href") or ""
-                if not re.match(r"^(https?:|mailto:)", href.strip(), re.I):
+                if not re.match(r"^(https?:|mailto:)", href.strip(), re.I) and not PAGE_HREF.match(href.strip()):
                     return
                 self.out.append(f'<a href="{html.escape(href.strip(), quote=True)}">')
             else:
@@ -211,8 +216,14 @@ class _Markdowner(HTMLParser):
         self.out.append(data)
 
 
-def inline_markdown(text: str) -> str:
-    """A block's text (clean_html's) as markdown: **bold**, *italic*, ~~struck~~, `code`, [links](url), <br>."""
+def inline_markdown(text: str, title: Optional[Callable[[str], Optional[str]]] = None) -> str:
+    """A block's text (clean_html's) as markdown: **bold**, *italic*, ~~struck~~, `code`, [links](url), <br>. A link to
+    a page says the title `title(its id)` gives (the page's now), if it gives one; else the words it was linked with."""
+    if title:
+        def now(m: "re.Match[str]") -> str:
+            name = title(m.group(1))
+            return m.group(0) if name is None else f'<a href="page:{m.group(1)}">{html.escape(name, quote=False)}</a>'
+        text = _PAGE_LINK.sub(now, text or "")
     m = _Markdowner()
     m.feed(text or "")
     m.close()
@@ -220,7 +231,8 @@ def inline_markdown(text: str) -> str:
 
 
 _CODE = re.compile(r"`([^`]+)`")
-_LINK = re.compile(r"\[([^\]]+)\]\(((?:https?:|mailto:)[^)\s]+)\)")
+_LINK = re.compile(r"\[([^\]]+)\]\(((?:https?:|mailto:)[^)\s]+|page:[a-z0-9]{6,24})\)")
+_PAGE_LINK = re.compile(r'<a href="page:([a-z0-9]{6,24})">(.*?)</a>', re.S)
 _STYLES = ((re.compile(r"\*\*(?=\S)(.+?)(?<=\S)\*\*"), "b"), (re.compile(r"__(?=\S)(.+?)(?<=\S)__"), "b"),
            (re.compile(r"~~(?=\S)(.+?)(?<=\S)~~"), "s"),
            (re.compile(r"(?<![*\w])\*(?=\S)(.+?)(?<=\S)\*(?![*\w])"), "i"),
@@ -255,7 +267,8 @@ _ID_PREFIX = re.compile(r"^\[[a-z0-9]{6,24}\]\s?")          # an id notes_read p
 _LINE_RULES = (
     (re.compile(r"^(?:-{3,}|\*{3,}|_{3,})$"), lambda m: ("divider", "", False)),
     (re.compile(r"^(#{1,6})\s+(.*)$"), lambda m: (f"h{min(3, len(m.group(1)))}", m.group(2), False)),
-    (re.compile(r"^[-*+]\s+\[([ xX])\]\s*(.*)$"), lambda m: ("todo", m.group(2), m.group(1) != " ")),
+    (re.compile(r"^[-*+]\s+\[([ xX])\](?!\()\s*(.*)$"),        # (not "- [x](...)": a list item, a link in it)
+     lambda m: ("todo", m.group(2), m.group(1) != " ")),
     (re.compile(r"^\[([ xX])\]\s+(.*)$"), lambda m: ("todo", m.group(2), m.group(1) != " ")),
     (re.compile(r"^[-*+•]\s+(.*)$"), lambda m: ("bullet", m.group(1), False)),
     (re.compile(r"^\d+[.)]\s+(.*)$"), lambda m: ("number", m.group(1), False)),
@@ -318,12 +331,13 @@ def _numbers(blocks: List[dict]) -> List[Optional[int]]:
     return out
 
 
-def markdown_lines(blocks: List[dict], ids: bool = True) -> List[str]:
+def markdown_lines(blocks: List[dict], ids: bool = True,
+                   title: Optional[Callable[[str], Optional[str]]] = None) -> List[str]:
     lines: List[str] = []
     for b, n in zip(blocks, _numbers(blocks)):
         tag = f"[{b['id']}] " if ids else ""
         pad = "  " * b.get("indent", 0)
-        t, words = b["type"], inline_markdown(b.get("text", "")) if b["type"] != "code" else ""
+        t, words = b["type"], inline_markdown(b.get("text", ""), title) if b["type"] != "code" else ""
         if t == "code":
             lines.append(f"{tag}```")
             lines.extend((b.get("text") or "").split("\n"))
@@ -389,6 +403,29 @@ class Notebook:
                 return got[0]
         return None
 
+    def link_title(self, pid: str) -> Optional[str]:
+        """What a link to that page says now: its title (and that it is in the trash, if it is); None: no such page."""
+        p = self._get(pid)
+        if p is None:
+            return None
+        return (p.get("title") or "Untitled") + (" (in the trash)" if p.get("deleted") else "")
+
+    def page_links(self, md: str) -> str:
+        """Markdown an agent wrote, its links to pages by id and said as the page's title: `[words](page:<an id, or a
+        title>)` made `[its title](page:<its id>)` (the words kept, if the title would break the link). NotebookError
+        for a page that is not there, so the agent can look it up."""
+        def one(m: "re.Match[str]") -> str:
+            words, name = m.group(1), m.group(2).strip()
+            p = self._get(name) if ID.match(name) else None
+            p = p or self.page(name)
+            if p is None:
+                raise NotebookError(f"no page {name!r} to link to: a link to a page is [its title](page:<its id>), "
+                                    f"the id from notes_read.\n{self.outline()}")
+            title = p.get("title") or "Untitled"
+            return f"[{words if re.search(r'[][]', title) else title}](page:{p['id']})"
+        with self.lock:
+            return re.sub(r"\[([^\]\n]*)\]\(page:([^)\n]+)\)", one, md or "")
+
     def children(self, pid: Optional[str], deleted: bool = False) -> List[dict]:
         return [p for p in self.pages if p.get("parent") == pid and bool(p.get("deleted")) == deleted]
 
@@ -437,13 +474,13 @@ class Notebook:
             where = f"page {page['id']}" + (f", under {parent.get('title') or 'Untitled'} ({parent['id']})"
                                            if parent else "")
             lines = [f"{head}   ({where})", ""]
-            body = markdown_lines(page.get("blocks", []))
+            body = markdown_lines(page.get("blocks", []), title=self.link_title)
             lines.extend(body or ["(no blocks yet)"])
             sent = [b for b in page.get("blocks", []) if is_work(b) or (b.get("thread") and not b.get("source"))]
             if sent:
                 who = lambda by: ("the user" if by == "user"                       # noqa: E731
                                   else f"actor {by[6:]}{' (you)' if me and by[6:] == me else ''}")
-                flat = lambda h: " / ".join(inline_markdown(h).splitlines())        # noqa: E731
+                flat = lambda h: " / ".join(inline_markdown(h, self.link_title).splitlines())        # noqa: E731
                 lines += ["", "The user's work items on this page (each: who it went to, whether the user has ended "
                               "it -- only the user says when one is done -- then what was said about it):"]
                 for b in sent:
@@ -457,7 +494,7 @@ class Notebook:
                         made = f" (made: {', '.join(line['results'])})" if line.get("results") else ""
                         said = " (said it is done)" if line.get("done") and line["by"] != "user" else ""
                         lines.append(f"    {who(line['by'])}: {flat(line['text'])}{said}{made}")
-            lines += sources_lines(page.get("blocks", []), me)
+            lines += sources_lines(page.get("blocks", []), me, self.link_title)
             subs = self.children(page["id"])
             if subs:
                 lines += ["", "Subpages: " + ", ".join(f"{p.get('title') or 'Untitled'} ({p['id']})" for p in subs)]
@@ -727,7 +764,8 @@ def written_with(blocks: List[dict], b: dict) -> List[dict]:
     return [x for x in blocks if x.get("source") == b["source"] and x.get("source_at") == b.get("source_at")]
 
 
-def sources_lines(blocks: List[dict], me: Optional[str] = None) -> List[str]:
+def sources_lines(blocks: List[dict], me: Optional[str] = None,
+                  title: Optional[Callable[[str], Optional[str]]] = None) -> List[str]:
     """Where the blocks agents wrote from their conversations came from, as an agent reads a page: each run's ids, who
     wrote it (`me`, the reader: "you") and when; then the user's follow-ups on it and the replies (lines also sent to an
     agent show theirs with the sent ones). [] if there are none."""
@@ -748,7 +786,7 @@ def sources_lines(blocks: List[dict], me: Optional[str] = None) -> List[str]:
             for line in x.get("thread") or []:
                 by = line["by"]
                 who = "the user" if by == "user" else f"actor {by[6:]}{' (you)' if me and by[6:] == me else ''}"
-                out.append(f"    {who}: {' / '.join(inline_markdown(line['text']).splitlines())}")
+                out.append(f"    {who}: {' / '.join(inline_markdown(line['text'], title).splitlines())}")
     if out:
         out[:0] = ["", "Lines agents wrote from their conversations with the user (each: who wrote it and when -- the "
                        "user can follow up on them with that agent -- then the follow-ups and replies):"]
