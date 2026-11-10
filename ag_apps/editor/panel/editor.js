@@ -19,7 +19,8 @@ const ED_SEND = 40;              // ms the edits of a burst of keys are gathered
 const ED_CREDIT = [3, 20];       // s an actor's recorded change may come before, and after, a change seen on disk, to be its
 const ED_AUTO_MS = 1000;         // ms after the last edit to a file that Auto-save saves it
 const ED_NAME_KEY = "ag-editor-name", ED_COLOR_KEY = "ag-editor-color", ED_ROOT_KEY = "ag-editor-folder", ED_AUTO_KEY = "ag-editor-autosave";
-const ED_WRAP_KEY = "ag-editor-wrap";
+const ED_WRAP_KEY = "ag-editor-wrap", ED_FILE_KEY = "ag-editor-file";
+const ED_KEEP_AT_MS = 250;       // ms after the cursor or the scroll last moved that the open file's place is kept
 const ED_SHOWN_KEY = "ag-dashboard-editor", ED_HEIGHT_KEY = "ag-dashboard-editor-height";
 const ed = { root: "", home: "", lists: new Map(), open: new Set(), file: null, s: null, lib: null, me: null, user: "", err: "",
   timer: null, treeSig: "", barSig: "", host: null, bar: null, tree: null, head: null, body: null, side: null, changes: null,
@@ -397,19 +398,25 @@ function edTick() {
 
 // A file open: what it is first (editor.about) -- text, its document (Yjs), shared through the dashboard with every page
 // that has it open and with the disk; any other file, shown (edShow). `how`: "edit", its text whatever it is (an SVG's,
-// from its header's Edit); "view", shown (an SVG's View).
-async function edOpen(path, how = null) {
+// from its header's Edit); "view", shown (an SVG's View). `kept`: the file this Editor had open when its panel last went
+// (edKeptFile), opened again where it was -- or, gone since, not.
+async function edOpen(path, how = null, kept = null) {
   if (how !== "view" && ed.s && ed.s.path === path && !ed.s.err) return;
   if (how !== "edit" && ed.v && ed.v.path === path) return;
   edClose();
   const turn = ++ed.turn;                            // a later pick's, meanwhile, wins
   ed.file = path; ed.err = "";
+  edKeepFile({ path, how, at: kept ? kept.at : null });
   if (!ed.lists.has(edDir(path))) edList(edDir(path));      // its writers
   edReveal(path);                                    // and its row in the tree, the folders down to it opened
   edRememberFile(path);                              // Go to file's "Opened lately"
   edTree(); edHead();
   let info, A;
-  try { info = await edAbout(path); } catch (e) { if (ed.turn === turn) { ed.err = e.message; edHead(); } return; }
+  try { info = await edAbout(path); } catch (e) {
+    if (ed.turn !== turn) return;
+    if (kept) { ed.file = null; edKeepFile(null); edTree(); edHead(); return; }   // gone since: the folder alone
+    ed.err = e.message; edHead(); return;
+  }
   if (ed.turn !== turn) return;
   if (how !== "edit" && (info.kind !== "text" || !info.text)) return edShow(path, info);
   try { A = await edLib(); } catch (e) { if (ed.turn === turn) { ed.err = e.message; edHead(); } return; }
@@ -417,7 +424,7 @@ async function edOpen(path, how = null) {
   const doc = new A.Y.Doc(), ytext = doc.getText("text"), awareness = new A.Awareness(doc);
   const conn = Math.random().toString(36).slice(2) + Date.now().toString(36);
   const s = ed.s = { A, path, root: "/", doc, ytext, awareness, conn, es: null, view: null, marks: null, markN: 0, boxes: new Map(),
-    epoch: null, state: null, err: "", note: "", out: [], sending: false, awareAt: null, who: null, info };
+    epoch: null, state: null, err: "", note: "", out: [], sending: false, awareAt: null, who: null, info, how, at: kept ? kept.at : null };
   awareness.setLocalStateField("user", edMe());
   doc.on("update", (u, origin) => { if (origin !== "remote" && origin !== "disk") { s.out.push(u); edFlush(s); } });
   awareness.on("update", (_, origin) => { if (origin === "local") edAware(s); });
@@ -511,12 +518,36 @@ function edView(s) {
         A.keymap.of([...A.yUndoManagerKeymap, { key: "Mod-s", preventDefault: true, run: () => { edSave(s); return true; } }, A.indentWithTab]),
         A.basicSetup, A.EditorState.lineSeparator.of("\n"), A.highlight, A.language(s.path), A.yCollab(s.ytext, s.awareness), marks,
         zone, agents, conflicts, s.wrapping.of(ed.wrap ? A.EditorView.lineWrapping : []),
+        A.EditorView.updateListener.of((u) => { if (u.selectionSet) edKeepAt(s); }),
       ],
     }),
   });
+  edPlaceAt(s);
+  s.view.scrollDOM.addEventListener("scroll", () => edKeepAt(s), { passive: true });
   edZone(s);
   edAgentMarks(s);
   edConflicts(s);
+}
+// The file open, where it is (its cursor, the line at the top of its view), kept as this Editor's (edKeepFile) a moment
+// after it last moves -- and at once (`now`) as the file closes.
+function edKeepAt(s, now = false) {
+  clearTimeout(s.keepT);
+  const keep = () => {
+    if (!s.view || (ed.s !== s && !now)) return;
+    const v = s.view, sel = v.state.selection.main;
+    edKeepFile({ path: s.path, how: s.how, at: { anchor: sel.anchor, head: sel.head, top: v.lineBlockAtHeight(v.scrollDOM.scrollTop).from } });
+  };
+  if (now) keep(); else s.keepT = setTimeout(keep, ED_KEEP_AT_MS);
+}
+// The file opened again where it was left (`s.at`): its cursor, its view scrolled to the line that was at its top -- each
+// within the file as it is now.
+function edPlaceAt(s) {
+  const at = s.at, v = s.view;
+  s.at = null;
+  if (!at || !v) return;
+  const n = v.state.doc.length, within = (x) => Math.max(0, Math.min(Number(x) || 0, n));
+  v.dispatch({ selection: { anchor: within(at.anchor), head: within(at.head) },
+    effects: s.A.EditorView.scrollIntoView(within(at.top), { y: "start" }) });
 }
 // The lines actors' branches put in the file (the state's `marks`), tinted in each one's hue -- as long as the actor is
 // not closed.
@@ -1164,6 +1195,7 @@ function edClose() {
   if (!s) return;
   ed.s = null;
   clearTimeout(s.autoT);
+  edKeepAt(s, true);                                 // where it was, for the next time this Editor's panel is drawn
   let sent = Promise.resolve();
   if (s.out.length && s.epoch) {                     // its last keys, still sent
     const u = s.A.Y.mergeUpdates(s.out);
@@ -1287,6 +1319,18 @@ function edByChip(writers) {
 // another (kept in this browser, for this Editor).
 const edShown = () => true;
 const edRootKey = () => `${ED_ROOT_KEY}:${(agApp && agApp.instance) || ""}`;
+// The file open in this Editor -- {path, how (edOpen's), at: where it was (edKeepAt) or null} -- kept in this browser as
+// its folder is: its panel goes when the reader goes to another task (the dashboard's enterTask), or the page reloads,
+// and drawn again it opens the file again, where it was (edMount).
+const edFileKey = () => `${ED_FILE_KEY}:${(agApp && agApp.instance) || ""}`;
+function edKeepFile(v) {
+  try { if (v) localStorage.setItem(edFileKey(), JSON.stringify(v)); else localStorage.removeItem(edFileKey()); }
+  catch (e) { /* this page only */ }
+}
+function edKeptFile() {
+  try { const v = JSON.parse(localStorage.getItem(edFileKey()) || "null"); return v && typeof v.path === "string" && v.path ? v : null; }
+  catch (e) { return null; }
+}
 // Execute: the project's preview run, beside the file (edExecute).
 function edExecBtn() {
   if (!edRuns()) return null;
@@ -1294,7 +1338,8 @@ function edExecBtn() {
     title: "Run this project's preview, and show what it makes beside: the first time, set what it runs (⌘↵ / Ctrl+Enter)",
     onclick: edExecute, "aria-keyshortcuts": MAC ? "Meta+Enter" : "Control+Enter" }, strokeIcon(ICONS.play, 13), "Execute");
 }
-// Drawn the first time, and its folder shown: the one last shown in this Editor, else the one it was started on.
+// Drawn the first time, and its folder shown: the one last shown in this Editor, else the one it was started on -- and the
+// file it last had open, if any, where it was.
 function edMount() {
   const top = document.getElementById("ed-top");
   if (!ed.host) {
@@ -1329,6 +1374,10 @@ function edMount() {
     let dir = "";
     try { dir = localStorage.getItem(edRootKey()) || ""; } catch (e) { /* this page only */ }
     edGo(dir || (agApp && agApp.folder) || state.home.cwd || "/");
+  }
+  if (!ed.file) {                                    // the file it had open, opened again where it was
+    const kept = edKeptFile();
+    if (kept) edOpen(kept.path, kept.how === "edit" || kept.how === "view" ? kept.how : null, kept);
   }
   edTick();
 }
