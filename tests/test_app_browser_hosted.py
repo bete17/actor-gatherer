@@ -225,6 +225,15 @@ class ServedTest(Hosted):
         self.ask("POST", f"{self.base}/watch", {"page": "pg1", "visible": False})   # its panel out of sight
         self.assertFalse(b.watching())
 
+    def test_a_link_its_panel_is_given_is_opened_through_its_route_and_only_a_page_on_the_web(self):
+        b = self.httpd.app_host.backend("browser").bs.get(self.inst.id)
+        with mock.patch.object(type(b), "open_link", lambda me, url: url):
+            self.assertEqual(self.ask("POST", f"{self.base}/open", {"url": "https://example.com/a"}),
+                             (200, {"done": "https://example.com/a"}))
+        status, got = self.ask("POST", f"{self.base}/open", {"url": "file:///etc/hosts"})
+        self.assertEqual(status, 400)
+        self.assertIn("not a link a Browser opens", got["error"])
+
     def test_the_address_bar_s_suggestions_for_every_browser(self):
         self.core.in_db(lambda c: sys.modules["_ag_app_browser.visited"].visit(c, "https://example.com/a", "A page"))
         status, got = self.ask("GET", "/api/visited?q=exam")

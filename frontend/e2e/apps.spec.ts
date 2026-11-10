@@ -119,12 +119,12 @@ test("an intent opens the app that takes it and tells its panel; one no app take
   const there = page.locator("#top-row > .app-pane", { hasText: "demo" });
   await expect(there.frameLocator("iframe").locator("#intent")).toHaveText("open-file /w/demo/plan.md");
   const refused = await notepadFrame(page).evaluate(() =>
-    (window as unknown as Notes).notes.intents.open("open-url", { url: "https://example.com" }).then(
+    (window as unknown as Notes).notes.intents.open("explain-answer", { channel: "c", turn: 1 }).then(
       () => "opened",
       (e: Error) => e.message,
     ),
   );
-  expect(refused).toContain("no app here takes open-url");
+  expect(refused).toContain("no app here takes explain-answer");
 });
 
 test("the panel follows the actor in focus, and the agents attached from its head", async ({ page }) => {

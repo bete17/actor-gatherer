@@ -2249,6 +2249,19 @@ class Browser:
         self._publish()
         self._save()
 
+    def open_link(self, url: str) -> str:
+        """A link the user clicked in the dashboard (its panel's `open-url` intent): opened in the tab shown when that is
+        its only one and blank -- a Browser just opened for the link -- else in a new tab. A page on the web only."""
+        url = (url or "").strip()
+        if not re.match(r"https?://", url, re.I):
+            raise BrowserError(f"not a link a Browser opens: {url}")
+        self.live()
+        with self.lock:
+            blank = len(self.tabs) == 1 and self.tabs[0].url in ("", "about:blank")
+        if blank:
+            return self.navigate(url)
+        return self.new_tab(url).url or url
+
     @_users
     def new_tab(self, url: str = "", by_user: bool = True) -> Tab:
         cdp = self.live()

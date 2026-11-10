@@ -511,6 +511,22 @@ class ChromeBase(Home):
 class ChromeTest(ChromeBase):
     """The whole of it against a real Chrome, headless: the agent's tools, the user's input and picks, the screen."""
 
+    def test_a_link_clicked_in_the_dashboard_opens_in_its_blank_tab_then_in_new_ones(self):
+        first = self.serve("first.html", "<title>First</title><p>one</p>")
+        second = first.replace("first.html", "second.html")
+        self.write("second.html", "<title>Second</title><p>two</p>")
+        for url in ("file:///etc/hosts", "javascript:alert(1)", "example.com"):
+            with self.assertRaises(browser.BrowserError):
+                self.b.open_link(url)
+        self.assertEqual(self.b.open_link(first), first)     # a Browser just opened for it: its one tab, blank, used
+        self.assertTrue(self.until(lambda: [t.url for t in self.b.tabs] == [first]), [t.url for t in self.b.tabs])
+        self.b.open_link(second)                              # one with a page: a new tab
+        self.assertTrue(self.until(lambda: [t.url for t in self.b.tabs] == [first, second]), [t.url for t in self.b.tabs])
+        self.assertEqual(self.b.active, 1)
+        told = [what for _, what in self.b.lately]            # what its agent is told the user did
+        self.assertIn("opened " + first, told)
+        self.assertIn("opened a new tab: " + second, told)
+
     def test_the_agent_and_the_user_use_one_tab(self):
         self.assertIn('"Shop checkout"', self.text("navigate", url=os.path.join(self.root, "index.html")))
         outline = self.text("snapshot")

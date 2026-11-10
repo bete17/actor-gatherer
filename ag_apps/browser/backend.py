@@ -40,7 +40,7 @@ SEEN_EVERY = 3.0                # seconds between looks for the user's next mess
 IMPORTED = "imported:dashboard.db"
 SEEDED = "seeded:chrome history"
 BODY_POSTS = {"input", "nav", "resize", "hover", "mode", "pick", "unpick", "dialog", "copy", "choose", "find", "file",
-              "chosen", "drop", "reveal", "tab", "stop", "watch", "where"}
+              "chosen", "drop", "reveal", "tab", "stop", "watch", "where", "open"}
 
 
 class BrowserApp(App):
@@ -204,6 +204,8 @@ def _post(b: "core.Browser", what: str, body: dict):
         return b.input(body.get("events") if isinstance(body.get("events"), list) else [])
     if what == "nav":
         return {"done": b.navigate(str(body.get("url") or ""), str(body.get("action") or ""))}
+    if what == "open":                                   # a link clicked in the dashboard (the open-url intent)
+        return {"done": b.open_link(str(body.get("url") or ""))}
     if what == "resize":
         b.resize(int(body.get("width") or 0), int(body.get("height") or 0), float(body.get("dpr") or 1))
     elif what == "hover":

@@ -31,10 +31,20 @@ const fullscreenFor = (info) => (harnessInfo(info.harness || (info.session && in
 const BARE_MOVE = /\x1b\[<(\d+);\d+;\d+M/g;
 const dropBareMoves = (d) => d.includes("\x1b[<") ? d.replace(BARE_MOVE, (m, b) => ((b & 32) && (b & 3) === 3 ? "" : m)) : d;
 const term = { sid: null, xterm: null, fit: null, host: null, es: null, opened: false, exited: null, unsent: "", sending: false, error: "", tried: false };
+// A link in the terminal clicked (one a program marks as a link, as Claude Code does its addresses): in a Browser of the
+// actor's task, as a link in a message (07-panes.js, linkClicked); else as xterm would, the address asked about first.
+const TERM_LINKS = {
+  activate(ev, uri) {
+    if (linkClicked(uri, ev)) return;
+    if (!confirm(`Do you want to navigate to ${uri}?\n\nWARNING: This link could potentially be dangerous`)) return;
+    const w = window.open();
+    if (w) { try { w.opener = null; } catch (e) { /* as it is */ } w.location.href = uri; }
+  },
+};
 function termFor(sid) {
   if (term.sid === sid && term.xterm) return term;
   termDrop();
-  const xterm = new Terminal({ cursorBlink: true, fontSize: 13, scrollback: 5000, allowProposedApi: false,
+  const xterm = new Terminal({ cursorBlink: true, fontSize: 13, scrollback: 5000, allowProposedApi: false, linkHandler: TERM_LINKS,
     fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', theme: xtermTheme() });
   const fit = new FitAddon.FitAddon();
   xterm.loadAddon(fit);

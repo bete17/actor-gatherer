@@ -31,6 +31,10 @@ python = "backend:BrowserApp"
 [panel]
 entry = "panel/index.html"
 
+# a link clicked in the dashboard: opened in a Browser of its agent's task (the page's 07-panes.js, openLink)
+[[handles]]
+intent = "open-url"
+
 [capabilities]
 native_view = true
 reads = ["user_message"]
