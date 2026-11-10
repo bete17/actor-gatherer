@@ -162,6 +162,47 @@ test("in Review its actor's edit is a proposal in place, the file unchanged on d
   await endEditor(page, request, sid, src);
 });
 
+test("the file open in an Editor stays open, at its place, when the reader goes to another task and back", async ({
+  page,
+  request,
+}) => {
+  const { repo } = project();
+  fs.writeFileSync(
+    path.join(repo, "long.py"),
+    Array.from({ length: 300 }, (_, i) => `x${i + 1} = ${i + 1}\n`).join(""),
+  );
+  const { actor, sid, src } = await startEditor(page, repo);
+  const task = page.locator(`#agents button.agent[data-key="${await actor.getAttribute("data-key")}"]`); // the Editor's task
+  const panel = editorPanel(page);
+  await panel.locator(".ed-row", { hasText: "long.py" }).first().click();
+  await expect(panel.locator(".cm-content")).toContainText("x1 = 1");
+  const frame = () => page.frames().find((f) => /^http:\/\/editor\.localhost:\d+\//.test(f.url()))!;
+  // the cursor on line 250, scrolled to it (`ed`: the panel's state, a const of its scripts, so reached by an expression)
+  await frame().evaluate(
+    "(v => v.dispatch({ selection: { anchor: v.state.doc.line(250).from + 3 }, scrollIntoView: true }))(ed.s.view)",
+  );
+  await expect(panel.locator(".cm-line", { hasText: "x250 = 250" })).toBeVisible();
+  await page.waitForTimeout(500); // its place kept (a moment after it moves)
+  await page.locator("#agents button.agent", { hasText: CODEX }).click(); // another task: the Editor's panel goes
+  await expect(editorPane(page)).toHaveCount(0);
+  await task.click(); // back
+  await expect(editorPane(page)).toHaveCount(1);
+  await expect(panel.locator(".ed-head .ed-path")).toContainText("long.py"); // the file still open
+  await expect(panel.locator(".cm-line", { hasText: "x250 = 250" })).toBeVisible(); // where it was left
+  const at = await frame().evaluate(
+    "(st => [st.doc.lineAt(st.selection.main.head).number, st.selection.main.head - st.doc.line(250).from])(ed.s.view.state)",
+  );
+  expect(at).toEqual([250, 3]);
+  await page.locator("#agents button.agent", { hasText: CODEX }).click(); // away again, and the file deleted meanwhile
+  await expect(editorPane(page)).toHaveCount(0);
+  fs.rmSync(path.join(repo, "long.py"));
+  await task.click(); // back: its folder alone, no error
+  await expect(editorPane(page)).toHaveCount(1);
+  await expect(panel.locator(".ed-head .ed-hint")).toContainText("Pick a file");
+  await expect(panel.locator(".ed-head .ed-path")).toHaveCount(0);
+  await endEditor(page, request, sid, src);
+});
+
 test("a file asked for opens in an Editor's panel, and what is typed is saved", async ({ page }) => {
   const { plot } = project();
   await openActor(page, CLAUDE);
