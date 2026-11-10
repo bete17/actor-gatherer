@@ -18,9 +18,16 @@ Slack app's row: QUIET, said again at most every QUIET_EVERY seconds. Their own 
 that don't mention them, nor joins and leaves. Messages fetched after the line was down are listed quietly, never
 popped up. A conversation read (in the panel, or the user writing in it) clears its notifications.
 
+What the user READ IN SLACK'S OWN APP is followed too: Slack keeps a read cursor a conversation (client.last_read) but
+sends no event when it moves, so it is asked -- every minute, of the conversations here unread or with a notification
+open (at most SYNC_MOST), and on (re)connecting, of those with missed messages. A cursor further on than the app's is
+taken: those messages read here too, and a notification of one read cleared. (The app doesn't move Slack's.)
+
 The LIVE LINE is kept up by the "line" schedule (app.toml, every minute; it also starts the backend with the
 dashboard): a line down DOWN_WAIT seconds -- Slack's SDK reconnects by itself, but not always (a sleep, a network
-change) -- is made again, and what was missed fetched; a connection that failed, tried again (not a refused token).
+change) -- is made again, and what was missed fetched (_catch_up: what Slack's search of the last days finds that the
+app hasn't kept and the user hasn't read here, and the newest of the conversations shown and DMs); a connection that
+failed, tried again (not a refused token).
 While it is down the panel says so: `setup` says "disconnected", never "connected" without a line.
 
 What the user and agents did is recorded in the gatherer as the app's own events (slack.drafted, slack.sent,
@@ -69,6 +76,7 @@ ENV = ("AG_SLACK_USER_TOKEN", "AG_SLACK_APP_TOKEN")
 ID = re.compile(r"^[CGD][A-Z0-9]{6,}$")   # a Slack conversation's id
 DOWN_WAIT = 45.0               # seconds the live line may be down (the SDK reconnecting by itself) before it is made again
 QUIET_EVERY = 120.0            # seconds: a conversation's quiet notification said again at most this often while open
+SYNC_MOST = 30                 # at most this many conversations' read cursors asked of Slack a minute
 REFUSED = ("invalid_auth", "not_authed", "token_revoked", "account_inactive", "missing_scope")   # not tried again
 NOT_NEWS = ("channel_join", "channel_leave", "group_join", "group_leave", "channel_topic", "channel_purpose",
             "channel_name", "group_topic", "group_purpose", "group_name", "pinned_item", "unpinned_item")
@@ -91,7 +99,7 @@ class SlackApp(App):
         self._view_told: Dict[str, tuple] = {}               # instance -> (conversation, thread) its agents were told
         self._down_since: Optional[float] = None             # when the live line was first seen down
         self._said: Dict[str, float] = {}                    # a notification's key -> when it was last said
-        self._noticed: set = set()                           # the keys that may be open (kept in the store)
+        self._noticed: Dict[str, str] = {}                   # the keys that may be open -> the ts each said (kept)
 
     # -- the host
 
@@ -99,7 +107,8 @@ class SlackApp(App):
         super().start(host)
         self.store = Store(os.path.join(host.folder(), "slack.db"))
         self._users = self.store.users()
-        self._noticed = {k for k in self.store.setting("noticed", []) or [] if isinstance(k, str)}
+        kept = self.store.setting("noticed", {}) or {}
+        self._noticed = {str(k): str(v) for k, v in (kept.items() if isinstance(kept, dict) else ((k, "") for k in kept))}
         user, app = self._tokens()
         if user:
             self._connect(user, app)
@@ -163,8 +172,7 @@ class SlackApp(App):
                 cl.listen(lambda ev: self._event(gen, ev), lambda s: self._on_status(gen, s))
             else:
                 self._on_status(gen, "live-off")
-            self._recent(gen, cl)
-            self._catch_up(gen, cl)
+            self._catch_up(gen, cl, self._recent(gen, cl))
         except Exception as exc:  # noqa: BLE001 - shown to the user in the panel, not raised
             if gen == self._gen:
                 with self._lock:
@@ -194,40 +202,95 @@ class SlackApp(App):
         self._refreshed = time.time()
         self._tell_all({"kind": "conversations", **self._lists()})
 
-    def _recent(self, gen: int, cl) -> None:
+    def _recent(self, gen: int, cl) -> List[dict]:
         """When each conversation was last active, from Slack's search of the last RECENT_DAYS days (a few calls, not
-        one a conversation): what the panel's Recent list shows and orders by. Live messages keep it after."""
+        one a conversation): what the panel's Recent list shows and orders by. Live messages keep it after. -> the
+        search's hits ({channel, ts, thread_ts}), for _catch_up."""
         after = time.strftime("%Y-%m-%d", time.localtime(time.time() - RECENT_DAYS * 86400))
         try:
             hits = cl.recent(after)
         except slack.SlackError:
-            return                                          # (no search:read: the list fills as messages come)
+            return []                                       # (no search:read: the list fills as messages come)
         if gen != self._gen:
-            return
+            return []
         for h in hits:
             if h["channel"] and h["ts"]:
                 self.store.active(h["channel"], h["ts"])
         self._tell_all({"kind": "conversations", **self._lists()})
+        return hits
 
-    def _catch_up(self, gen: int, cl) -> None:
-        """Messages sent while the line was down, in the conversations the panel has shown and in DMs (where they
-        matter most): fetched since the newest kept, counted unread, not told to agents (they are not new news)."""
-        done = 0
-        for c in self.store.conversations():
-            if gen != self._gen or done >= CATCH_UP:
-                return
-            if not c["latest_ts"] or not (c["synced"] or c["kind"] in ("im", "mpim")):
+    def _catch_up(self, gen: int, cl, hits: List[dict] = ()) -> None:
+        """Messages sent while the line was down, fetched (at most CATCH_UP calls): first those Slack's search found
+        (`hits`) that the app hasn't kept and that are newer than the user read here -- their conversations since then,
+        their threads -- then the newest of the conversations the panel has shown and of DMs. Slack's read cursors of
+        those with new messages taken (the user may have read them in Slack's own app), what is left unread listed for
+        the user quietly; not told to agents (they are not new news)."""
+        since: Dict[str, str] = {}                          # conversation -> fetch what came after
+        threads: Dict[tuple, None] = {}
+        for h in hits:
+            c = self.store.conversation(h.get("channel") or "")
+            if c is None or c.get("gone") or _num(h.get("ts")) <= _num(c["read_ts"]) \
+                    or self.store.message(c["id"], h["ts"]) is not None:
                 continue
+            if h.get("thread_ts") and h["thread_ts"] != h["ts"]:
+                threads[(c["id"], h["thread_ts"])] = None
+            else:
+                since[c["id"]] = max(c["latest_ts"], c["read_ts"], key=_num)
+        for c in self.store.conversations():
+            if c["id"] not in since and c["latest_ts"] and (c["synced"] or c["kind"] in ("im", "mpim")):
+                since[c["id"]] = c["latest_ts"]
+        got: Dict[str, List[dict]] = {}
+        calls = [(cl.history, cid, {"oldest": ts, "limit": 100}) for cid, ts in since.items()] \
+            + [(cl.replies, cid, {"ts": ts}) for cid, ts in threads]
+        for fetch, cid, kw in calls[:CATCH_UP]:
+            if gen != self._gen:
+                return
             try:
-                msgs, _ = cl.history(c["id"], oldest=c["latest_ts"], limit=100)
+                msgs = fetch(cid, **kw)
             except slack.SlackError:
                 continue
-            done += 1
-            new = self.store.put_messages(c["id"], msgs) if msgs else []
+            msgs = msgs[0] if isinstance(msgs, tuple) else msgs
+            new = self.store.put_messages(cid, msgs) if msgs else []
             if new:
-                self._tell_all({"kind": "history", "conversation": c["id"]})
-                self._caught_up(c["id"], new)
+                got.setdefault(cid, []).extend(new)
+        if gen != self._gen:
+            return
+        self._slack_read(cl, list(got))
+        for cid, new in got.items():
+            self._tell_all({"kind": "history", "conversation": cid})
+            self._caught_up(cid, new)
         self._tell_all({"kind": "unread", "unread": self._unread()})
+
+    def _slack_read(self, cl, cids: List[str]) -> List[str]:
+        """Slack's own read cursor of each of `cids` taken where it is further on than the app's -- the user read them
+        in Slack's app --, and a notification of a message so read cleared. -> those whose cursor moved."""
+        moved = []
+        for cid in cids:
+            c = self.store.conversation(cid)
+            if c is None:
+                continue
+            try:
+                last = cl.last_read(cid)
+            except slack.SlackError:
+                continue
+            if _num(last) <= _num(c["read_ts"]):
+                continue
+            self.store.read(cid, last)
+            moved.append(cid)
+            for key in (f"you:{cid}", f"new:{cid}"):
+                if key in self._noticed and _num(self._noticed[key]) <= _num(last):
+                    self._unnotice(key)
+        if moved:
+            self._tell_all({"kind": "conversations", **self._lists()})
+        return moved
+
+    def _sync_read(self, cl) -> None:
+        """Every minute: the read cursors, in Slack, of the conversations unread here or with a notification open --
+        the most recently active SYNC_MOST of them."""
+        cids = set(self._unread()) | {k.split(":", 1)[1] for k in self._noticed}
+        convs = [c for c in (self.store.conversation(cid) for cid in cids) if c is not None and not c.get("gone")]
+        convs.sort(key=lambda c: -max(_num(c.get("active_ts")), _num(c.get("latest_ts"))))
+        self._slack_read(cl, [c["id"] for c in convs[:SYNC_MOST]])
 
     def _line_up(self) -> bool:
         cl = self.cl
@@ -261,6 +324,7 @@ class SlackApp(App):
             self._down_since = None
             if status != "connected":
                 self._on_status(gen, "connected")
+            self._sync_read(cl)
         elif self._down_since is None:
             self._down_since = now
             self._tell_all({"kind": "status", "setup": self.setup()})
@@ -272,7 +336,10 @@ class SlackApp(App):
         """Messages missed while the line was down, listed for the user quietly: the newest of each kind, unless they
         wrote in the conversation after (read)."""
         newest: Dict[str, dict] = {}
+        read = _num((self.store.conversation(ch) or {}).get("read_ts"))
         for m in sorted(new, key=lambda m: _num(m["ts"])):
+            if _num(m["ts"]) <= read:
+                continue                                    # read already: in Slack's own app
             if m.get("user") and m["user"] == self.me.get("user_id"):
                 newest.clear()
             elif self._news(ch, m):
@@ -464,28 +531,28 @@ class SlackApp(App):
                 pass                                        # (a host that takes none)
         if told:
             self._said[key] = now
-            self._noticed_now(add=key)
+            self._noticed[key] = m["ts"]
+            self._keep_noticed()
 
     def _clear(self, ch: str) -> None:
         """The conversation read: its notifications, if any may be open, no longer asking for the user."""
         for key in (f"you:{ch}", f"new:{ch}"):
-            if key not in self._noticed or self.host is None:
-                continue
+            if key in self._noticed:
+                self._unnotice(key)
+
+    def _unnotice(self, key: str) -> None:
+        if self.host is not None:
             for inst in self.host.instances():
                 try:
                     self.host.clear_notice(inst, key)
                 except AppError:
                     pass
-            self._noticed_now(drop=key)
+        self._noticed.pop(key, None)
+        self._keep_noticed()
 
-    def _noticed_now(self, add: Optional[str] = None, drop: Optional[str] = None) -> None:
-        was = set(self._noticed)
-        if add:
-            self._noticed.add(add)
-        if drop:
-            self._noticed.discard(drop)
-        if self._noticed != was and self.store is not None:
-            self.store.set_setting("noticed", sorted(self._noticed))
+    def _keep_noticed(self) -> None:
+        if self.store is not None:
+            self.store.set_setting("noticed", dict(self._noticed))
 
     # -- names
 
