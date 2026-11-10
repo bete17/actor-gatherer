@@ -39,13 +39,15 @@ class AppError(Exception):
 class Instance:
     """One opened copy of an app. `id` is the host's (16 hex digits), `gatherer` the one it was opened in, `folder`
     what it works on, where it has one (per-folder and per-checkout apps). `title` and `data` are the app's: what the
-    page shows of it, and anything the app wants kept with it (JSON)."""
+    page shows of it, and anything the app wants kept with it (JSON). `name` is the user's: what they called it, shown
+    over its title ("": not named -- the host's `rename`, its `app_named` record)."""
     id: str
     app: str
     gatherer: str
     folder: Optional[str] = None
     title: str = ""
     data: Dict[str, Any] = field(default_factory=dict)
+    name: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -53,7 +55,7 @@ class Instance:
     @classmethod
     def from_dict(cls, d: dict) -> "Instance":
         return cls(id=d["id"], app=d["app"], gatherer=d["gatherer"], folder=d.get("folder"),
-                   title=d.get("title") or "", data=dict(d.get("data") or {}))
+                   title=d.get("title") or "", data=dict(d.get("data") or {}), name=d.get("name") or "")
 
 
 @dataclass(frozen=True)

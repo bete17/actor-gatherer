@@ -52,13 +52,14 @@ HOST_PROPERTY_NAMES = tuple(p.name for p in HOST_PROPERTIES)
 #: The event types any app may insert besides its own: those ag's policy already shows agents (its poller doc's
 #: advice), so no policy changes for an app. An app's pollers output these only, as ag requires of any poller.
 CONTEXT_TYPES = ("context_stream", "environment_update")
-#: The records the host keeps of each app: an instance opened or closed, an agent attached or detached, a tool call it
-#: passed to the app, and a notification it sent the user and its end (`notify` capability: NOTICE_TYPES). Records like
-#: the harness's: no policy groups them, and no agent is shown them. An app reads its own; no app inserts them.
+#: The records the host keeps of each app: an instance opened, named by the user or closed, an agent attached or
+#: detached, a tool call it passed to the app, and a notification it sent the user and its end (`notify` capability:
+#: NOTICE_TYPES). Records like the harness's: no policy groups them, and no agent is shown them. An app reads its own;
+#: no app inserts them.
 HOST_TYPES = (EventType("app_opened", HOST_PROPERTIES), EventType("app_closed", HOST_PROPERTIES),
               EventType("app_attached", HOST_PROPERTIES), EventType("app_detached", HOST_PROPERTIES),
               EventType("app_call", HOST_PROPERTIES), EventType("app_notified", HOST_PROPERTIES),
-              EventType("app_notice_settled", HOST_PROPERTIES))
+              EventType("app_notice_settled", HOST_PROPERTIES), EventType("app_named", HOST_PROPERTIES))
 HOST_RECORDS = tuple(t.name for t in HOST_TYPES)
 #: A NOTIFICATION an app sends the user, as an agent's `asked` is: open until settled, as `ask_settled` settles that.
 #:     app_notified        {id, key, title, text, show, where}: where it is shown (SHOWS: "ag", a pop-up in the

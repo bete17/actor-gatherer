@@ -111,17 +111,17 @@ button:disabled { opacity: .5; cursor: default; }
 /* a row's buttons (rowActs): shown over its face, in a small bar of their own, while the row is hovered (or in focus from
    the keys, or its "+" menu open) -- the face hidden meanwhile; the row shows its face alone the rest of the time. No fade:
    the list is drawn again on every change, which would start it again under a resting pointer. Where nothing is hovered
-   (a touch screen), the buttons always, in the face's place. */
+   (a touch screen), the buttons always, in the face's place. A row being named (its name a box): its face, no buttons. */
 .agent { position: relative; }
 .agent .a-acts { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); z-index: 1; display: inline-flex; align-items: center; gap: 2px;
   padding: 2px; border-radius: 8px; background: var(--surface); box-shadow: 0 0 0 1px var(--ring), 0 2px 6px rgba(0, 0, 0, .16);
   opacity: 0; pointer-events: none; }
 .agent .a-acts :is(.task-add, .save-btn, .close-btn) { opacity: 1; width: 22px; min-width: 22px; height: 22px; border-radius: 6px; }
-.agent:is(:hover, :focus-visible, :has(.a-acts :focus-visible), :has(.task-add[aria-expanded="true"])) .a-acts { opacity: 1; pointer-events: auto; }
-.agent:is(:hover, :focus-visible, :has(.a-acts :focus-visible), :has(.task-add[aria-expanded="true"])) :is(.a-face, .t-faces) { visibility: hidden; }
+.agent:not(.renaming):is(:hover, :focus-visible, :has(.a-acts :focus-visible), :has(.task-add[aria-expanded="true"])) .a-acts { opacity: 1; pointer-events: auto; }
+.agent:not(.renaming):is(:hover, :focus-visible, :has(.a-acts :focus-visible), :has(.task-add[aria-expanded="true"])) :is(.a-face, .t-faces) { visibility: hidden; }
 @media (hover: none) {
-  .agent .a-acts { opacity: 1; pointer-events: auto; }
-  .agent :is(.a-face, .t-faces) { visibility: hidden; }
+  .agent:not(.renaming) .a-acts { opacity: 1; pointer-events: auto; }
+  .agent:not(.renaming) :is(.a-face, .t-faces) { visibility: hidden; }
 }
 .agent .close-btn { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px;
   border-radius: 4px; color: var(--muted); cursor: pointer; }

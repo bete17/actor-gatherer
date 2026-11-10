@@ -61,7 +61,7 @@ function heedHome() {
 function saidOf(w) {
   if (w.n) {
     const o = appInfo(w.g.name, w.id), info = o ? o.app : (window.agNext && window.agNext.apps.named(w.app)) || {};
-    const label = o && o.title && o.title !== info.label ? appTitle(o) : info.label || w.app || "An app";
+    const label = o && (o.name || (o.title && o.title !== info.label)) ? appTitle(o) : info.label || w.app || "An app";
     return [w.n.title, w.n.text || "", `${label} · ${titleOf(w.g)}`];
   }
   const who = actorTitle(w.a), ask = w.a.asking || {};

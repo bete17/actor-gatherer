@@ -59,8 +59,8 @@ class TasksTest(unittest.TestCase):
         self.assertEqual(tasks.of("g")["tasks"], [{"id": tid, "name": "Book it"}])
         with self.assertRaisesRegex(tasks.TaskError, "no task 99 in g"):
             tasks.rename("g", 99, "x")
-        with self.assertRaisesRegex(tasks.TaskError, "what is the task called"):
-            tasks.rename("g", tid, "   ")
+        tasks.rename("g", tid, "   ")                                  # no name: named by what is in it again
+        self.assertEqual(tasks.of("g")["tasks"], [{"id": tid, "name": ""}])
 
     def test_apps_are_items_and_a_task_made_unnamed_is_named_by_what_is_in_it(self):
         tid = tasks.add("g", tasks.app_item("b1"), ["a"])

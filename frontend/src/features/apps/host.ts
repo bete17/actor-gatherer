@@ -10,6 +10,7 @@ import "./apps.css";
 import { desktop, nativePanes, nativeSoon, type NativePlace } from "./native";
 import { ACTOR_OPS, toActors } from "./actors";
 import { NOTICE_OPS, toNotices } from "./notices";
+import { drawWho, nameable } from "./naming";
 
 type Capability =
   "message_agents" | "transcript" | "edit_guard" | "native_view" | "docs" | "actors" | "notify" | "message_actors";
@@ -33,6 +34,8 @@ export interface Instance {
   folder: string | null;
   title: string;
   data: Record<string, unknown>;
+  /** The user's name for it, over its title ("": none). */
+  name?: string;
 }
 export interface Selection {
   gatherer: string;
@@ -68,6 +71,8 @@ export interface PaneHooks {
   sendActor?: (gatherer: string, channel: string, text: string) => Promise<{ channel: string }>;
   startActor?: (gatherer: string, harness: string, folder: string, text: string) => Promise<{ channel: string }>;
   showActor?: (gatherer: string, channel: string) => Promise<unknown> | void;
+  /** It named by the user in its head (naming.ts): the list told. */
+  named?: (instance: Instance) => void;
 }
 /** What a panel asking `actors` is told of them (the SDK's ag.actors). */
 export interface Actors {
@@ -237,6 +242,8 @@ export class AppPane {
       ev.stopPropagation();
       hooks.close();
     });
+    // its name double-clicked: named by the user (naming.ts)
+    nameable(this.who, this);
     this.head.append(this.who, this.agentsBtn, close);
     this.head.addEventListener("pointerdown", () => hooks.focus());
     const q = new URLSearchParams({ gatherer: instance.gatherer, instance: instance.id, host: location.origin });
@@ -290,18 +297,15 @@ export class AppPane {
     this.menu?.remove();
   }
 
+  /** Named by the user (naming.ts): drawn so, and the list told. */
+  renamed(got: Instance): void {
+    this.instance = got;
+    this.hooks.named?.(got);
+    this.drawHead();
+  }
+
   private drawHead(): void {
-    const title = this.instance.title !== this.app.label ? this.instance.title : "";
-    const where = title || (this.instance.folder || "").split("/").filter(Boolean).pop() || "";
-    this.who.replaceChildren(el("b", "", this.app.label), ...(where ? [el("span", "app-where", where)] : []));
-    this.who.title = [
-      this.app.label,
-      this.instance.title,
-      this.instance.folder,
-      `${this.instance.gatherer} · ${this.instance.id}`,
-    ]
-      .filter(Boolean)
-      .join("\n");
+    drawWho(this.who, this.app, this.instance);
     const n = this.attached.length;
     this.agentsBtn.textContent = n ? `${n} agent${n > 1 ? "s" : ""}` : "No agent";
     this.agentsBtn.title = "The agents working with it: attach or detach";
@@ -490,6 +494,7 @@ export class AppPane {
     s.addEventListener("message", (ev) => {
       const value = JSON.parse((ev as MessageEvent).data);
       if (value && value.ag === "instance") {
+        if (typeof value.name === "string") this.instance = { ...this.instance, name: value.name };
         this.attached = value.attached || [];
         this.lastStates = "";
         this.agentsChanged();

@@ -178,8 +178,9 @@ def take_out(gatherer: str, channels: Iterable[str]) -> None:
 
 
 def rename(gatherer: str, tid: int, to: str) -> None:
-    """Task `tid` called `to`. TaskError for no such task, or no name."""
-    name = task_name(to)
+    """Task `tid` called `to` -- "" (spaces only too): named by what is in it again, as one is that was never named.
+    TaskError for no such task."""
+    name = task_name(to, none=True)
 
     def do(conn):
         if not conn.execute("UPDATE tasks SET name = ? WHERE gatherer = ? AND id = ?", (name, gatherer, tid)).rowcount:

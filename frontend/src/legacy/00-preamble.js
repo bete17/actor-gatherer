@@ -26,7 +26,8 @@ let state = { home: null, selected: null, agent: null, readId: null, context: nu
   detailsTab: (() => { try { const v = localStorage.getItem(DETAILS_KEY); return v === "gatherer" || v === "context" ? v : "actor"; } catch (e) { return "actor"; } })(),
   chat: null,           // the history feed's messages: {key, items (stored, append-only), pending, last_row}
   adding: null,         // the form open in the agent list: {gatherer: ""} a new gatherer's, {gatherer: G} a new session's in G
-  renaming: null };     // the actor being named in the list: {g, c, value (as typed so far), was (its name before)}
+  renaming: null };     // the actor being named in the list: {g, c, value (as typed so far), was (its name before)}; a
+                        // task or an app: c its item, kind, auto (05-agent-list.js's startItemRename); the gatherer: c null
 if (PANE) state.selected = [PANE_URL.get("gatherer") || "", PANE_URL.get("channel") || ""];
 // The actors open side by side (panes, below): this page's own view (`here`, its actor state.selected), the
 // first, and the others (`others`), each the page in a frame; `focus` the one a click in the list shows its

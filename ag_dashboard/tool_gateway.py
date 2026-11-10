@@ -199,7 +199,7 @@ def resolve(row: dict, name: str, args: dict) -> Tuple[str, str, Instance, dict]
         inst = mine[0]
     elif mine:
         raise AppError(f"{len(mine)} of {apps[app].label} {which}: say which with `instance` "
-                       f"({', '.join(f'{i.id} ({i.title or i.folder or i.id})' for i in mine)})")
+                       f"({', '.join(f'{i.id} ({i.name or i.title or i.folder or i.id})' for i in mine)})")
     else:
         with HOST.lock:
             had = set(HOST.instances)
@@ -232,7 +232,7 @@ def listed(rows: List[dict], actor: str) -> dict:
     head = lead(row)
     mine: dict = {}
     for i in HOST.instances_of(row["gatherer"]) if head else HOST.attached_to(row["gatherer"], row["session_id"]):
-        mine.setdefault(i.app, []).append({"id": i.id, "title": i.title, "folder": i.folder})
+        mine.setdefault(i.app, []).append({"id": i.id, "name": i.name, "title": i.title, "folder": i.folder})
     channels = channels_of(row)
     return {"gatherer": row["gatherer"],
             "instructions": instructions(row["gatherer"], cli=True, channels=channels, head=head),
