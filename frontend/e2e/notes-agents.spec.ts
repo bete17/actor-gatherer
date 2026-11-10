@@ -172,7 +172,7 @@ test("what is added in the picker goes with the line -- from its button, or Tab 
   await binPage(panel, "Added");
 });
 
-test("one actor on two lines: the line it is on now works and asks, the other waits; the question answered beside the page", async ({
+test("one actor on two lines: the line it is on now works and asks, the other is queued; the question answered beside the page", async ({
   page,
 }) => {
   let channel = "";
@@ -221,8 +221,8 @@ test("one actor on two lines: the line it is on now works and asks, the other wa
   };
   await again();
   await expect(first.locator(".sent .chip")).toContainText("Working");
-  await expect(second.locator(".sent .chip")).toContainText("Waiting");
-  await expect(second.locator(".sent .chip")).toHaveAttribute("aria-label", `${CLAUDE}: Waiting\nAfter “First”`);
+  await expect(second.locator(".sent .chip")).toContainText("Queued");
+  await expect(second.locator(".sent .chip")).toHaveAttribute("aria-label", `${CLAUDE}: Queued\nAfter “First”`);
 
   // it asks, about the first: the question on the first line only
   fake = (a) =>
@@ -251,7 +251,7 @@ test("one actor on two lines: the line it is on now works and asks, the other wa
     "aria-label",
     `${CLAUDE}: Needs you\nAsks: Keep the old keys?`,
   );
-  await expect(second.locator(".sent .chip")).toContainText("Waiting");
+  await expect(second.locator(".sent .chip")).toContainText("Queued");
   await expect(second.locator(".sent .talk.answer")).toHaveCount(0);
   await second.locator(".sent .talk").click();
   await expect(panel.locator("#convo .ask-card")).toHaveCount(0); // not in the second's conversation

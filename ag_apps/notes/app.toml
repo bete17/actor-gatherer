@@ -29,9 +29,14 @@ The user can also send you a line of their notes, as their message to you: it st
 it asks. When it asks you to write something in
 the notes (a bullet, a to-do, a summary, a list), write it on the page itself with notes_add -- after that line, its id
 as `after` -- or notes_change. When you are done, or can't do it, and the note asks you to report back, report with
-notes_report: one to three lines on what you did and where it is (a file, a branch, a PR), not your whole answer -- with
-`done` true if it finished what the line asks, which ticks a to-do; for several lines, a report on each. A report goes into that line's conversation, beside
-the page, not on the page: it is never how you write in the notes. Your answer itself goes as always."""
+notes_report: one to three lines on what you did and where it is, not your whole answer -- `done` true if you finished
+what the line asks, and in `results` what you made (files, a branch, a PR); for several lines, a report on each. A
+report goes into that line's conversation, beside the page, not on the page: it is never how you write in the notes.
+Your answer itself goes as always.
+
+A line sent to you is one of the user's work items, and only the user says when one is done: they review your report
+and accept it, or send it back with what is left (a reply). Never tick or end a work item yourself. A note saying the
+user canceled a line means: stop any work on it, and don't report on it."""
 
 [asked]
 when = 'my Notes, page "'
@@ -65,5 +70,5 @@ input_schema = { type = "object", properties = { page = { type = "string", descr
 
 [[tools]]
 name = "report"
-description = "Report back on a block of the user's notes they sent you (its message began \"(From my Notes, page ..., block <id>. ...)\", or named several, \"blocks <id>, <id>\": a report on each): one to three lines on what you did and where it is, into the conversation about that line (beside the page, not on it: write on the page with notes_add). `done` true ticks it, if it is a to-do."
-input_schema = { type = "object", properties = { block = { type = "string", description = "the block's id, from the note at the start of the user's message" }, text = { type = "string", description = "your report: one to three lines" }, done = { type = "boolean", description = "what the block asks is done (a to-do: ticked)" } }, required = ["block", "text"] }
+description = "Report back on a block of the user's notes they sent you (its message began \"(From my Notes, page ..., block <id>. ...)\", or named several, \"blocks <id>, <id>\": a report on each): one to three lines on what you did and where it is, into the conversation about that line (beside the page, not on it: write on the page with notes_add). The user reviews it and says when the line is done."
+input_schema = { type = "object", properties = { block = { type = "string", description = "the block's id, from the note at the start of the user's message" }, text = { type = "string", description = "your report: one to three lines" }, done = { type = "boolean", description = "you finished what the line asks (false: you stopped short, or need something from the user)" }, results = { type = "array", items = { type = "string" }, description = "what you made, each short: a file's path, a branch, a PR's link" } }, required = ["block", "text"] }

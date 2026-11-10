@@ -10,8 +10,9 @@ The panel's routes (its own origin, /api/...):
 The tools (notes_read, notes_add, notes_change) read and write it as markdown; what an agent changes is told to the
 panels with its channel, so the panel shows who changed what. Lines an agent writes from its own conversation with the
 user (`from_conversation`) name it as their source, and when (notebook.py), for the user to follow up on with it.
-notes_report is an agent's report on a block the user sent it (a line of the block's thread, by it; the to-do ticked, if
-it is done). A line of a thread a panel adds is the user's, whatever it says."""
+notes_report is an agent's report on a block the user sent it: a line of the block's thread, by it -- whether it says it
+finished, and what it made. Only the user ends a work item (notebook.py): no tool ticks one, or says it is done. A line
+of a thread a panel adds is the user's, whatever it says."""
 import json
 import os
 import threading
@@ -185,6 +186,8 @@ class NotesApp(App):
             if not made:
                 ops = [{"op": "block.delete", "page": page["id"], "block": bid}]
             else:
+                if nb.is_work(block):                         # its tick is the user's: kept as it is
+                    made[0]["checked"] = bool(block.get("checked"))
                 ops = [{"op": "block.put", "page": page["id"], "block": {**made[0], "id": bid}}]
                 prev = bid
                 for b in made[1:]:
@@ -192,6 +195,10 @@ class NotesApp(App):
                     ops.append({"op": "block.put", "page": page["id"], "block": b, "after": prev})
                     prev = b["id"]
         elif isinstance(args.get("checked"), bool):
+            if nb.is_work(block):
+                raise nb.NotebookError(f"block {bid} is one of the user's work items: only the user says when one is "
+                                       f"done (they accept it in Notes). Say what you did with notes_report, `done` "
+                                       f"true if you finished it.")
             if block["type"] != "todo":
                 raise nb.NotebookError(f"block {bid} is not a to-do: give `markdown` (`- [x] ...`) to make it one")
             ops = [{"op": "block.put", "page": page["id"], "block": {"id": bid, "checked": args["checked"]}}]
@@ -202,8 +209,8 @@ class NotesApp(App):
         return ToolResult.text(book.markdown(book.page(page["id"])))
 
     def _report(self, instance, book, args, caller) -> ToolResult:
-        """An agent's report on a block the user sent it: a line of the block's thread, by the agent; a to-do ticked
-        when `done`."""
+        """An agent's report on a block the user sent it: a line of the block's thread, by the agent, saying whether
+        it finished (`done`) and what it made (`results`). Nothing ticked: the user reviews it, and ends it."""
         found = book.block(args.get("block"))
         if found is None:
             raise nb.NotebookError(f"notes_report: no block {args.get('block')!r} in the notebook: `block` is the id "
@@ -215,16 +222,23 @@ class NotesApp(App):
         if len(text) > REPORT_CHARS:
             raise nb.NotebookError(f"notes_report: {len(text)} characters is too long for a report: say in one to "
                                    f"three lines what you did and where it is; the rest stays in your answer")
+        made = args.get("results")
+        if made is not None and (not isinstance(made, list) or not all(isinstance(r, str) for r in made)):
+            raise nb.NotebookError("notes_report: `results` is a list of what you made: files, a branch, a PR")
         lines = [ln.strip() for ln in text.strip().splitlines() if ln.strip()]
         line = {"id": nb.new_id(), "by": self._by(caller), "text": "<br>".join(nb.inline_html(ln) for ln in lines),
-                "done": bool(args.get("done"))}
-        ops = [{"op": "thread.add", "page": page["id"], "block": block["id"], "line": line}]
-        tick = bool(args.get("done")) and block["type"] == "todo" and not block.get("checked")
-        if tick:
-            ops.append({"op": "block.put", "page": page["id"], "block": {"id": block["id"], "checked": True}})
-        self.change(instance, ops, self._by(caller), caller.channel)
-        return ToolResult.text(f"Reported under the block on “{page.get('title') or 'Untitled'}”"
-                               f"{', and ticked it' if tick else ''}: the user sees it there.")
+                "done": bool(args.get("done")), **({"results": made} if made else {})}
+        self.change(instance, [{"op": "thread.add", "page": page["id"], "block": block["id"], "line": line}],
+                    self._by(caller), caller.channel)
+        where = f"the line on “{page.get('title') or 'Untitled'}”"
+        if not nb.is_work(block):                         # a follow-up on a line it wrote: an answer, no work item
+            return ToolResult.text(f"Reported beside {where}: the user sees it there.")
+        ended = nb.ended_of(block)
+        if ended == "canceled":
+            return ToolResult.text(f"Reported on {where}. The user canceled that line: leave it.")
+        if ended == "done":
+            return ToolResult.text(f"Reported on {where}. The user has accepted it as done already.")
+        return ToolResult.text(f"Reported on {where}: the user reviews it there, and says when it is done.")
 
 
 #: How long a report may be: a few lines, not an answer.
