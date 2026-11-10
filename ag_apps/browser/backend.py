@@ -7,8 +7,9 @@ and the ag app's link -- the app's side of what core.py does (module doc there).
                  channels; their next message to it seen (`_seen`: picks put away, a stop lifted); the ag app's link
                  (`native`) handed to the Chrome, the app's pages its own
 
-What it keeps is in its own database, in its data folder (browser.db): each Browser's tabs. A home whose dashboard had
-Browsers has them in dashboard.db (its table `browser`): copied here once, the first time (`_import`), and left there.
+What it keeps is in its own database, in its data folder (browser.db): each Browser's tabs, and the pages the Browsers
+went to (visited.py). A home whose dashboard had Browsers has them in dashboard.db (its table `browser`): copied here
+once, the first time (`_import`), and left there; and their Chrome's history, its pages added once too (`_seed`).
 The Chrome's profile, downloads and uploads stay where the dashboard kept them, in <home>/dashboard/.
 
 Its panel's requests (under /api/w/<gatherer>/<instance>/ on its origin):
@@ -20,6 +21,8 @@ Its panel's requests (under /api/w/<gatherer>/<instance>/ on its origin):
          {page, visible}, where {i}
     POST scheme {scheme}     the dashboard's theme, light or dark: every Browser's pages shown in it
     GET  logins / POST logins {sites}   the user's Chrome's sites with logins / those copied into the Browsers' Chrome
+    GET  visited?q= / POST visited {forget}   the pages to suggest for what is typed in the address bar, {pages: [{url,
+         title}]} (visited.py: every Browser's) / one of them forgotten
 """
 
 import json
@@ -30,11 +33,12 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 from app_kit import App, AppError, Caller, Host, Instance, Response, ToolResult, context_stream
 
-from . import core
+from . import core, visited
 
 STREAM = "Browser"              # the context stream what the user did is told in, as its agent sees it named
 SEEN_EVERY = 3.0                # seconds between looks for the user's next message, while a Browser waits on one
 IMPORTED = "imported:dashboard.db"
+SEEDED = "seeded:chrome history"
 BODY_POSTS = {"input", "nav", "resize", "hover", "mode", "pick", "unpick", "dialog", "copy", "choose", "find", "file",
               "chosen", "drop", "reveal", "tab", "stop", "watch", "where"}
 
@@ -46,6 +50,7 @@ class BrowserApp(App):
         core.DB_PATH = os.path.join(data, "browser.db")
         core.HOME = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(data))))   # <home>/apps/<app>/data
         _import(os.path.join(core.HOME, "dashboard.db"))
+        _seed(core.profile_dir())
         self.lock = threading.Lock()
         self.by_key: Dict[str, Instance] = {}
         self.seen: Dict[Tuple[str, str], int] = {}       # (key, channel) -> the last row of the agent's read for messages
@@ -164,6 +169,13 @@ class BrowserApp(App):
                 if method == "POST":
                     return Response.json(self.bs.import_logins(_body(body).get("sites") or []))
                 return Response.json(self.bs.login_sites())
+            if path == "visited":
+                if method == "POST":
+                    url = str(_body(body).get("forget") or "")
+                    core.in_db(lambda conn: visited.forget(conn, url))
+                    return Response.json({})
+                q = str(query.get("q") or "")[:visited.LONGEST]
+                return Response.json({"pages": core.in_db(lambda conn: visited.suggest(conn, q))})
             if instance is None:
                 return _error(404, "which Browser? (its gatherer and instance)")
             if instance.id not in self.by_key:
@@ -275,5 +287,22 @@ def _import(old: str) -> None:
             finally:
                 src.close()
         conn.execute("INSERT OR IGNORE INTO kept (name) VALUES (?)", (IMPORTED,))
+    finally:
+        conn.close()
+
+
+def _seed(profile: str) -> None:
+    """The pages in the Browsers' Chrome's own history (its profile's), added once to those the address bar suggests:
+    a home whose Browsers ran before they were kept here has them from the start. Not the user's own Chrome's."""
+    conn = core._db()
+    try:
+        conn.execute("CREATE TABLE IF NOT EXISTS kept (name TEXT PRIMARY KEY)")
+        if conn.execute("SELECT 1 FROM kept WHERE name = ?", (SEEDED,)).fetchone():
+            return
+        try:
+            visited.seed(conn, profile)
+        except (OSError, sqlite3.Error):
+            return                                       # (tried again next time)
+        conn.execute("INSERT OR IGNORE INTO kept (name) VALUES (?)", (SEEDED,))
     finally:
         conn.close()

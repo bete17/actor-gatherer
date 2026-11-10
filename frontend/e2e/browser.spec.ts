@@ -463,3 +463,86 @@ test("in the desktop app the page's own native page is placed over the panel's s
   await page.evaluate(() => document.getElementById("over")!.remove());
   await expect.poll(async () => (await last())?.covered).toBe(false);
 });
+
+test("the address bar suggests pages opened before: Down to one puts it in the box, Enter or a click opens it, x or Shift+Delete forgets it", async ({
+  page,
+}) => {
+  await browserActors(page);
+  await page.route(`**/api/w/*/${KEY}/stream*`, (route) =>
+    route.fulfill({ status: 200, contentType: "text/event-stream", body: events([{}], "", 60_000) }),
+  );
+  const PAGES = [
+    { url: "https://github.com/", title: "GitHub" },
+    { url: "https://github.com/acme/widgets/pulls", title: "Pull requests" },
+    { url: "https://gitlab.com/", title: "" },
+  ];
+  const asked: string[] = [],
+    forgot: string[] = [],
+    opened: string[] = [];
+  await page.route("**/api/visited*", async (route) => {
+    if (route.request().method() === "POST") {
+      forgot.push(route.request().postDataJSON().forget);
+      return route.fulfill({ json: {} });
+    }
+    asked.push(new URL(route.request().url()).searchParams.get("q") || "");
+    await route.fulfill({ json: { pages: PAGES.filter((p) => !forgot.includes(p.url)) } });
+  });
+  await page.route(`**/api/w/*/${KEY}/nav`, async (route) => {
+    opened.push(route.request().postDataJSON().url);
+    await route.fulfill({ json: { done: "" } });
+  });
+  await openOwn(page);
+  const p = panel(page),
+    addr = p.getByRole("combobox", { name: "Address" }),
+    list = p.locator(".bw-menu.hist"),
+    rows = list.locator(".row");
+  await expect(addr).toHaveValue("https://example.com/invoices");
+  await addr.click();
+  await addr.press("ControlOrMeta+a");
+  await addr.pressSequentially("git");
+  await expect.poll(() => asked.at(-1)).toBe("git");
+  // each its address as typed (no scheme, "www." or end slash), then its title, dimmer
+  await expect(rows.locator(".u")).toHaveText(["github.com", "github.com/acme/widgets/pulls", "gitlab.com"]);
+  await expect(rows.locator(".tt")).toHaveText(["GitHub", "Pull requests"]);
+  await expect(addr).toHaveAttribute("aria-expanded", "true");
+  // Down to one: the box has its address; Up past the first: what was typed again
+  await addr.press("ArrowDown");
+  await addr.press("ArrowDown");
+  await expect(rows.nth(1)).toHaveClass(/\bon\b/);
+  await expect(addr).toHaveValue(PAGES[1].url);
+  await expect(addr).toHaveAttribute("aria-activedescendant", "bw-hist-1");
+  await addr.press("ArrowUp");
+  await addr.press("ArrowUp");
+  await expect(addr).toHaveValue("git");
+  // Esc closes them, what was typed kept; Down opens them again
+  await addr.press("ArrowDown");
+  await addr.press("Escape");
+  await expect(list).toBeHidden();
+  await expect(addr).toHaveValue("git");
+  await addr.press("ArrowDown");
+  await expect(rows).toHaveCount(3);
+  // Shift+Delete on the one picked forgets it: the next takes its place, in the box too
+  await addr.press("ArrowDown");
+  await addr.press("Shift+Delete");
+  await expect.poll(() => forgot).toEqual([PAGES[0].url]);
+  await expect(rows).toHaveCount(2);
+  await expect(rows.first()).toHaveClass(/\bon\b/);
+  await expect(addr).toHaveValue(PAGES[1].url);
+  // its x forgets one too, the box keeping the focus
+  await rows.nth(1).hover();
+  await rows.nth(1).locator(".x").click();
+  await expect.poll(() => forgot).toEqual([PAGES[0].url, PAGES[2].url]);
+  await expect(rows).toHaveCount(1);
+  await expect(addr).toBeFocused();
+  // Enter opens the one picked, and closes them
+  await addr.press("Enter");
+  await expect.poll(() => opened).toEqual([PAGES[1].url]);
+  await expect(list).toBeHidden();
+  // a click on one opens it
+  await addr.click();
+  await addr.fill("wid");
+  await expect(rows).toHaveCount(1);
+  await rows.first().click();
+  await expect.poll(() => opened).toEqual([PAGES[1].url, PAGES[1].url]);
+  await expect(list).toBeHidden();
+});

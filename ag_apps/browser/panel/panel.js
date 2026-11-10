@@ -96,11 +96,12 @@
   b.reload = btn(ICONS.reload, "Reload", () => post("nav", { action: "reload" }).catch(bwSay(b)));
   b.newTab = btn(ICONS.plus, "New tab (a link Cmd+clicked, or middle-clicked, opens in one too)",
     () => post("tab", { action: "new" }).then(() => { b.addr.focus(); b.addr.select(); }).catch(bwSay(b)));
-  b.addr = el("input", { type: "text", spellcheck: "false", "aria-label": "Address", placeholder: "Type an address" });
-  const form = el("form", {}, b.addr);
+  b.addr = el("input", { type: "text", spellcheck: "false", autocomplete: "off", "aria-label": "Address", placeholder: "Type an address" });
+  const form = b.addrForm = el("form", {}, b.addr);
   form.addEventListener("submit", (ev) => {
     ev.preventDefault();
     const url = b.addr.value.trim();
+    b.histClose?.();
     if (url) post("nav", { url }).then(() => b.stage.focus()).catch(bwSay(b));
   });
   b.pickBtn = btn(ICONS.pointer, "Pick an element to point the agent at (Esc to stop)", () => bwMode(b, bwModeOn(b) === "pick" ? null : "pick"), { "aria-pressed": "false" });
@@ -152,6 +153,7 @@
     if (ev.key === "Escape" && b.escTaken) { b.escTaken = false; ev.preventDefault(); ev.stopImmediatePropagation(); }
   }, { capture: true });
   bwUi(b);
+  bwHistory(b);
   new ResizeObserver(() => bwResize(b)).observe(b.stage);
 
   // In the ag app (desktop/DESIGN.md), the tab's own native page is placed over the screen (ag.native): the stream
@@ -864,6 +866,105 @@
     m.style.left = `${Math.max(4, Math.min(x, w - m.offsetWidth - 4))}px`;
     m.style.top = `${y + m.offsetHeight + 4 > h ? Math.max(4, y - m.offsetHeight) : y}px`;
     if (focus) (m.querySelector("button.on:not([disabled])") || m.querySelector("button:not([disabled])"))?.focus({ preventScroll: true });
+  }
+  // The address bar's suggestions: the pages the Browsers went to (backend.py's `visited`: visited.py), under it as the
+  // user types -- Up/Down to one (the box then has its address), Enter or a click opens it, Esc closes them (the box
+  // has what was typed again); its x, or Shift+Delete on the one picked, forgets it. They lie over the page: in the ag
+  // app the native page is then its still picture -- which the shade over the whole page makes sure of (ag.native looks
+  // at points across it for something over it), a click on it closing them.
+  function bwHistory(b) {
+    const list = el("div", { class: "bw-menu hist", id: "bw-hist", role: "listbox", "aria-label": "Pages opened before", hidden: "" });
+    const shade = el("div", { class: "hist-shade", hidden: "" });
+    for (const n of [list, shade]) {
+      bwShield(n);
+      n.addEventListener("mousedown", (ev) => { ev.preventDefault(); ev.stopPropagation(); });   // the box keeps the keys
+    }
+    b.stage.append(shade, list);
+    Object.entries({ role: "combobox", "aria-autocomplete": "list", "aria-controls": "bw-hist", "aria-expanded": "false" })
+      .forEach(([k, v]) => b.addr.setAttribute(k, v));
+    const shown = (u) => u.replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/$/, "");
+    let pages = [], at = -1, typed = "", asked = 0, timer = 0;
+    const close = b.histClose = () => {
+      asked++;
+      clearTimeout(timer);
+      list.hidden = shade.hidden = true;
+      pages = [];
+      at = -1;
+      b.addr.setAttribute("aria-expanded", "false");
+      b.addr.removeAttribute("aria-activedescendant");
+    };
+    function draw() {
+      if (!pages.length || document.activeElement !== b.addr) return close();
+      list.replaceChildren(...pages.map((p, i) => {
+        const row = el("div", { class: "row" + (i === at ? " on" : ""), role: "option", id: `bw-hist-${i}`, "aria-selected": String(i === at),
+          title: p.title ? `${p.title}\n${p.url}` : p.url },
+          el("span", { class: "u", text: shown(p.url) }), p.title ? el("span", { class: "tt", text: p.title }) : null,
+          el("button", { type: "button", class: "x", tabindex: "-1", title: "Forget this page (Shift+Delete)", "aria-label": "Forget this page", text: "×" }));
+        row.addEventListener("click", (ev) => { if (ev.target.closest(".x")) forget(i); else go(p.url); });
+        return row;
+      }));
+      const s = b.stage.getBoundingClientRect(), a = b.addr.getBoundingClientRect();
+      const w = Math.min(Math.max(a.width, 360), s.width - 8);
+      Object.assign(list.style, { width: `${w}px`, top: "4px", left: `${Math.max(4, Math.min(a.left - s.left, s.width - w - 4))}px` });
+      list.hidden = false;
+      shade.hidden = !NATIVE;
+      b.addr.setAttribute("aria-expanded", "true");
+      if (at >= 0) { b.addr.setAttribute("aria-activedescendant", `bw-hist-${at}`); list.children[at]?.scrollIntoView({ block: "nearest" }); }
+      else b.addr.removeAttribute("aria-activedescendant");
+    }
+    async function ask() {
+      const q = b.addr.value.trim(), n = ++asked;
+      if (!q) return close();
+      let got;
+      try { got = await get(`visited?q=${encodeURIComponent(q)}`, true); } catch { return; }
+      if (n !== asked || document.activeElement !== b.addr) return;
+      pages = got.pages || [];
+      at = -1;
+      draw();
+    }
+    function go(url) {
+      b.addr.value = url;
+      b.addrForm.requestSubmit();
+    }
+    function forget(i) {
+      const p = pages[i];
+      if (!p) return;
+      post("visited", { forget: p.url }, true).catch(bwSay(b));
+      const picked = at;
+      pages.splice(i, 1);
+      if (picked === i) {                              // the one picked: the next takes its place, in the box too
+        at = Math.min(i, pages.length - 1);
+        b.addr.value = at >= 0 ? pages[at].url : typed;
+      } else if (picked > i) at = picked - 1;
+      draw();
+    }
+    b.addr.addEventListener("input", () => {
+      typed = b.addr.value;
+      clearTimeout(timer);
+      timer = setTimeout(ask, 40);
+    });
+    b.addr.addEventListener("keydown", (ev) => {
+      if (list.hidden) {
+        if (ev.key === "ArrowDown" && b.addr.value.trim()) { ev.preventDefault(); typed = b.addr.value; ask(); }
+        return;
+      }
+      if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+        ev.preventDefault();
+        const n = pages.length;
+        at = ev.key === "ArrowDown" ? (at + 1 >= n ? -1 : at + 1) : (at < 0 ? n - 1 : at - 1);
+        b.addr.value = at < 0 ? typed : pages[at].url;
+        draw();
+      } else if (ev.key === "Escape") {
+        ev.preventDefault();                           // (theirs, not the dashboard's: the SDK passes on no Esc taken)
+        b.addr.value = typed;
+        close();
+      } else if ((ev.key === "Delete" || ev.key === "Backspace") && ev.shiftKey && at >= 0) {
+        ev.preventDefault();
+        forget(at);
+      }
+    });
+    b.addr.addEventListener("blur", close);
+    shade.addEventListener("click", () => { close(); b.stage.focus({ preventScroll: true }); });
   }
   // The find bar, in the Browser's bar (Cmd+F, where the page takes it not; or the right-click menu): Enter for the
   // next, Shift+Enter the one before, Esc to close it.

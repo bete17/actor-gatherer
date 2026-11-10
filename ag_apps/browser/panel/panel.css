@@ -158,6 +158,19 @@ body { background: var(--surface); color: var(--ink); font: 13px/1.4 system-ui, 
 .bw-menu .grp { padding: 5px 10px 2px; color: var(--muted); font-size: 11.5px; font-weight: 600; }
 .bw-menu .note { color: var(--muted); margin-left: 10px; }
 .bw-menu.suggest { min-width: 120px; }
+/* the address bar's suggestions (bwHistory): under it, over the page -- its address, then its title, dimmer; x forgets it.
+   In the ag app the shade lies over the page with them (the native page a still picture meanwhile) */
+.bw-menu.hist { z-index: 6; max-width: none; max-height: 70%; }
+.bw-menu.hist .row { display: flex; align-items: center; gap: 10px; padding: 4px 4px 4px 10px; border-radius: 5px; white-space: nowrap; }
+.bw-menu.hist .row.on, .bw-menu.hist .row:hover { background: var(--wash); }
+.bw-menu.hist .u { flex: 0 1 auto; max-width: 70%; overflow: hidden; text-overflow: ellipsis;
+  font: 12.5px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.bw-menu.hist .tt { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font-size: 12.5px; }
+.bw-menu.hist .x { flex: none; display: grid; place-items: center; width: 20px; height: 20px; margin-left: auto; padding: 0;
+  border-radius: 4px; color: var(--muted); font-size: 14px; line-height: 1; visibility: hidden; }
+.bw-menu.hist .row:hover .x, .bw-menu.hist .row.on .x { visibility: visible; }
+.bw-menu.hist .x:hover { background: color-mix(in srgb, var(--ink) 10%, transparent); color: var(--ink); }
+.bw-stage .hist-shade { position: absolute; inset: 0; z-index: 5; }
 .bw-menu hr { border: 0; border-top: 1px solid var(--ring); margin: 4px 2px; }
 .bw-menu.field { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 8px; }
 .bw-menu.field button { width: auto; color: #2563EB; }
