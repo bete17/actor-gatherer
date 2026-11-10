@@ -87,6 +87,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import harness_kit
 
 from . import video as browser_video
+from . import visited
 
 HOME = os.environ.get("AG_HOME") or os.path.expanduser("~/.ag")   # the home, as ag finds it (backend.py sets it):
                                       # its dashboard/ holds the Chrome's profile, downloads, uploads and the ag app's
@@ -100,6 +101,7 @@ KEY = re.compile(r"[0-9a-f]{16}")
 IDLE_STOP = 600.0           # seconds the Chrome runs on with no Browser used
 CALL_WAIT = 20.0            # the most a call to Chrome is waited for
 NAV_WAIT = 20.0             # the most the agent's navigation waits for its site to answer, before it is stopped
+TYPED_WAIT = 30.0           # seconds within which a page opened in a tab is the one the user typed in its address bar
 LOAD_WAIT = 15.0            # the most an action waits for the page it started loading
 SCHEMES = ("light", "dark")   # the dashboard's theme as shown, its Browsers' pages' prefers-color-scheme
 SETTLE = 0.25               # seconds after an action before what it did is looked at
@@ -195,8 +197,17 @@ def _db() -> sqlite3.Connection:
     os.makedirs(os.path.dirname(DB_PATH) or ".", exist_ok=True)
     conn = sqlite3.connect(DB_PATH, timeout=8, isolation_level=None)
     conn.row_factory = sqlite3.Row
-    conn.executescript(SCHEMA)
+    conn.executescript(SCHEMA + ";\n" + visited.SCHEMA)
     return conn
+
+
+def in_db(job: Callable[[sqlite3.Connection], Any]) -> Any:
+    """`job` run on a connection to the app's database, closed after."""
+    conn = _db()
+    try:
+        return job(conn)
+    finally:
+        conn.close()
 
 
 def _config() -> dict:
@@ -1027,6 +1038,7 @@ class Tab:
         self.cue_ctx: Optional[int] = None              # CUES_JS's (the ag app's native page: `Browser._draw_cues`)
         self.cues_sent = ""                             # what it was told to draw last
         self.windowed = False                           # a popup window a page opened (`popup_window`): no video for it
+        self.visited = ""                               # the page last kept as opened in it (`Browser._visited`)
 
 
 class Viewer:
@@ -1176,6 +1188,7 @@ class Browser:
         self.acting_until = 0.0
         self.error = ""
         self.saving = False
+        self.typed_in: Optional[Tuple[str, float]] = None   # (tab, when) a page was last opened from the address bar
         self.downloads: List[dict] = []                  # done: {i, name, path}, the latest DOWNLOADS_SHOWN
         self.ui_n = 0                                    # the lists, pickers, menus and choosers asked for, so far
         self.uploads: Dict[str, str] = {}                # a file the user sent for a page: its id -> where it is kept
@@ -1363,6 +1376,7 @@ class Browser:
             url = frame.get("url", "") + frame.get("urlFragment", "")
             with self.lock:                              # what the page it had showed went with it
                 tab.tip = tab.popup = tab.chooser = None
+            self._visited(tab, url)
             if url != tab.url:
                 tab.url = url
                 self._forget_refs(tab.target)
@@ -1383,6 +1397,7 @@ class Browser:
             self._asked_for(params.get("url") or "")     # window.open, target=_blank; a link Cmd/Ctrl/middle-clicked
         elif method == "Page.navigatedWithinDocument" and params.get("frameId") == tab.target:
             tab.url = params.get("url", tab.url)
+            self._visited(tab, tab.url)
             self._publish()
             self._save()
             self.chrome.later(lambda: self._retitle(tab))
@@ -1430,6 +1445,8 @@ class Browser:
                 tab.title, tab.url = info.get("title") or "", info.get("url") or tab.url
                 self._publish()
                 self._save()
+                url, title = tab.url, tab.title          # (its page's own, together: `_retitle` may come too late)
+                self.chrome.later(lambda: in_db(lambda conn: visited.retitle(conn, url, title)))
         elif method == "Target.targetDestroyed":
             if params.get("targetId") and params.get("targetId") == self.video.target:
                 self.video.gone()
@@ -1479,6 +1496,23 @@ class Browser:
             tab.title, tab.url = info.get("title") or "", url
             self._publish()
             self._save()
+            title = tab.title
+            self.chrome.later(lambda: in_db(lambda conn: visited.retitle(conn, url, title)))
+
+    def _visited(self, tab: Tab, url: str) -> None:
+        """`url` opened in `tab` (its page loaded, or moved there itself: history.pushState), kept for the address
+        bar's suggestions (visited.py) -- unless it is the page kept last, or a part of it (a reload; #below): typed, if
+        the user opened a page from the address bar in that tab in the last TYPED_WAIT seconds. Its title comes once it
+        has one (`_retitle`). (Not from tab.url: Target.targetInfoChanged may have set it already.)"""
+        if urllib.parse.urldefrag(url)[0] == urllib.parse.urldefrag(tab.visited)[0]:
+            return
+        tab.visited = url
+        with self.lock:
+            typed_in = self.typed_in
+            typed = bool(typed_in and typed_in[0] == tab.target and time.time() - typed_in[1] < TYPED_WAIT)
+            if typed:
+                self.typed_in = None
+        self.chrome.later(lambda: in_db(lambda conn: visited.visit(conn, url, typed=typed)))
 
     def _dropped(self, target: Optional[str]) -> None:
         with self.lock:
@@ -2184,6 +2218,9 @@ class Browser:
             cdp.call("Page.reload", {}, tab.session, sent=self.let_go)
         else:
             url = _url(url)
+            if by_user:
+                with self.lock:
+                    self.typed_in = (tab.target, time.time())
             got = self._go(cdp, tab, url, by_user, self.let_go)
             if got.get("errorText") == "net::ERR_ABORTED" and not got.get("isDownload") and not by_user:
                 raise BrowserError(f"{url} did not open: the page went elsewhere before it answered")
