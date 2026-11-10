@@ -123,7 +123,7 @@ class NotesApp(App):
         if md is not None and not isinstance(md, str):
             raise nb.NotebookError("notes_add: `markdown` is text")
         src = self._source(args, caller)
-        blocks = [{**b, "id": nb.new_id(), **src} for b in nb.blocks_from_markdown(md or "")]
+        blocks = [{**b, "id": nb.new_id(), **src} for b in nb.blocks_from_markdown(book.page_links(md or ""))]
         name, title = args.get("page"), args.get("title")
         if name:
             page = self._page(book, name)
@@ -182,7 +182,7 @@ class NotesApp(App):
             ops = [{"op": "block.delete", "page": page["id"], "block": bid}]
         elif isinstance(md, str):
             src = self._source(args, caller)
-            made = [{**b, **src} for b in nb.blocks_from_markdown(md)]
+            made = [{**b, **src} for b in nb.blocks_from_markdown(book.page_links(md))]
             if not made:
                 ops = [{"op": "block.delete", "page": page["id"], "block": bid}]
             else:

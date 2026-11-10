@@ -114,6 +114,12 @@ args = { root = "{cwd}" }
 [[handles]]                           # intents it takes (for open-file, `types = ["application/pdf"]` narrows it)
 intent = "open-url"
 
+[[schedules]]                         # work its backend does on its own (5c): App.scheduled("listing", due)
+name = "listing"
+at = "00:15"                          # times of day, or `every = "30m"`
+days = ["mon", "tue", "wed", "thu", "fri"]
+timezone = "America/New_York"         # none: this computer's
+
 [capabilities]                        # shown to the user before they are granted
 native_view = true                    # desktop: a native web view over its panel
 notify = true                         # notifications to the user (5b)
@@ -138,6 +144,7 @@ class App:
     def request(self, instance, method, path, query, body: bytes) -> Response: ...   # its panel's own routes
     def attached(self, instance, channel: str) -> None: ...     # an agent attached: tell it what it needs to know
     def detached(self, instance, channel: str) -> None: ...
+    def scheduled(self, schedule: str, due: float) -> Optional[float]: ...   # a [[schedules]] run (5c): retry in s
 
 class Host(ABC):                                                # what an app is given
     def insert(self, instance, events: List[dict], channel: Optional[str] = None) -> None: ...
@@ -148,6 +155,9 @@ class Host(ABC):                                                # what an app is
     def instances(self) -> List[Instance]: ...
     def notify(self, instance, title, text="", key=None, show=("ag",), where=None) -> str: ...   # to the user
     def clear_notice(self, instance, which: str) -> None: ...   # one of its own (an id), or every one of a key
+    def send_agent(self, instance, channel, text) -> None: ...  # message_agents: to an attached agent, as the user
+    def start_agent(self, instance, text, name=None, harness=None, model=None, folder=None) -> str: ...   # and a new
+                                                                # agent of its own, attached, with a first message
 ```
 
 An app in its own process gets the same calls over HTTP (`app_kit/remote.py`). The host starts the manifest's
@@ -295,6 +305,34 @@ does, so the two are one abstraction:
   or stops on an error -- pops up in the page's corner, unless they have it in front of them; and, the page not in
   front, on the computer too (the browser's Notification, the desktop app's), for an app's only where it asked
   (`show` "system"). The reader turns actors' pop-ups and the computer's off in the settings.
+
+### 5c. Schedules: an app working on its own
+
+An app whose manifest has `[[schedules]]` has its backend called at those times, whether or not anyone has its panel
+open: `App.scheduled(name, due)`, `due` the time the run was due (app_kit/schedules.py says when each is; the
+dashboard's app_schedules.py runs them). It is the app's, not an instance's: the backend does what it does for each of
+its instances (`host.instances()`), as Paper news fetches a day's arXiv listing once and notifies every instance.
+
+- **Due, by the clock on the wall.** Each schedule is looked at every 30 seconds while the dashboard runs, from a
+  minute after it starts (its own reads as it starts go first). A run is due
+  once its time has passed and it hasn't run since, so a look after the computer wakes, or after the dashboard starts
+  again, finds a run it missed, and runs it once, however many it missed (`catch_up`, the default; without, a run more
+  than 5 minutes late is skipped). A schedule seen for the first time starts at its next time, never one before.
+- **Only for an app someone has open.** A run waits while no gatherer has an instance of the app, and goes once one
+  is opened. Every gatherer's records are read once, first, so instances opened before the dashboard started count.
+- **Tried again when the backend says so.** `scheduled` returns seconds to try the same run again (what it reads isn't
+  out yet, the network is down; 30 s at least), or None when it is done. An exception is tried again 10 minutes later.
+  A newer due time takes the place of a run still being tried. One run of a schedule at a time, in a thread of its own.
+- **Kept by the dashboard, not as events.** When each schedule last ran, the run waiting and how its last try went are
+  in <home>/dashboard/app_schedules.json: a schedule is an app's, in no one gatherer, and the host's records are each a
+  gatherer's.
+- **Not a way into an agent's context.** A scheduled run reaches the user as any app's work does: a notification
+  (5b), its panel told. An app that wants an agent's turn asks for it with `message_agents`: its backend sends an
+  attached agent a message (`Host.send_agent`), or starts an agent of its own with one (`Host.start_agent`: attached to
+  the instance, in its gatherer, working in the app's own folder unless told another), as Chat sends -- typed into the
+  agent's terminal, which is opened if it isn't. A terminal that can't take a message now (a dialog open in it) is
+  refused with 409, and the app tries again later. Paper news is the first: each day that comes in, its agent is
+  sent the user's interests and the day's papers, and saves its picks with the app's tool.
 
 ### 6. What moves out of the agent views
 

@@ -3,7 +3,8 @@
     load(folder)            the manifest of the app in `folder` (its app.toml), its files checked to be there
     parse(data, folder)     the same from the TOML's data, already read
     Manifest                what the manifest says: name, label, version, instances, backend, panel, tools, events,
-                            the intents it handles, its capabilities, what agents are told of it
+                            the intents it handles, its schedules (schedules.py), its capabilities, what agents are
+                            told of it
     tool_name(app, tool)    a tool's name as agents see it: <app>_<tool>
     split_tool_name(name)   the reverse, given the apps there are
 
@@ -24,6 +25,9 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from ag.ag_interface import EventType, Property
 from ag.ag_interface.event import PROPERTY_NAME
+
+from .schedules import Schedule
+from .schedules import parse as _schedule
 
 FILE = "app.toml"
 
@@ -87,7 +91,7 @@ INTENTS = {
 CAPABILITIES = {
     "native_view": "a native web view over its panel, in the desktop app",
     "message_agents": "sending messages to the agents attached to it, answering their questions and stopping their "
-                      "turns, as the user",
+                      "turns, as the user, and starting an agent of its own with a message",
     "transcript": "reading what the agents attached to it say and do (their transcript, as the dashboard shows it)",
     "edit_guard": "refusing its agents' own edit tools on files it says it has open",
     "reads": "these event types of the gatherer besides its own: its agents' (tool_call, tool_output, ...)",
@@ -238,6 +242,7 @@ class Manifest:
     events: Tuple[EventType, ...] = ()        # as declared, its own properties only (`event_types`: with the host's)
     pollers: Tuple[PollerDef, ...] = ()
     handles: Tuple[Handles, ...] = ()
+    schedules: Tuple[Schedule, ...] = ()      # work its backend does on its own, at its times (App.scheduled)
     capabilities: Capabilities = field(default_factory=Capabilities)
     folder: Optional[str] = None
 
@@ -284,6 +289,7 @@ class Manifest:
                        for e in self.events],
             "pollers": [{"name": p.name, "class": p.cls, "file": p.file, "args": p.args} for p in self.pollers],
             "handles": [{"intent": h.intent, "types": list(h.types)} for h in self.handles],
+            "schedules": [s.to_dict() for s in self.schedules],
             "capabilities": {"native_view": self.capabilities.native_view, "reads": list(self.capabilities.reads),
                              "files": self.capabilities.files, "commands": self.capabilities.commands,
                              "message_agents": self.capabilities.message_agents,
@@ -331,7 +337,7 @@ def parse(data: Dict[str, Any], folder: Optional[str] = None, where: str = FILE)
     r = _Reader(where)
     _known(r, data, "", ("name", "label", "version", "description", "instances", "offer", "instructions",
                          "instructions_file", "agent", "asked", "mark", "backend", "panel", "tools", "tools_file",
-                         "events", "pollers", "handles", "capabilities"))
+                         "events", "pollers", "handles", "schedules", "capabilities"))
     name = r.string(data, "name")
     if not NAME.match(name):
         r.fail("name", f"{name!r}: lowercase letters, digits and _, starting with a letter, at most 24")
@@ -397,11 +403,16 @@ def parse(data: Dict[str, Any], folder: Optional[str] = None, where: str = FILE)
     handles = tuple(_handles(r, i, h) for i, h in enumerate(r.tables(data, "handles")))
     if handles and panel is None:
         r.fail("handles", "an app handles intents in its panel, and it has no [panel]")
+    schedules = tuple(_schedule(s, i, r.fail) for i, s in enumerate(r.tables(data, "schedules")))
+    if len({s.name for s in schedules}) != len(schedules):
+        r.fail("schedules", "a schedule named twice")
+    if schedules and not (backend.python or backend.command):
+        r.fail("schedules", "a schedule runs its backend, and the app has no [backend]")
     return Manifest(name=name, label=r.string(data, "label", name), version=r.string(data, "version", "0"),
                     description=r.string(data, "description", ""), instances=instances, offer=offer,
                     instructions=instructions, agent=agent, asked=asked, mark=mark,
                     backend=backend, panel=panel, tools=tools, events=events, pollers=pollers, handles=handles,
-                    capabilities=_capabilities(r, data.get("capabilities", {})), folder=folder)
+                    schedules=schedules, capabilities=_capabilities(r, data.get("capabilities", {})), folder=folder)
 
 
 class _Reader:

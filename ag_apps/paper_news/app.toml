@@ -1,0 +1,65 @@
+# Paper news: each weekday's arXiv listing of the user's categories (cs.AI and cs.DB unless they change them), fetched
+# on a schedule just after arXiv's feed takes it -- and days missed caught up -- kept in the app's data folder
+# (backend.py), shown in its panel; its own agent picks the papers related to the user's research, and the user is told
+# of those. Agents attached to it read the listings.
+name = "paper_news"
+label = "Paper news"
+version = "1"
+description = "each weekday's new arXiv papers, and the ones for your research"
+instances = "one"
+offer = "attached"
+mark = "mark.svg"
+instructions = """Paper news is the user's daily listing of new arXiv papers in their categories, fetched each weekday
+and shown in the dashboard's Paper news panel. paper_news_list gives a day's papers, one line each (id, categories, title,
+authors): the latest day by default, or `day` (YYYY-MM-DD, or "saved": the papers the user saved), narrowed by
+`category`, `kind` (new, cross, updated, all; default new and cross-lists) and `query` (words in the title, authors or
+abstract). paper_news_paper gives papers' abstracts and links, by id. These are what arXiv announced on the days the app
+kept; for anything older, look on arXiv itself.
+
+The app's own agent picks the papers related to the user's research. The app sends it messages starting "(Paper news · ...)":
+to write a summary of the user's interests, saved with paper_news_profile (every field), or to pick a day's papers, saved
+with paper_news_relevant. Do exactly what such a message asks, and nothing else with these two tools: paper_news_profile with no
+fields reads the summary and what the user told the app, for any agent."""
+
+[backend]
+python = "backend:PaperNewsApp"
+
+[panel]
+entry = "panel/index.html"
+
+[asked]
+when = "(Paper news · "
+pattern = '^(?=\(Paper news · [^:)\n]*: ([^)\n]*)\))\(Paper news · ([^:)\n]*):'
+otherwise = "From Paper news"
+
+[capabilities]
+notify = true
+message_agents = true
+
+# arXiv's feed takes the day's listing at midnight New York time, Monday to Friday (the announcement is at 20:00 the
+# evening before); a run that finds it not out yet tries again every 30 minutes
+[[schedules]]
+name = "listing"
+at = "00:15"
+days = ["mon", "tue", "wed", "thu", "fri"]
+timezone = "America/New_York"
+
+[[tools]]
+name = "list"
+description = "A day's arXiv listing in the user's categories, one line a paper (id, categories, title, authors): the latest day kept, or `day`; narrowed by `category`, `kind` and `query`."
+input_schema = { type = "object", properties = { day = { type = "string", description = "\"latest\" (the default), a day as YYYY-MM-DD, or \"saved\": the papers the user saved" }, category = { type = "string", description = "only papers in this category, such as cs.DB" }, kind = { type = "string", enum = ["listed", "new", "cross", "updated", "all"], description = "listed (the default): new papers and cross-lists; updated: new versions of older papers" }, query = { type = "string", description = "words that must all be in the title, authors or abstract" }, limit = { type = "integer", description = "how many lines (default 100, at most 500)" } } }
+
+[[tools]]
+name = "paper"
+description = "Papers of the listings by arXiv id (several: space or comma apart): title, authors, categories, the days listed, links and the abstract."
+input_schema = { type = "object", properties = { id = { type = "string", description = "arXiv ids, such as 2611.06952" } }, required = ["id"] }
+
+[[tools]]
+name = "profile"
+description = "The summary of the user's research interests that new papers are judged by. With no fields: the summary, and what the user told the app. With them -- only when the app's message asks you to write it -- every field, in place of the summary there was."
+input_schema = { type = "object", properties = { summary = { type = "string", description = "Two to four sentences: what the user works on, and what they want from new papers." }, core_topics = { type = "array", items = { type = "string" }, description = "Topics at the centre of their work: a paper mainly about one of these is relevant." }, related_topics = { type = "array", items = { type = "string" }, description = "Topics they follow more loosely: relevant when a paper connects to their core work, or is a notable result." }, methods = { type = "array", items = { type = "string" }, description = "Methods, models, systems, datasets and benchmarks they build or use: a paper that improves, uses or evaluates one may be relevant." }, followed_papers = { type = "array", items = { type = "string" }, description = "Papers whose related work they want, as \"title (arXiv id)\": a paper that builds on, extends, competes with or evaluates against one is relevant." }, followed_people = { type = "array", items = { type = "string" }, description = "Authors and groups whose new papers they want to see." }, keywords = { type = "array", items = { type = "string" }, description = "Words and phrases that signal a relevant paper." }, not_interested = { type = "array", items = { type = "string" }, description = "Topics and kinds of papers they don't want, even when one matches a keyword." }, guidance = { type = "string", description = "How strict to be and what makes a paper worth showing them (for example, systems papers over theory, or only papers with an evaluation), as their feedback shows." } } }
+
+[[tools]]
+name = "relevant"
+description = "The papers of a day relevant to the user, picked from it -- only when the app's message asks you to pick a day's: `day`, and each paper picked, with a score (3: at the centre of their interests, 2: clearly related, 1: loosely related but worth a look) and why, in one line the user reads. In place of earlier picks of that day; no picks: none is relevant."
+input_schema = { type = "object", properties = { day = { type = "string", description = "the day the app asked about, YYYY-MM-DD" }, picks = { type = "array", items = { type = "object", properties = { id = { type = "string" }, score = { type = "integer", enum = [1, 2, 3] }, why = { type = "string" } }, required = ["id", "score", "why"] } } }, required = ["day", "picks"] }

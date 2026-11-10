@@ -170,6 +170,39 @@ class NotebookTest(BookBase):
         self.assertTrue([f for f in os.listdir(self.dir) if f.startswith("g.json.unreadable-")])
 
 
+class PageLinkTest(BookBase):
+    """A line's link to another page: `<a href="page:<id>">`, `[title](page:<id>)` as markdown, read with the title the
+    page has now."""
+
+    def test_a_link_to_a_page_is_kept_by_its_id_and_nothing_else_like_it(self):
+        self.page(blocks=[block("aaaaaa01", "text", '<a href="page:chatpage">Chat</a> <a href="page:Chat">t</a> '
+                                '<a href="page:abc">s</a> <a href="page:chatpage?x=1">q</a> '
+                                '<a href="pages:chatpage">p</a>')])
+        self.assertEqual(self.book.page("pagepage")["blocks"][0]["text"], '<a href="page:chatpage">Chat</a> t s q p')
+        self.assertEqual(nb.inline_html("see [Chat](page:chatpage) and [x](page:No Id)"),
+                         'see <a href="page:chatpage">Chat</a> and [x](page:No Id)')
+        self.assertEqual(nb.inline_markdown('<a href="page:chatpage">Chat</a>'), "[Chat](page:chatpage)")
+
+    def test_an_agent_reads_a_link_with_the_title_its_page_has_now(self):
+        self.page("chatpage", "Chat")
+        self.page("pagepage", "To dos", [block("aaaaaa01", "bullet", 'see <a href="page:chatpage">Chat</a>'),
+                                         block("aaaaaa02", "bullet", '<a href="page:gonepage">Old page</a>')])
+        self.book.apply([{"op": "page.set", "page": "chatpage", "title": "Chat view"}])
+        md = self.book.markdown(self.book.page("pagepage"))
+        self.assertIn("[aaaaaa01] - see [Chat view](page:chatpage)", md)
+        self.assertIn("[aaaaaa02] - [Old page](page:gonepage)", md)       # a page gone: the words it was linked with
+        self.book.apply([{"op": "page.delete", "page": "chatpage"}])
+        self.assertIn("[Chat view (in the trash)](page:chatpage)", self.book.markdown(self.book.page("pagepage")))
+
+    def test_a_link_an_agent_writes_by_a_pages_title_is_made_one_by_its_id(self):
+        self.page("chatpage", "Chat")
+        self.page("pagepage", "To dos")
+        self.assertEqual(self.book.page_links("[a](page:chatpage) [b](page:chat) [c](page: Cha)"),
+                         "[Chat](page:chatpage) [Chat](page:chatpage) [Chat](page:chatpage)")    # its title kept
+        with self.assertRaisesRegex(nb.NotebookError, "no page 'Nope' to link to"):
+            self.book.page_links("[x](page:Nope)")
+
+
 class SentTest(BookBase):
     """A block sent to an agent says who it went to and when; its thread holds the user's replies and the agent's
     reports."""
@@ -339,6 +372,9 @@ class MarkdownTest(unittest.TestCase):
         self.assertEqual([(b["type"], b["text"], b["indent"]) for b in got],
                          [("todo", "milk", 0), ("todo", "eggs", 1), ("code", "x", 0)])
         self.assertEqual(nb.blocks_from_markdown("[x] done")[0]["type"], "todo")      # "[x]" is a to-do, not an id
+        got = nb.blocks_from_markdown("- [x](page:chatpage)\n- [ ](https://a.b)")      # links, in list items
+        self.assertEqual([(b["type"], b["text"]) for b in got],
+                         [("bullet", '<a href="page:chatpage">x</a>'), ("bullet", '<a href="https://a.b"> </a>')])
 
     def test_inline_marks(self):
         for md, html in (("a **b** _c_ *d* ~~e~~", "a <b>b</b> <i>c</i> <i>d</i> <s>e</s>"),
@@ -419,6 +455,18 @@ class BackendTest(unittest.TestCase):
         self.assertEqual({m["agent"] for m in self.host.told}, {"chan-1"})
         # kept in the app's data folder, the gatherer's name made a file's
         self.assertEqual(os.listdir(self.dir), ["my%20gatherer%2F1.json"])
+
+    def test_an_agent_links_a_line_to_another_page(self):
+        err, text = self.call("add", title="Chat", markdown="x")
+        chat = text.split("(page ", 1)[1].split(")", 1)[0]
+        err, text = self.call("add", title="To dos", markdown=f"- [Chat](page:{chat})\n- see [it](page:chat)")
+        self.assertFalse(err, text)
+        self.assertIn(f"- [Chat](page:{chat})\n", text)
+        self.assertIn(f"- see [Chat](page:{chat})", text)                 # by its title: linked by its id
+        line = text.split("- see")[0].rsplit("[", 1)[1].split("]")[0]
+        err, text = self.call("change", page="To dos", block=line, markdown="- [x](page:Nope)")
+        self.assertTrue(err)
+        self.assertIn("no page 'Nope' to link to", text)
 
     def test_an_agent_is_told_what_it_got_wrong(self):
         for tool, args, says in (("read", {"page": "Nope"}, "no page 'Nope'"),
