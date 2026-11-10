@@ -75,7 +75,7 @@ input_schema = { type = "object", properties = { command = { type = "string", de
 
 [[tools]]
 name = "preview_run"
-description = "Run the project's preview now, as the user has let it run; waits `wait` seconds (default 0) for it to end, or its server to answer, and says how it went."
+description = "Run the project's preview now, as the user has let it run; waits `wait` seconds (default 0) for it to end, or its server to answer, and says how it went -- a LaTeX build: its log's errors and warnings too, as `file:line: message` (run.problems)."
 input_schema = { type = "object", properties = { file = { type = "string", description = "the file {file} names" }, wait = { type = "number" }, path = { type = "string", description = "a file or folder of the project (default: your working directory)" }, ok = { type = "string", description = "the user's own, from the Editor: the command they let run" } } }
 
 [[tools]]

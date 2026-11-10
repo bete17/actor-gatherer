@@ -3,7 +3,9 @@
 // Its backend's tools for what changes (preview_set, _run, _stop), its own routes for what is read (preview/about,
 // preview/files/, preview/synctex), its messages for each run as it goes; the Editor runs it (pvRun: Execute, ⌘↵) and
 // asks for a source's place in the PDF (pvLocate: "→ PDF"), and opens what it sends back (a place in the PDF's source:
-// edShowFile). Hidden until it is first run, or opened by its button; its × hides it again.
+// edShowFile). Hidden until it is first run, or opened by its button; its × hides it again. A LaTeX build's errors,
+// warnings and bad boxes (its log's, read by the backend: runs.problems) are listed under Problems, each opening its
+// file at its line, and marked on those lines in the Editor (edProblems).
 let pvApi = null;
 // What this Editor's preview showed, kept in this browser (as its file is: edKeepFile), so that, its panel drawn again
 // (its task left and come back to, the page reloaded), it opens as it was left: shown or not; for the run it showed,
@@ -18,7 +20,7 @@ function pvKept() {
 let pvRec = null, pvDirty = false, pvKeepT = null;   // this Editor's record, as this page keeps it
 function pvKeep(change) {
   const rec = pvRec || (pvRec = pvKept());
-  if (change.run && change.run !== rec.run) { delete rec.picked; delete rec.out; delete rec.result; }   // another run's
+  if (change.run && change.run !== rec.run) { delete rec.picked; delete rec.out; delete rec.result; delete rec.probs; }   // another run's
   Object.assign(rec, change);
   pvDirty = true;
   clearTimeout(pvKeepT);
@@ -46,6 +48,7 @@ function pvMount(box) {
     el("div", { class: "pv-top" }, el("div", { class: "pv-h" }), el("div", { class: "pv-cmd", hidden: "" })),
     el("div", { class: "pv-body" },
       el("div", { class: "pv-card", hidden: "" }), el("div", { class: "pv-result" }),
+      el("div", { class: "pv-probs", hidden: "" }),
       el("pre", { class: "pv-out", tabindex: "0", "aria-label": "Its output", hidden: "" }),
       el("button", { type: "button", class: "pv-busy", hidden: "",
         title: "It is being run again: the last one made stays here until the run ends. Click to see its output" }))));
@@ -59,10 +62,12 @@ function pvMake(ag, root) {
   const ANSI = /\x1b(?:\[[0-?]*[ -\/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[@-Z\\-_])/g;
   const NO_SIDEBAR = 0;                                 // pdf.js's SidebarView.NONE
   const dom = { head: root.querySelector(".pv-h"), cmd: root.querySelector(".pv-cmd"), card: root.querySelector(".pv-card"),
-    result: root.querySelector(".pv-result"), output: root.querySelector(".pv-out"), busy: root.querySelector(".pv-busy") };
+    result: root.querySelector(".pv-result"), output: root.querySelector(".pv-out"), busy: root.querySelector(".pv-busy"),
+    probs: root.querySelector(".pv-probs") };
   const pv = { path: null, file: null, about: null, run: null, out: "", picked: null, form: null, err: "", busy: false,
     sig: "", card: "", held: null, peek: null, pdf: null, pinned: true, tick: null,
-    back: pvKept(), outTop: null, resultTop: null };  // back: as it was left (pvKept), taken once each; outTop, resultTop: its scrolls
+    probs: null, probsSig: "", probsOpen: new Set(), boxesOpen: false,    // the latest LaTeX build's problems (problems())
+    back: pvKept(), outTop: null, resultTop: null, probsTop: null };  // back: as it was left (pvKept), taken once each; *Top: its scrolls
 
   // ---- helpers
   function el(tag, attrs, ...kids) {
@@ -99,12 +104,14 @@ function pvMake(ag, root) {
       pv.about = a; pv.err = "";
       if (moved || !pv.run || (a.run && a.run.id !== pv.run.id)) {
         pv.run = a.run; pv.out = (a.dropped ? "…\n" : "") + (a.output || ""); pv.picked = null; pv.sig = ""; pv.held = null;
+        if (moved || !a.run || a.run.state !== "running") problems(a.run && a.run.problems);
       }
       const b = pv.back;
       if (b.run && pv.run && b.run === pv.run.id) {   // the run it showed when it was left: its tab, its scrolls
-        pv.picked = b.picked === "result" || b.picked === "output" ? b.picked : null;
+        pv.picked = ["result", "output", "problems"].includes(b.picked) ? b.picked : null;
         if (typeof b.out === "number") { pv.pinned = false; pv.outTop = b.out; }
         if (typeof b.result === "number") pv.resultTop = b.result;
+        if (typeof b.probs === "number") pv.probsTop = b.probs;
       }
       b.run = null;
     } catch (e) { pv.err = e.message; }
@@ -118,6 +125,7 @@ function pvMake(ag, root) {
       if (pv.run && r.id !== pv.run.id && r.started < pv.run.started) return;
       if (!pv.run || r.id !== pv.run.id) { pv.out = ""; pv.picked = null; }
       if (pv.peek === r.id && r.state !== "running") { pv.picked = null; pv.peek = null; }
+      if (r.state !== "running" && !(r.server && r.state === "ready")) problems(r.problems);   // while it runs: the last build's
       pv.run = r; draw();
     } else if (m.out) {
       const o = m.out;
@@ -183,6 +191,7 @@ function pvMake(ag, root) {
   function auto(r) {
     const s = (r && r.shows) || {};
     if (!r) return "result";
+    if ((r.state === "failed" || r.state === "timed out") && pv.probs && pv.probs.list.some((p) => p.level === "error")) return "problems";
     if (!s.url && !s.path) return "output";
     if (r.state === "failed" || r.state === "timed out") return "output";
     if (s.url) return r.state === "ready" ? "result" : "output";
@@ -216,6 +225,10 @@ function pvMake(ag, root) {
     const n = ev.target;
     if (pv.run && n.clientHeight && (n === dom.result || n.parentNode === dom.result)) pvKeep({ run: pv.run.id, result: Math.round(n.scrollTop) });
   }, true);
+  dom.probs.addEventListener("scroll", () => {      // the problems' list: where it was left, as the output's
+    const n = dom.probs;
+    if (pv.run && n.clientHeight) pvKeep({ run: pv.run.id, probs: Math.round(n.scrollTop) });
+  });
   // a tab picked: kept for the run it shows
   function pick(k) {
     pv.picked = k;
@@ -236,11 +249,12 @@ function pvMake(ag, root) {
       if (!dom.busy.hidden) busyText();
     }, 1000);
     const card = pv.form ? "form" : pv.err && !a ? "err" : !a ? "loading" : !p ? "none" : p.needs_ok ? "ask" : !r ? "idle" : "";
-    const tab = card ? null : pv.picked || auto(r);
+    let tab = card ? null : pv.picked || auto(r);
+    if (tab === "problems" && !pv.probs) tab = auto(r);
     const hasResult = r && r.shows && (r.shows.url || r.shows.path);
     const url = shown(r);
     root.classList.toggle("hov", tab === "result");
-    const building = tab === "result" && !!(r && r.shows && r.shows.path) && (r.state === "running" || pv.busy);
+    const building = (tab === "result" && !!(r && r.shows && r.shows.path) || tab === "problems") && (r && r.state === "running" || pv.busy);
     dom.busy.hidden = !building;
     if (building) busyText();
     const btn = (text, title, onclick, attrs = {}) => el("button", { type: "button", title, onclick, ...attrs }, text);
@@ -248,8 +262,9 @@ function pvMake(ag, root) {
       el("span", { class: "t", text: "Preview" }),
       el("span", { class: "nm", title: a ? (a.git ? `The git project ${a.key}, its worktrees too` : `The folder ${a.key} (not in a git project)`) : null, text: a ? a.name : "" }),
       card === "" || pv.busy ? stat : null,
-      tab && hasResult ? el("span", { class: "pv-tabs", role: "group", "aria-label": "Show" },
-        ...[["result", "Result"], ["output", "Output"]].map(([k, t]) => btn(t, k === "result" ? "What it makes" : "What it printed",
+      tab && (hasResult || pv.probs) ? el("span", { class: "pv-tabs", role: "group", "aria-label": "Show" },
+        ...[hasResult && ["result", "Result", "What it makes"], pv.probs && ["problems", probsLabel(), probsTitle()],
+          ["output", "Output", "What it printed"]].filter(Boolean).map(([k, t, title]) => btn(t, title,
           () => pick(k), { class: tab === k ? "on" : null, "aria-pressed": tab === k ? "true" : "false" }))) : null,
       live ? btn("Stop", r.server ? "Stop its server" : "Stop its run", stopIt)
         : p && !p.needs_ok && !pv.form ? btn(r ? "Re-run" : "Run", `Run it again: ${p.command || "(nothing to run)"}`, () => runIt(), { disabled: pv.busy }) : null,
@@ -283,8 +298,11 @@ function pvMake(ag, root) {
     }
     dom.result.classList.toggle("off", tab !== "result");       // laid out still: a PDF's viewer keeps its place
     dom.output.hidden = tab !== "output";
+    dom.probs.hidden = tab !== "problems";
+    dom.probs.classList.toggle("old", tab === "problems" && building);
     if (tab === "result") result(url);
     if (tab === "output") out();
+    if (tab === "problems") probsDraw();
   }
   function form() {
     const f = pv.form, a = pv.about || {};
@@ -370,6 +388,67 @@ function pvMake(ag, root) {
       if (pv.pinned) o.scrollTop = o.scrollHeight;
       else if (pv.outTop !== null && text) { o.scrollTop = pv.outTop; pv.outTop = null; }   // where it was left
     });
+  }
+
+  // ---- a LaTeX build's problems: its errors, then its warnings, then its bad boxes (folded into one row), each opening
+  // its file at its line in the Editor; its log's lines for it shown under it (▸). Those of the latest build that has
+  // ended: a build running, the last one's, dimmed. Marked on their lines in the Editor too (edProblems).
+  function problems(p) {
+    const was = pv.probs;
+    pv.probs = p || null;
+    if (!was || !p || was.at !== p.at) { pv.probsOpen.clear(); pv.probsSig = ""; }
+    if (typeof edProblems === "function") edProblems(p ? p.list : [], p ? p.at : 0);
+  }
+  const count = (level) => pv.probs ? pv.probs.list.filter((p) => p.level === level).length : 0;
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  function probsLabel() {
+    const e = count("error"), w = count("warning");
+    return el("span", { class: "pv-pr-tab" }, "Problems", e ? el("span", { class: "n error", text: String(e) }) : null,
+      w ? el("span", { class: "n warning", text: String(w) }) : null);
+  }
+  function probsTitle() {
+    return `Its log's ${plural(count("error"), "error", "errors")}, ${plural(count("warning"), "warning", "warnings")} and ` +
+      `${plural(count("box"), "bad box", "bad boxes")}: each opens its file at its line`;
+  }
+  function probsDraw() {
+    const P = pv.probs, box = dom.probs, a = pv.about;
+    const sig = JSON.stringify([P && P.at, P && P.list.length, P && P.fresh, pv.boxesOpen, [...pv.probsOpen], a && a.checkout]);
+    if (sig === pv.probsSig) return;
+    pv.probsSig = sig;
+    if (!P) return box.replaceChildren();
+    const at = P.list.map((p, i) => [p, i]), kids = [];
+    if (!P.fresh) kids.push(el("div", { class: "pv-pr-note", text: `From the build ${ago(P.at)}: this run did not build the document again.` }));
+    if (!P.list.some((p) => p.level !== "box")) kids.push(el("div", { class: "pv-pr-none", text: "No errors or warnings in its log." }));
+    for (const level of ["error", "warning"]) for (const [p, i] of at) if (p.level === level) kids.push(...probRow(p, i));
+    const boxes = at.filter(([p]) => p.level === "box");
+    if (boxes.length) {
+      kids.push(el("button", { type: "button", class: "pv-pr-group", "aria-expanded": pv.boxesOpen ? "true" : "false",
+        onclick: () => { pv.boxesOpen = !pv.boxesOpen; probsDraw(); } },
+        el("span", { class: "tw", text: "▸" }), `${plural(boxes.length, "bad box", "bad boxes")}: overfull and underfull`));
+      if (pv.boxesOpen) for (const [p, i] of boxes) kids.push(...probRow(p, i));
+    }
+    kids.push(el("div", { class: "pv-pr-foot" }, el("span", { text: `From ${P.log}` }),
+      el("button", { type: "button", onclick: () => pick("output") }, "See its output")));
+    box.replaceChildren(...kids);
+    if (pv.probsTop > 0) requestAnimationFrame(() => { box.scrollTop = pv.probsTop; pv.probsTop = null; });
+  }
+  function probRow(p, i) {
+    const a = pv.about, go = p.rel && a ? () => edShowFile(`${a.checkout}/${p.rel}`, p.line) : null;
+    const where = (p.rel || (p.path || p.file || "").split("/").pop() || "") + (p.line ? `:${p.line}` : "");
+    const open = pv.probsOpen.has(i), more = p.log && p.log.length > 1;
+    const row = el("div", { class: `pv-pr ${p.level}${go ? " go" : ""}`, role: go ? "button" : null, tabindex: go ? "0" : null,
+      title: go ? `Open ${p.rel}${p.line ? ` at line ${p.line}` : ""}` : p.path ? `${p.path}: not in this project` : null },
+      el("span", { class: "ic", "aria-label": { error: "Error", warning: "Warning", box: "Bad box" }[p.level] }),
+      el("span", { class: "msg", text: p.message }),
+      where ? el("span", { class: "at", text: where }) : null,
+      more ? el("button", { type: "button", class: "more", "aria-expanded": open ? "true" : "false",
+        title: open ? "Hide its lines of the log" : "Show its lines of the log",
+        onclick: (ev) => { ev.stopPropagation(); if (open) pv.probsOpen.delete(i); else pv.probsOpen.add(i); probsDraw(); } }, "▸") : null);
+    if (go) {
+      row.addEventListener("click", go);
+      row.addEventListener("keydown", (ev) => { if (ev.target === row && (ev.key === "Enter" || ev.key === " ")) { ev.preventDefault(); go(); } });
+    }
+    return open ? [row, el("pre", { class: "pv-pr-log", text: p.log.join("\n") })] : [row];
   }
 
   // ---- a PDF, in pdf.js's viewer (the dashboard's copy, /_ag/lib/pdfjs): one viewer kept from run to run, each new

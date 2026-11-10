@@ -7,6 +7,7 @@ shows found and served, and SyncTeX between a PDF it shows and its source. Porte
     guess(file, checkout)    a preview to start from, by the file open (LaTeX: its document's main file, tex_main)
     expand(text, file, ..)   {file}, {stem}, {name}, {dir}: the file open, in the command and what it shows
     Run, Runs                a checkout's latest run: its process, output, state; told to `tell(run, name, value)`
+    problems(run)            a LaTeX build's errors, warnings and bad boxes, from its log (texlog.py), each file found
     synctex(checkout, body)  a place in a PDF to its source line, or (forward) a source line to its place in the PDF
 
 Who may run what is backend.py's: a command an actor set runs only once the user lets it."""
@@ -27,6 +28,8 @@ import urllib.error
 import urllib.request
 from typing import Callable, Dict, List, Optional, Tuple
 
+from . import texlog
+
 TIMEOUT = 300.0             # seconds a command that is not a server is given
 READY_WAIT = 120.0          # seconds a server's URL is tried for, until it answers
 STOP_WAIT = 3.0             # seconds a command is given to end once asked to (SIGTERM), before it is killed
@@ -39,12 +42,13 @@ RUN_WITH = {".py": "python3 {file}", ".js": "node {file}", ".mjs": "node {file}"
             ".r": "Rscript {file}", ".rb": "ruby {file}", ".jl": "julia {file}"}
 SHOWN_AS_IS = {".html", ".htm", ".svg", ".md", ".markdown", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf"}
 IMAGES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".avif"}
-LATEX = "latexmk -pdf -synctex=1 -cd -interaction=nonstopmode "
+LATEX = "latexmk -pdf -synctex=1 -cd -file-line-error -interaction=nonstopmode "
 TEX_ROOT = re.compile(r"^[ \t]*%[ \t]*![ \t]*TeX[ \t]+root[ \t]*=[ \t]*(.+?)[ \t]*$", re.I | re.M)   # % !TeX root = main.tex
 TEX_CLASS = re.compile(r"^[^%\n]*\\documentclass\b", re.M)                    # not in a comment
 TEX_INPUT = re.compile(r"^[^%\n]*?\\(?:input|include|subfile)[ \t]*\{[ \t]*([^}]+?)[ \t]*\}", re.M)
 TEX_HEAD = 65_536           # the most bytes of a .tex file looked at
 TEX_MANY = 200              # the most .tex files of a folder looked at
+TEX_LOG = 32_000_000        # the largest TeX log read for its problems
 #: The environment a run is not given: what says the dashboard runs inside an agent's session.
 NOT_PASSED = re.compile(r"^(CLAUDECODE|CLAUDE_CODE_.*|CODEX_.*|AG_ACTOR|AG_DASHBOARD)$")
 
@@ -223,6 +227,7 @@ class Run:
         self.over = threading.Event()
         self.changed = threading.Condition()
         self.unwatched: Optional[float] = None
+        self.problems: Optional[dict] = None    # once it has ended: a LaTeX build's, from its log (`problems`)
 
     def shows(self) -> dict:
         """What it shows: {url} or {path (real), rel, kind, exists, mtime}; {} its output."""
@@ -243,7 +248,8 @@ class Run:
     def view(self) -> dict:
         return {"id": self.id, "key": self.key, "checkout": self.checkout, "command": self.command, "show": self.show,
                 "by": self.by, "file": self.file, "started": self.started, "ended": self.ended, "code": self.code,
-                "state": self.state, "server": bool(self.url and self.command), "shows": self.shows()}
+                "state": self.state, "server": bool(self.url and self.command), "shows": self.shows(),
+                **({"problems": self.problems} if self.problems is not None else {})}
 
     def text(self) -> str:
         return bytes(self.out).decode("utf-8", "replace")
@@ -331,6 +337,10 @@ class Runs:
                 self._tell(r, "out", {"id": r.id, "text": text})
         r.proc.stdout.close()
         code = r.proc.wait()
+        try:
+            r.problems = problems(r, code)
+        except Exception:  # noqa: BLE001 - a log it cannot read: the run's output is still there
+            r.problems = None
         with r.changed:
             r.code, r.ended = code, time.time()
             r.state = r.stopping or ("done" if code == 0 else "failed")
@@ -426,6 +436,70 @@ class Runs:
             t.start()
         for t in threads:
             t.join(STOP_WAIT + 2.5)
+
+
+def problems(r: Run, code: Optional[int] = None) -> Optional[dict]:
+    """A LaTeX build's problems: from the log TeX wrote beside the PDF the run shows (paper/main.log for
+    paper/main.pdf), if it is one of TeX's. {log (in the checkout), at (its time), fresh (written by this run: else
+    the last build's, latexmk having nothing to rebuild), list: [{level, message, line, token, file (as the log names
+    it), path (the file, real; None: not found), rel (in the checkout; None: outside it), log}]}. None: no such log, or
+    one older than the run that failed (its command's own error, TeX not run)."""
+    s = r.shows()
+    if not s.get("path") or s.get("kind") != "pdf":
+        return None
+    log = os.path.splitext(s["path"])[0] + ".log"
+    try:
+        st = os.stat(log)
+        if st.st_size > TEX_LOG:
+            return None
+        with open(log, "rb") as fh:
+            data = fh.read()
+    except OSError:
+        return None
+    if not data.startswith(b"This is "):                 # pdfTeX's, XeTeX's, LuaTeX's first line
+        return None
+    fresh = st.st_mtime >= r.started - 1
+    if not fresh and code not in (0, None) and "latexmk" not in r.command:
+        return None
+    dirs = [os.path.dirname(log)]
+    if r.file and r.file.lower().endswith((".tex", ".ltx")):
+        main = tex_main(r.file, r.checkout)
+        if main:
+            dirs.append(os.path.dirname(main))
+    dirs.append(r.checkout)
+    found: Dict[str, Optional[str]] = {}
+
+    def where(name: Optional[str]) -> Optional[str]:
+        if not name:
+            return None
+        if name not in found:
+            p = os.path.expanduser(name)
+            tries = [p] if os.path.isabs(p) else [os.path.join(d, p) for d in dirs]
+            found[name] = next((os.path.realpath(t) for t in tries if os.path.isfile(t)), None)
+        return found[name]
+
+    out = []
+    for p in texlog.parse(data):
+        path = where(p["file"])
+        rel = os.path.relpath(path, r.checkout) if path else None
+        if rel and (rel == ".." or rel.startswith(".." + os.sep)):
+            rel = None
+        out.append({**p, "path": path, "rel": rel})
+    return {"log": os.path.relpath(log, r.checkout), "at": st.st_mtime, "fresh": fresh, "list": out}
+
+
+def said_problems(got: Optional[dict], most: int = 30) -> Optional[dict]:
+    """A build's problems as an agent is told them: counted, and its errors and warnings as `file:line: message`."""
+    if not got:
+        return None
+    ps = got["list"]
+    count = {k: sum(1 for p in ps if p["level"] == k) for k in ("error", "warning", "box")}
+    name = lambda p: p["rel"] or (os.path.normpath(p["file"]) if p["file"] else "?")   # noqa: E731
+    told = [f"{name(p)}{':' + str(p['line']) if p['line'] else ''}: {p['level']}: {p['message']}"
+            for level in ("error", "warning") for p in ps if p["level"] == level][:most]
+    return {"log": got["log"], "fresh": got["fresh"], "errors": count["error"], "warnings": count["warning"],
+            "bad_boxes": count["box"], "list": told,
+            **({"more": count["error"] + count["warning"] - len(told)} if count["error"] + count["warning"] > len(told) else {})}
 
 
 def synctex(checkout: str, body: dict) -> dict:

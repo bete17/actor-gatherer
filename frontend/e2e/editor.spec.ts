@@ -452,3 +452,71 @@ test("a LaTeX build shows in pdf.js, a source line to its place in the PDF and a
   await panel.frameLocator("iframe.pdf").locator(".page[data-page-number='1'] .textLayer span").first().dblclick();
   await expect(panel.locator(".cm-activeLine")).toContainText("First page."); // its source line, selected in the file
 });
+
+test("a broken LaTeX build lists its problems, each opening its file at its line, marked there", async ({
+  page,
+  request,
+}) => {
+  test.skip(!hasLatex, "no latexmk and synctex here");
+  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ag-preview-")));
+  const main = (body: string) => `\\documentclass{article}\n\\begin{document}\n${body}\n\\end{document}\n`;
+  fs.mkdirSync(path.join(repo, "sec"));
+  fs.writeFileSync(path.join(repo, "main.tex"), main("Hello \\cite{nobody}.\n\\input{sec/one}\n\\badmacro"));
+  fs.writeFileSync(path.join(repo, "sec", "one.tex"), "\\section{One}\nSome text, then \\alsobad here.\n");
+  execFileSync("git", ["init", "-q"], { cwd: repo });
+  const { actor, sid, src } = await startEditor(page, repo);
+  const task = page.locator(`#agents button.agent[data-key="${await actor.getAttribute("data-key")}"]`); // the Editor's task
+  const panel = editorPanel(page);
+  await panel.locator(".ed-row", { hasText: "main.tex" }).first().click();
+  await expect(panel.locator(".cm-content")).toHaveCount(1);
+  await panel.locator("button.ed-exec").click();
+  await expect(panel.locator(".pv-form input[name=command]")).toHaveValue(/ -file-line-error /);
+  await panel.getByRole("button", { name: "Save and run" }).click();
+  // it failed: its problems shown, not its output -- errors first, each at its file and line
+  await expect(panel.locator(".pv-st")).toContainText("Failed", { timeout: 60_000 });
+  const tab = panel.locator(".pv-tabs button", { hasText: "Problems" });
+  await expect(tab).toHaveAttribute("aria-pressed", "true");
+  await expect(tab.locator(".n.error")).toHaveText("2");
+  await expect(tab.locator(".n.warning")).toHaveText("2"); // the citation, and "There were undefined citations"
+  const rows = panel.locator(".pv-pr");
+  await expect(rows.nth(0)).toContainText("Undefined control sequence \\alsobad");
+  await expect(rows.nth(0).locator(".at")).toHaveText("sec/one.tex:2");
+  await expect(rows.nth(1).locator(".at")).toHaveText("main.tex:5");
+  await expect(panel.locator(".pv-pr.warning").first()).toContainText("Citation `nobody' on page 1 undefined");
+  // the main file's own lines marked: its error's in the gutter, underlined, tinted; its warning's
+  await expect(panel.locator(".cm-gutter-lint .cm-lint-marker-error")).toHaveCount(1);
+  await expect(panel.locator(".cm-line.ed-prob.error")).toHaveText("\\badmacro");
+  await expect(panel.locator(".cm-line.ed-prob.warning")).toContainText("\\cite{nobody}");
+  // ▸: its lines of the log
+  await rows.nth(0).locator("button.more").click();
+  await expect(panel.locator(".pv-pr-log")).toContainText("l.2 Some text, then \\alsobad");
+  // a click: the \input file opened at its line, the macro underlined there
+  await rows.nth(0).click();
+  await expect(panel.locator(".ed-head .ed-path")).toContainText("one.tex");
+  await expect(panel.locator(".cm-activeLine")).toContainText("\\alsobad here.");
+  await expect(panel.locator(".cm-lintRange-error")).toHaveText("\\alsobad");
+  // the PDF it still made, one click away
+  await panel.locator(".pv-tabs button", { hasText: "Result" }).click();
+  await expect(panel.locator(".pv-result iframe.pdf")).toHaveCount(1);
+  // the errors fixed and built again: done, its result shown, only its warnings left -- the error's marks gone
+  fs.writeFileSync(path.join(repo, "main.tex"), main("Hello \\cite{nobody}.\n\\input{sec/one}"));
+  fs.writeFileSync(path.join(repo, "sec", "one.tex"), "\\section{One}\nSome text here.\n");
+  await expect(panel.locator(".cm-content")).toContainText("Some text here."); // the file open, as it is on disk now
+  await panel.locator("button.ed-exec").click();
+  await expect(panel.locator(".pv-st")).toContainText("Done", { timeout: 60_000 });
+  await expect(panel.locator(".pv-tabs button", { hasText: "Result" })).toHaveAttribute("aria-pressed", "true");
+  await expect(tab.locator(".n.error")).toHaveCount(0);
+  await expect(tab.locator(".n.warning")).toHaveText("2");
+  await expect(panel.locator(".cm-lintRange-error, .cm-line.ed-prob")).toHaveCount(0);
+  // Problems picked, the task left and come back to: Problems still shown
+  await panel.locator(".pv-edge").hover(); // over a result, its head is tucked away above it until the pointer comes
+  await tab.click();
+  await page.waitForTimeout(500); // kept a moment after it moves
+  await page.locator("#agents button.agent", { hasText: CODEX }).click(); // another task: the Editor's panel goes
+  await expect(editorPane(page)).toHaveCount(0);
+  await task.click();
+  await expect(panel.locator(".ed-pv")).toBeVisible();
+  await expect(tab).toHaveAttribute("aria-pressed", "true");
+  await expect(panel.locator(".pv-pr.warning").first()).toContainText("Citation `nobody' on page 1 undefined");
+  await endEditor(page, request, sid, src);
+});
