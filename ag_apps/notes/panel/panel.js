@@ -10,6 +10,12 @@ conversation -- the user's messages to it (sent to it too), its reports (the bac
 answered there -- is in a panel beside the page, opened from that line: never on the page itself. The Agents page, and an `agents` block,
 show every actor of the gatherer: how it stands, what it was sent from the notes, and its last report.
 
+A line sent to an agent, or marked as one, is a WORK ITEM (notebook.py), and only the reader ends one: they accept it
+(a to-do one, ticked), or cancel it. Until then how it stands is read from its actor: needs you, working, queued, to
+review (its agent stopped: a report since it was last sent, or none), not started (sent to no one). The Work page lists
+every open one by how it stands, the Logbook those ended; on a page the ended ones fold away, a "✓ 3 done" row where
+they were, until the reader shows them.
+
 Several lines can be picked at once (whole lines, as Notion's block selection): deleted, copied, cut, indented, moved,
 turned into another type or sent to an agent together, as one message naming each of them. */
 (async function () {
@@ -37,6 +43,7 @@ turned into another type or sent to an agent together, as one message naming eac
     { type: "code", label: "Code", note: "Code, as it is typed", glyph: "</>", words: "code snippet pre" },
     { type: "divider", label: "Divider", note: "A line between parts", glyph: "—", words: "divider line rule hr separator" },
     { type: "agents", label: "Agents", note: "Your actors, as they are now", glyph: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><circle cx="6" cy="5.5" r="2.2"/><circle cx="11.5" cy="6.2" r="1.7"/><path d="M2 13c.5-2.3 2-3.4 4-3.4s3.5 1.1 4 3.4M10 9.9c.5-.3 1-.4 1.5-.4 1.5 0 2.5.9 2.9 2.6"/></svg>', words: "agents actors status table team" },
+    { type: "work", label: "Work items", note: "What is open, as it stands now", glyph: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M3 4.5h10M3 8h10M3 11.5h6.5"/></svg>', words: "work items tasks open tracker board" },
   ];
   const ICONS = ["📄", "📝", "✅", "📌", "📚", "💡", "🎯", "🚀", "🛒", "🏠", "💼", "🧪", "🐛", "🔧", "📅", "⭐", "❤️", "🔥", "🌱", "🎨",
     "🎵", "✈️", "🍳", "💰", "📈", "🧠", "☕", "🗂️", "🔖", "🧩", "🏃", "📖", "🎓", "🧾", "📦", "⚙️", "🗒️", "🌟", "🍀", "🐣"];
@@ -55,6 +62,8 @@ turned into another type or sent to an agent together, as one message naming eac
     at: '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="2.4"/><path d="M10.4 8v1.1a1.7 1.7 0 0 0 3.4 0V8A5.8 5.8 0 1 0 11.5 12.6"/></svg>',
     bubble: '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M2.5 3h11v7.5H6.5L3 13.5v-3H2.5z"/></svg>',
     send: '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 8l11-5.5-4 11-1.6-4.4z"/></svg>',
+    work: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M3 4.5h10M3 8h10M3 11.5h6.5"/></svg>',
+    log: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2.5h7l1.5 1.5v9.5H4z"/><path d="M6.5 8.2l1.3 1.3 2.6-2.8"/></svg>',
     book: '<svg width="44" height="44" viewBox="0 0 44 44"><rect x="9" y="6" width="26" height="32" rx="4" fill="none" stroke="currentColor" stroke-width="2"/><rect x="14" y="13" width="5" height="5" rx="1.3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M15.2 15.6l1 1 1.7-2M22 15.5h8M14 23.5h16M14 29.5h11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   };
   function rid() {
@@ -87,7 +96,9 @@ turned into another type or sent to an agent together, as one message naming eac
   const now = () => Date.now() / 1000;
   const DASH = new URLSearchParams(location.search).get("host") || "";   // the dashboard's origin: its avatars
   const AGENTS = "@agents";                              // the Agents page (no page of the notebook: never an id)
-  const UNSENT = ["divider", "agents"];                  // blocks with nothing in them to send
+  const WORK = "@work", LOG = "@logbook";                // the Work page, the Logbook (nor these)
+  const SPECIAL = [WORK, LOG, AGENTS];
+  const UNSENT = ["divider", "agents", "work"];          // blocks with nothing in them to send
   const short = (ch) => String(ch || "").slice(0, 8);
   const since = (t) => { const d = Math.max(0, now() - (t || now())); return d < 60 ? "just now" : d < 3600 ? `${Math.round(d / 60)}m`
     : d < 86400 ? `${Math.round(d / 3600)}h` : `${Math.round(d / 86400)}d`; };
@@ -249,7 +260,7 @@ turned into another type or sent to an agent together, as one message naming eac
       if (current && !pages.has(current)) current = null;
       drawSide(m.agent ? touched : null);
       if (current && touched.has(current)) drawPage(blocks);
-      else if (!current) drawPage();
+      else if (!current || SPECIAL.includes(current)) drawPage();
       if (m.agent) told(m.agent, [...touched].map((id) => pages.get(id)).filter(Boolean));
     }
     if (gap) resync();
@@ -308,7 +319,7 @@ turned into another type or sent to an agent together, as one message naming eac
       tree.append(r);
       if (open) for (const k of kids) row(k, depth + 1);
     };
-    if (!q) tree.append(agentsEntry());
+    if (!q) tree.append(workEntry(), logEntry(), agentsEntry(), ...(live().length ? [el("div", { class: "tree-hd", text: "Pages" })] : []));
     if (q) {
       const hits = live().filter((p) => (p.title || "").toLowerCase().includes(q) || p.blocks.some((b) => plainOf(b.text).toLowerCase().includes(q)));
       for (const p of hits) row(p, 0, true);
@@ -406,12 +417,12 @@ turned into another type or sent to an agent together, as one message naming eac
     $("scroll").scrollTop = 0;
   }
   function drawPage(flash = null) {
-    const onAgents = current === AGENTS;
-    $("agents-page").hidden = !onAgents;
-    if (onAgents) {
-      for (const id of ["empty", "page", "banner"]) $(id).hidden = true;
-      $("crumbs").replaceChildren(el("button", { type: "button", text: "Agents" }));
-      drawAgentsPage();
+    $("agents-page").hidden = current !== AGENTS;
+    $("work-page").hidden = current !== WORK && current !== LOG;
+    if (SPECIAL.includes(current)) {
+      for (const id of ["empty", "page", "banner", "done-btn"]) $(id).hidden = true;
+      $("crumbs").replaceChildren(el("button", { type: "button", text: current === AGENTS ? "Agents" : current === WORK ? "Work" : "Logbook" }));
+      if (current === AGENTS) drawAgentsPage(); else drawWorkPage();
       return drawConvo();
     }
     const p = current && pages.get(current);
@@ -420,7 +431,8 @@ turned into another type or sent to an agent together, as one message naming eac
     $("page").hidden = !p;
     $("banner").hidden = !(p && p.deleted);
     drawCrumbs(p);
-    if (!p) { $("blocks").replaceChildren(); return drawConvo(); }
+    drawDoneBtn(p);
+    if (!p) { $("blocks").replaceChildren(); $("fold-all").hidden = true; return drawConvo(); }
     const ro = !!p.deleted;
     $("page").classList.toggle("ro", ro);
     if (ro) $("banner").replaceChildren(el("span", { text: "This page is in the trash." }),
@@ -458,6 +470,7 @@ turned into another type or sent to an agent together, as one message naming eac
     const n = el("div", { class: "blk", "data-id": b.id }, gut);
     if (b.type === "divider") n.append(el("div", { class: "hr", tabindex: "0", role: "separator" }));
     else if (b.type === "agents") n.append(el("div", { class: "agt", tabindex: "0", role: "group", "aria-label": "The gatherer's actors" }));
+    else if (b.type === "work") n.append(el("div", { class: "agt wkb", tabindex: "0", role: "group", "aria-label": "Your open work items" }));
     else n.append(el("div", { class: "mk" }), el("div", { class: "tx", spellcheck: "true" }),
       el("button", { class: "to-btn", type: "button", tabindex: "-1", title: "Send it to an agent (or type @)", html: SVG.at }));
     return n;
@@ -466,9 +479,11 @@ turned into another type or sent to an agent together, as one message naming eac
     n.dataset.type = b.type;
     n.style.setProperty("--ind", b.indent || 0);
     n.classList.toggle("done", b.type === "todo" && !!b.checked);
+    n.classList.toggle("ended", !!endedOf(b));
     n.classList.toggle("is-sent", !!b.to || outgoing.has(b.id));
     n.classList.toggle("ro", !!ro);
     if (b.type === "agents") return drawAgentsBlock(n);
+    if (b.type === "work") return drawWorkBlock(n);
     const tx = n.querySelector(".tx");
     if (!tx) return;
     const to = n.querySelector(".to-btn");                 // its words drawn by the style: not the block's text
@@ -492,16 +507,19 @@ turned into another type or sent to an agent together, as one message naming eac
     }
   }
   // The page's blocks drawn as the notebook has them: rows kept, moved, made or removed, but the one typed in left
-  // as the reader has it (it is theirs until it is sent).
+  // as the reader has it (it is theirs until it is sent). Lines folded away (`foldOf`) are not drawn: a fold says
+  // where they are.
   function drawBlocks(p, flash, ro) {
+    foldedNow = foldOf(p);
     const have = new Map([...box.children].map((n) => [n.dataset.id, n]));
-    const want = new Set(p.blocks.map((b) => b.id));
+    const want = new Set(p.blocks.filter((b) => !foldedNow.has(b.id)).map((b) => b.id));
     const focus = document.activeElement && box.contains(document.activeElement) ? document.activeElement : null;
     const at = focus && focus.classList.contains("tx") ? caretIn(focus) : null;
     for (const [id, n] of have) if (!want.has(id)) n.remove();
     let prev = null;
-    const shape = (t) => (t === "divider" || t === "agents" ? t : "tx");
+    const shape = (t) => (t === "divider" || t === "agents" || t === "work" ? t : "tx");
     for (const b of p.blocks) {
+      if (foldedNow.has(b.id)) continue;
       let n = have.get(b.id);
       if (n && shape(n.dataset.type) !== shape(b.type)) { n.remove(); n = null; }
       if (!n) n = makeRow(b);
@@ -511,6 +529,7 @@ turned into another type or sent to an agent together, as one message naming eac
       prev = n;
       if (flash && flash.has(b.id)) { n.classList.remove("flash"); void n.offsetWidth; n.classList.add("flash"); }
     }
+    drawFolds(p);
     numbers(p);
     drawPicked();
     if (focus && focus.isConnected && document.activeElement !== focus) {
@@ -529,6 +548,69 @@ turned into another type or sent to an agent together, as one message naming eac
       if (mk) mk.textContent = `${counts.get(k)}.`;
     }
   }
+  // -- ended work items, folded away: a page's, unless the reader shows them (the bar's "Show done", or a fold)
+  let foldedNow = new Set();                               // the lines of the page shown folded away now
+  const doneShown = new Set(store.get("doneShown", []));   // pages whose ended lines the reader shows
+  function showDone(pid, on) {
+    if (on) doneShown.add(pid); else doneShown.delete(pid);
+    store.set("doneShown", [...doneShown]);
+  }
+  // The lines folded away on a page: its ended work items, and what is set in under one -- but an open work item.
+  function foldOf(p) {
+    const out = new Set();
+    if (!p || doneShown.has(p.id)) return out;
+    let under = null;
+    for (const b of p.blocks) {
+      const k = b.indent || 0;
+      if (under !== null && k > under && !(isWork(b) && !endedOf(b))) { out.add(b.id); continue; }
+      under = null;
+      if (endedOf(b)) { out.add(b.id); under = k; }
+    }
+    return out;
+  }
+  // the page as the reader sees it: its lines less those folded away (what the keys move among, and pick)
+  const shown = () => { const p = page(); return p && { ...p, blocks: p.blocks.filter((b) => !foldedNow.has(b.id)) }; };
+  // A fold for each run of lines folded away: in the line above them (at the top: the first line shown; every line
+  // folded: alone), saying how many were done and canceled. A click shows them.
+  function drawFolds(p) {
+    for (const f of box.querySelectorAll(":scope > .blk > .fold")) f.remove();
+    const all = $("fold-all");
+    all.hidden = true;
+    if (!foldedNow.size) return;
+    const runs = [];
+    let prev = null, run = null;
+    for (const b of p.blocks) {
+      if (!foldedNow.has(b.id)) { prev = b; run = null; continue; }
+      if (!run) { run = { after: prev, items: [] }; runs.push(run); }
+      run.items.push(b);
+    }
+    const first = p.blocks.find((b) => !foldedNow.has(b.id));
+    for (const r of runs) {
+      const f = foldRow(p, r.items), at = r.after || first;
+      const n = at && rowOf(at.id);
+      if (!n) { all.replaceChildren(f); all.hidden = false; continue; }
+      f.classList.toggle("top", !r.after);
+      f.style.setProperty("--fi", Math.max(0, (r.items[0].indent || 0) - (at.indent || 0)));
+      n.append(f);
+    }
+  }
+  function foldRow(p, items) {
+    const d = items.filter((b) => endedOf(b) === "done").length, c = items.filter((b) => endedOf(b) === "canceled").length;
+    const said = [d ? `${d} done` : "", c ? `${c} canceled` : ""].filter(Boolean).join(" · ") || `${items.length} folded`;
+    return el("div", { class: "fold" }, el("button", { type: "button", title: "Show the lines done or canceled on this page", "aria-label": `${said}: show them`,
+      onclick: () => { showDone(p.id, true); drawPage(); } }, el("span", { html: SVG.check }), el("span", { text: said })));
+  }
+  function drawDoneBtn(p) {
+    const btn = $("done-btn"), n = p && !p.deleted ? p.blocks.filter((b) => endedOf(b)).length : 0;
+    btn.hidden = !n;
+    if (!n) return;
+    const on = doneShown.has(p.id);
+    btn.setAttribute("aria-pressed", String(on));
+    btn.title = on ? "Fold away the lines done or canceled" : "Show the lines done or canceled";
+    btn.replaceChildren(el("span", { class: "sw", "aria-hidden": "true" }), el("span", { text: `Show done (${n})` }));
+  }
+  $("done-btn").addEventListener("click", () => { const p = page(); if (!p) return; showDone(p.id, !doneShown.has(p.id)); drawPage(); });
+  $("fold-all").addEventListener("animationend", (ev) => ev.target.classList.remove("flash"));
   box.addEventListener("animationend", (ev) => ev.target.classList.remove("flash"));
   $("tree").addEventListener("animationend", (ev) => ev.target.classList.remove("flash"));
 
@@ -670,7 +752,7 @@ turned into another type or sent to an agent together, as one message naming eac
     if (hr && ev.target === hr) return dividerKey(ev, hr.closest(".blk"));
     const tx = ev.target.closest && ev.target.closest(".tx");
     if (!tx) return;
-    const n = tx.closest(".blk"), p = page(), i = p ? p.blocks.findIndex((b) => b.id === n.dataset.id) : -1;
+    const n = tx.closest(".blk"), p = shown(), i = p ? p.blocks.findIndex((b) => b.id === n.dataset.id) : -1;   // (lines folded away: passed over)
     if (i < 0 || p.deleted) return;
     const b = p.blocks[i];
     if (menu && menu.kind === "slash" && slashKey(ev)) return;
@@ -735,7 +817,7 @@ turned into another type or sent to an agent together, as one message naming eac
     }
   });
   function dividerKey(ev, n) {
-    const p = page(), i = p.blocks.findIndex((b) => b.id === n.dataset.id);
+    const p = shown(), i = p.blocks.findIndex((b) => b.id === n.dataset.id);
     if (ev.key === "Escape") { ev.preventDefault(); pickRange(n.dataset.id, n.dataset.id); return holdKeys(); }
     if (p.deleted) return;
     if (ev.key === "Backspace" || ev.key === "Delete") {
@@ -825,8 +907,8 @@ turned into another type or sent to an agent together, as one message naming eac
     drawPage();
     if (tx && at) { tx.focus(); setCaret(tx, at.start, at.end); }
   }
-  function tick(b) {
-    change([{ op: "block.put", page: current, block: { id: b.id, checked: !b.checked } }]);
+  function tick(b) {                                      // (a to-do work item: done as it is ticked, open again as it is not)
+    change([{ op: "block.put", page: current, block: { id: b.id, checked: !b.checked, ...(isWork(b) ? { ended: b.checked ? "" : "done", ended_at: now() } : {}) } }]);
     drawPage();
   }
   function addAfter(b, type) {
@@ -1117,17 +1199,21 @@ turned into another type or sent to an agent together, as one message naming eac
       pop.append(el("div", { class: "sep" }),
         ...(UNSENT.includes(b.type) ? [] : b.to ? [
           item({ glyph: SVG.at, sm: true, label: "Open its Chat" }, () => ag.actors.show(b.to).catch((e) => say(e.message, true))),
-          item({ glyph: SVG.x, sm: true, label: "Forget who it went to" }, () => { change([{ op: "block.put", page: current, block: { id: b.id, to: "" } }]); drawPage(); }),
-        ] : [item({ glyph: SVG.at, sm: true, label: "Send to an agent…" }, () => openPicker(b.id, n.getBoundingClientRect()))]),
+          item({ glyph: SVG.x, sm: true, label: "Forget who it went to", note: "Still a work item" }, () => { change([{ op: "block.put", page: current, block: { id: b.id, to: "", work: true } }]); drawPage(); }),
+        ] : [item({ glyph: SVG.at, sm: true, label: "Send to an agent…" }, () => openPicker(b.id, n.getBoundingClientRect())),
+          b.work ? item({ glyph: SVG.x, sm: true, label: "Not a work item" }, () => markWork([b], false))
+            : item({ glyph: SVG.work, sm: true, label: "Mark as a work item", note: "Tracked on the Work page" }, () => markWork([b], true))]),
+        ...(!isWork(b) ? [] : endedOf(b) ? [item({ glyph: SVG.restore, sm: true, label: "Reopen it" }, () => reopen([b]))] : [
+          item({ glyph: SVG.check, sm: true, label: "Accept it as done" }, () => accept([b])),
+          item({ glyph: SVG.x, sm: true, label: "Cancel it" }, () => cancel([b]))]),
         item({ glyph: "⧉", sm: true, label: "Duplicate" }, () => {
-          const { to: _to, sent: _sent, thread: _thread, extra: _extra, group: _group, ...rest } = b;
-          const copy = { ...rest, id: rid() };
+          const copy = copyOf(b);
           change([{ op: "block.put", page: current, block: copy, after: b.id }]);
           drawPage();
           focusBlock(copy.id);
         }),
         item({ glyph: SVG.trash, sm: true, label: "Delete", bad: true }, () => {
-          const p = page(), i = p.blocks.indexOf(b), near = p.blocks[i - 1] || p.blocks[i + 1];
+          const p = shown(), i = p.blocks.indexOf(b), near = p.blocks[i - 1] || p.blocks[i + 1];
           forget(b.id);
           change([{ op: "block.delete", page: current, block: b.id }]);
           drawPage();
@@ -1147,7 +1233,7 @@ turned into another type or sent to an agent together, as one message naming eac
   // anywhere else, or Esc, puts them down.
   let undo = null;                                         // {run, armed}: lines just deleted, to bring back
   box.tabIndex = -1;
-  const order = () => { const p = page(); return p ? p.blocks.map((b) => b.id) : []; };
+  const order = () => { const p = shown(); return p ? p.blocks.map((b) => b.id) : []; };   // (the lines shown: none folded away)
   const pickedBlocks = () => { const p = page(); return p ? p.blocks.filter((b) => picked.has(b.id)) : []; };
   function pickRange(a, z) {
     const ids = order(), i = ids.indexOf(a), j = ids.indexOf(z);
@@ -1205,6 +1291,8 @@ turned into another type or sent to an agent together, as one message naming eac
     bar.style.top = `${Math.max(0, first.offsetTop - bar.offsetHeight - 4)}px`;
     bar.style.left = `${box.offsetLeft + box.offsetWidth - bar.offsetWidth}px`;
   }
+  // a line as its copy has it: a new id, and nothing of whom it was sent to or how it was ended
+  const copyOf = ({ to: _to, sent: _sent, thread: _thread, extra: _extra, group: _group, work: _work, ended: _ended, ended_at: _at, ...rest }) => ({ ...rest, id: rid() });
   // lines with words to send (no divider, no agents table)
   const sendable = (bs) => bs.filter((b) => !UNSENT.includes(b.type) && plainOf(b.type === "code" ? esc(b.text) : b.text).trim());
 
@@ -1262,15 +1350,15 @@ turned into another type or sent to an agent together, as one message naming eac
   function tickLines() {                                   // all ticked, unless all are: then none
     const todos = pickedBlocks().filter((b) => b.type === "todo");
     if (!todos.length) return;
-    const to = todos.some((b) => !b.checked);
-    change(todos.map((b) => ({ op: "block.put", page: current, block: { id: b.id, checked: to } })));
+    const to = todos.some((b) => !b.checked), at = now();
+    change(todos.map((b) => ({ op: "block.put", page: current, block: { id: b.id, checked: to, ...(isWork(b) ? { ended: to ? "done" : "", ended_at: at } : {}) } })));
     drawPage();
   }
   function duplicateLines() {
     const bs = pickedBlocks();
     if (!bs.length) return;
     let after = bs[bs.length - 1].id;
-    const copies = bs.map(({ to: _to, sent: _sent, thread: _thread, extra: _extra, group: _group, ...rest }) => ({ ...rest, id: rid() }));
+    const copies = bs.map(copyOf);
     change(copies.map((c) => { const op = { op: "block.put", page: current, block: c, after }; after = c.id; return op; }));
     drawPage();
     pickRange(copies[0].id, copies[copies.length - 1].id);
@@ -1303,6 +1391,8 @@ turned into another type or sent to an agent together, as one message naming eac
           () => openPicker(can[0].id, rect, can.map((b) => b.id)))] : []),
         ...(bs.some((b) => b.type === "todo") ? [item({ glyph: SVG.check, sm: true, label: bs.some((b) => b.type === "todo" && !b.checked) ? "Tick the to-dos" : "Untick the to-dos", note: "⌘↵" },
           () => { tickLines(); holdKeys(); })] : []),
+        ...(can.some((b) => !isWork(b)) ? [item({ glyph: SVG.work, sm: true, label: `Mark ${can.filter((b) => !isWork(b)).length === 1 ? "one" : can.filter((b) => !isWork(b)).length} as work items`, note: "Tracked on the Work page" },
+          () => { markWork(can.filter((b) => !isWork(b)), true); holdKeys(); })] : []),
         item({ glyph: "⧉", sm: true, label: "Duplicate", note: "⌘D" }, () => { duplicateLines(); holdKeys(); }),
         item({ glyph: SVG.trash, sm: true, label: `Delete ${bs.length} lines`, note: "⌫", bad: true }, () => deleteLines()));
     }, () => { if (n) n.classList.remove("menu-open"); });
@@ -1413,7 +1503,7 @@ turned into another type or sent to an agent together, as one message naming eac
 
   // -- the drags that pick: a sweep from a line's words, a box from beside the lines
   let sweep = null, band = null, eatMouse = false;
-  const BAND_NOT = ".tx, button, input, textarea, a, .pg-title, .pg-icon, .pg-tools, .agt, .hr, .sent, .gut, .chk, .banner, .empty, .pk-bar";
+  const BAND_NOT = ".tx, button, input, textarea, a, .pg-title, .pg-icon, .pg-tools, .agt, .hr, .sent, .fold, .fold-all, .gut, .chk, .banner, .empty, .pk-bar";
   function rowAt(y) {                                     // the line at a height (above the first: it; below the last: it)
     const rows = [...box.children];
     return rows.find((r) => y < r.getBoundingClientRect().bottom) || rows[rows.length - 1] || null;
@@ -1425,7 +1515,7 @@ turned into another type or sent to an agent together, as one message naming eac
   }
   $("scroll").addEventListener("pointerdown", (ev) => {
     const sc = $("scroll");
-    if (ev.button !== 0 || current === AGENTS || !page() || ev.target.closest(".pop")) return;
+    if (ev.button !== 0 || SPECIAL.includes(current) || !page() || ev.target.closest(".pop")) return;
     if (ev.target === sc && ev.clientX >= sc.getBoundingClientRect().left + sc.clientWidth) return;   // its scrollbar
     const n = ev.target.closest(".blk");
     if (ev.shiftKey && n && box.contains(n) && !ev.target.closest("button, .chk, a")) {
@@ -1510,7 +1600,7 @@ turned into another type or sent to an agent together, as one message naming eac
     ev.preventDefault();
     const p = page();
     if (!p || p.deleted) return;
-    const first = p.blocks.find(editable);
+    const first = shown().blocks.find(editable);
     if (first && ev.key === "ArrowDown") return focusBlock(first.id, "start");
     if (first && first.type === "text" && !plainOf(first.text)) return focusBlock(first.id, "start");
     const b = { id: rid(), type: "text", text: "", checked: false, indent: 0 };
@@ -1534,7 +1624,7 @@ turned into another type or sent to an agent together, as one message naming eac
   function belowClick() {                                 // a click under the lines (a drag there picks them): one to type in
     const p = page();
     if (!p || p.deleted) return;
-    const last = p.blocks[p.blocks.length - 1];
+    const last = shown().blocks.slice(-1)[0];
     if (last && last.type === "text" && !plainOf(last.text)) return focusBlock(last.id, "end");
     const b = { id: rid(), type: "text", text: "", checked: false, indent: 0 };
     change([{ op: "block.put", page: p.id, block: b }]);
@@ -1586,8 +1676,9 @@ turned into another type or sent to an agent together, as one message naming eac
 
   // ---------------------------------------------------------------- the gatherer's actors (ag.actors), to send blocks to
   let crew = { agents: [], harnesses: [], start: "", home: "" };
-  let crewSig = "";
+  let crewSig = "", crewKnown = false;                    // (not yet: an actor not found is not known gone)
   function takeActors(all) {
+    if (all) crewKnown = true;
     const g = all && (all.gatherers || []).find((x) => x.name === ag.gatherer);
     crew = { agents: (g && g.agents) || [], harnesses: (all && all.harnesses) || [],
       start: (g && g.start_cwd) || (all && all.cwd) || "", home: (all && all.home_dir) || "" };
@@ -1629,20 +1720,102 @@ turned into another type or sent to an agent together, as one message naming eac
   const linesOn = (a) => (a && a.asked_of && a.asked_of.app === ag.app ? String(a.asked_of.item || "").split(/,\s*/).filter(Boolean) : []);
   // when a line last went to its actor: sent, or the user's latest message about it
   const lastSent = (b) => Math.max(b.sent || 0, ...(b.thread || []).filter((l) => l.by === "user").map((l) => l.at || 0));
-  // How a line stands with the actor it went to -- its own state, not the actor's alone: the line the actor is on now,
-  // as the actor stands (working since it was last sent, needs you, error); done once the actor reported on it since
-  // the user last wrote about it (or it is ticked) -- the line itself the actor may tick or strike through with its
-  // tools; another line sent to a busy actor after the one it is on, waiting; else only sent.
-  function standsOn(a, b) {
-    const [cls, word] = stands(a);
-    if (cls === "gone") return [cls, word];
+  // -- work items (notebook.py): lines sent to an agent, or marked as one; only the reader ends one
+  const isWork = (b) => !!b && !UNSENT.includes(b.type) && !!(b.to || b.work);
+  // how the reader ended one -- "done", "canceled" -- or "": a to-do one is done as it is ticked
+  const endedOf = (b) => (!isWork(b) ? "" : b.ended || (b.type === "todo" && b.checked ? "done" : ""));
+  const endedAt = (b) => b.ended_at || Math.max(b.sent || 0, ...(b.thread || []).map((l) => l.at || 0)) || 0;
+  const pageOf = (b) => { const f = findLine(b.id); return f ? f.p : null; };
+  const SETTLE = 15;                                       // s: a line just sent to an actor not busy yet: not taken up yet
+  // How a work item stands, {key, cls, word} -- its own state, not its actor's alone: ended (done, canceled); sent to no
+  // one (new); its actor on it now (run; ask: it asks about it, errs on it, or is gone); reported on since it was last
+  // sent, or its actor took it up and stopped without a report (review: the reader's to accept, or send back); sent,
+  // its actor on something before it (queue).
+  function itemStands(b) {
+    const e = endedOf(b);
+    if (e) return e === "done" ? { key: "done", cls: "done", word: "Done" } : { key: "canceled", cls: "gone", word: "Canceled" };
+    if (!b.to) return { key: "new", cls: "new", word: "Not started" };
+    const a = actorOf(b.to), [cls, word] = stands(a);
+    if (cls === "gone") return crewKnown ? { key: "ask", cls: "bad", word: "Agent gone" } : { key: "queue", cls: "wait", word: "Sent" };
     const busy = cls === "work" || cls === "ask" || cls === "bad";
-    if (busy && linesOn(a).includes(b.id)) return [cls, cls === "work" ? `${word} · ${since(lastSent(b))}` : word];
+    if (busy && linesOn(a).includes(b.id)) return cls === "work" ? { key: "run", cls, word: `${word} · ${since(lastSent(b))}` } : { key: "ask", cls, word };
     const last = [...(b.thread || [])].reverse().find((l) => byOf(a, l.by));
-    if ((last && (last.at || 0) >= lastSent(b)) || (b.type === "todo" && b.checked)) return ["done", "Done"];
-    if (busy && waiting(a, b)) return ["wait", "Waiting"];
-    return ["idle", "Sent"];
+    if (last && (last.at || 0) >= lastSent(b)) return { key: "review", cls: "review", word: "To review" };
+    if (busy ? waiting(a, b) : now() - lastSent(b) < SETTLE) return { key: "queue", cls: "wait", word: busy ? "Queued" : "Sent" };
+    return { key: "review", cls: "review", word: "To review" };
   }
+  // what to say of a work item beside how it stands: what it asks, what it waits for, its latest report
+  function itemSaid(b, s = itemStands(b)) {
+    const a = b.to ? actorOf(b.to) : null;
+    if (s.key === "new") return "Sent to no one yet";
+    if (s.key === "ask") return s.word === "Agent gone" ? "Its agent is not here now: send it to another, or cancel it"
+      : askedOn(a, b) ? `Asks: ${askLine(a.asking)}` : s.cls === "bad" ? "Its agent stopped with an error" : "";
+    if (s.key === "queue" && s.word === "Queued") { const on = linesOn(a).length ? findLine(linesOn(a)[0]) : null; return on ? `After “${oneLine(on.b.text, 60)}”` : "After what it is on now"; }
+    const latest = [...(b.thread || [])].reverse().find((l) => l.by !== "user");
+    if (s.key === "review" && !(latest && (latest.at || 0) >= lastSent(b))) return "Stopped without a report";
+    return latest ? oneLine(latest.text, 240) : "";
+  }
+  // what its agent said it made (its latest report that names any)
+  const madeOf = (b) => ([...(b.thread || [])].reverse().find((l) => l.by !== "user" && l.results) || {}).results || [];
+  // ops ending work items as the reader says ("done", "canceled"; "": open again), wherever they are -- a to-do one
+  // ticked as it is done
+  function endOps(bs, how) {
+    const at = now();
+    return bs.map((b) => [pageOf(b), b]).filter(([p]) => p).map(([p, b]) => ({ op: "block.put", page: p.id,
+      block: { id: b.id, ended: how, ended_at: at, ...(b.type === "todo" ? { checked: how === "done" } : {}) } }));
+  }
+  function accept(bs) {
+    bs = bs.filter((b) => isWork(b) && !endedOf(b));
+    if (!bs.length) return;
+    change(endOps(bs, "done"));
+    say(bs.length === 1 ? "Accepted as done" : `Accepted ${bs.length} lines as done`);
+    redraw();
+  }
+  function reopen(bs) {
+    bs = bs.filter((b) => endedOf(b));
+    if (!bs.length) return;
+    change(endOps(bs, ""));
+    redraw();
+  }
+  function markWork(bs, on) {
+    const ops = bs.map((b) => [pageOf(b), b]).filter(([p]) => p).map(([p, b]) => ({ op: "block.put", page: p.id, block: { id: b.id, work: on } }));
+    if (!ops.length) return;
+    change(ops);
+    redraw();
+  }
+  // Work items canceled: ended so, and an agent still to finish one (on it, or yet to take it up) told to leave it, in
+  // a message of the user's -- it reads one sent mid-turn at its next step, as Chat's.
+  async function cancel(bs) {
+    bs = bs.filter((b) => isWork(b) && !endedOf(b));
+    if (!bs.length) return;
+    const tell = new Map();                                 // per actor and page: its lines
+    for (const b of bs) {
+      const s = itemStands(b), p = pageOf(b);
+      if (!b.to || !p || !["run", "queue", "ask"].includes(s.key) || s.word === "Agent gone") continue;
+      const k = `${b.to} ${p.id}`;
+      if (!tell.has(k)) tell.set(k, { to: b.to, p, them: [] });
+      tell.get(k).them.push(b);
+    }
+    change(endOps(bs, "canceled"));
+    redraw();
+    for (const { to, p, them } of tell.values()) {
+      const many = them.length > 1, it = many ? "them" : "it";
+      const text = `(From my Notes, page ${JSON.stringify(p.title || "Untitled")}, ${many ? `blocks ${them.map((b) => b.id).join(", ")}` : `block ${them[0].id}`}.`
+        + ` The user canceled ${many ? "these lines" : "this line"}: stop any work on ${it}, and don't report on ${it}.)`
+        + `\n\nCanceled: ${them.map((b) => oneLine(b.type === "code" ? esc(b.text) : b.text, 200)).join("; ")}`;
+      try { await ag.actors.send(to, text); } catch (e) { return say(`Canceled, but its agent was not told: ${e.message}`, true); }
+    }
+    say(bs.length === 1 ? "Canceled" : `Canceled ${bs.length} lines`);
+  }
+  // all that shows work items drawn again: the sidebar's counts, and the page or Work page shown
+  function redraw() { drawSide(); drawPage(); }
+  const when = (t) => { const d = new Date(t * 1000); return d.toDateString() === new Date().toDateString() ? clock(t)
+    : `${d.toLocaleDateString([], { month: "short", day: "numeric" })}, ${clock(t)}`; };
+  const ago = (t) => { const s = since(t); return s === "just now" ? s : `${s} ago`; };
+  // what a report names it made: links open, the rest said
+  const madeRow = (rs) => el("div", { class: "res" }, ...rs.map((r) => (/^https?:\/\/\S+$/.test(r)
+    ? el("a", { href: r, target: "_blank", rel: "noopener", title: r, text: r.replace(/^https?:\/\/(www\.)?/, "").slice(0, 60) })
+    : el("span", { title: r, text: r }))));
   // a line sent to a busy actor after the one it is on (or while it is on something else): not taken up yet
   function waiting(a, b) {
     const on = linesOn(a)[0], found = on ? findLine(on) : null;
@@ -1657,21 +1830,23 @@ turned into another type or sent to an agent together, as one message naming eac
   // The lines sent together with one -- to the same actor, as one message: the same `group` -- in the page's order; just
   // it, sent alone. They show once, at the last of them: how they stand together, and one conversation.
   function sentWith(b) {
-    const p = page();
+    const p = pageOf(b);
     if (!p || !b.to || !b.group) return [b];
     const g = p.blocks.filter((x) => x.to === b.to && x.group === b.group);
     return g.includes(b) ? g : [b];
   }
-  // How lines sent together stand: the actor on them (working, needs you, error) as one sent alone; Done once it has
-  // reported on every one; else waiting, or how many are done so far.
-  function standsAll(a, g) {
-    if (g.length === 1) return standsOn(a, g[0]);
-    const all = g.map((b) => standsOn(a, b));
-    for (const c of ["gone", "ask", "bad", "work"]) { const s = all.find(([k]) => k === c); if (s) return s; }
-    const done = all.filter(([k]) => k === "done").length;
-    if (done === g.length) return ["done", "Done"];
-    if (all.some(([k]) => k === "wait")) return ["wait", "Waiting"];
-    return done ? ["idle", `${done} of ${g.length} done`] : ["idle", "Sent"];
+  // How lines sent together stand: their open ones as one -- asking or working before all else; some to review, how
+  // many of them; then queued, not started; all of them to review: to review. Every one ended: as the last.
+  function groupStands(g) {
+    if (g.length === 1) return itemStands(g[0]);
+    const open = g.filter((b) => !endedOf(b));
+    if (!open.length) return itemStands(g[g.length - 1]);
+    const all = open.map(itemStands), first = (...ks) => ks.map((k) => all.find((s) => s.key === k)).find(Boolean);
+    const busy = first("ask", "run");
+    if (busy) return busy;
+    const r = all.filter((s) => s.key === "review").length;
+    if (r && r < all.length) return { key: "queue", cls: "review", word: `${r} of ${all.length} to review` };
+    return first("queue", "new") || all[0];
   }
   const askedAll = (a, g) => g.map((b) => askedOn(a, b)).find(Boolean) || null;
   // the actor's reports and the user's messages on lines sent together, in the order written (a report saying its line)
@@ -1697,7 +1872,7 @@ turned into another type or sent to an agent together, as one message naming eac
   async function sendBlock(id, who, extra = "") {
     flushTyped();
     pump();
-    const p = page(), b = blockOf(id);
+    const f = findLine(id), p = f && f.p, b = f && f.b;
     if (!p || !b) return;
     const words = plainOf(b.type === "code" ? esc(b.text) : b.text).trim();
     if (!words) return say("Write what to ask first, then send it.", true);
@@ -1711,7 +1886,7 @@ turned into another type or sent to an agent together, as one message naming eac
     try {
       const got = who.harness ? await ag.actors.start({ harness: who.harness, folder: who.folder, text })
         : await ag.actors.send(who.channel, text);
-      change([{ op: "block.put", page: p.id, block: { id, to: got.channel, sent: now(), extra: esc(extra).replace(/\n/g, "<br>"), group: "" } }]);
+      change([{ op: "block.put", page: p.id, block: { id, to: got.channel, sent: now(), extra: esc(extra).replace(/\n/g, "<br>"), group: "", work: true, ended: "" } }]);
       say(`Sent to ${nameOf(actorOf(got.channel), who.channel || got.channel)}${who.harness ? ", a new actor" : ""}`);
     } catch (e) {
       say(`Not sent: ${e.message}`, true);
@@ -1741,7 +1916,7 @@ turned into another type or sent to an agent together, as one message naming eac
       const got = who.harness ? await ag.actors.start({ harness: who.harness, folder: who.folder, text })
         : await ag.actors.send(who.channel, text);
       const at = now(), more = esc(extra).replace(/\n/g, "<br>"), group = rid();
-      change(bs.map((b) => ({ op: "block.put", page: p.id, block: { id: b.id, to: got.channel, sent: at, extra: more, group } })));
+      change(bs.map((b) => ({ op: "block.put", page: p.id, block: { id: b.id, to: got.channel, sent: at, extra: more, group, work: true, ended: "" } })));
       unpick();
       say(`Sent ${bs.length} lines to ${nameOf(actorOf(got.channel), who.channel || got.channel)}${who.harness ? ", a new actor" : ""}`);
     } catch (e) {
@@ -1755,7 +1930,7 @@ turned into another type or sent to an agent together, as one message naming eac
   // A reply on a block sent to an actor: sent to that actor, then a line of the block's thread. On lines sent together,
   // about them all, and kept on the last of them.
   async function reply(id, words) {
-    const p = page(), b = blockOf(id);
+    const f = findLine(id), p = f && f.p, b = f && f.b;
     words = words.trim();
     if (!p || !b || !b.to || !words) return false;
     const g = sentWith(b);
@@ -1768,7 +1943,7 @@ turned into another type or sent to an agent together, as one message naming eac
       return false;
     }
     change([{ op: "thread.add", page: p.id, block: id, line: { id: rid(), by: "user", text: esc(words).replace(/\n/g, "<br>"), at: now() } }]);
-    drawPage();
+    redraw();
     return true;
   }
   // What a block sent to an actor shows under its words, at the line's end: who it went to (its avatar) and how the
@@ -1777,34 +1952,35 @@ turned into another type or sent to an agent together, as one message naming eac
   // preview of it is on the page.
   function sentPart(n, b, ro) {
     let part = n.querySelector(":scope > .sent");
-    const g = sentWith(b), tail = g[g.length - 1];         // sent with others: shown once, at the last of them
-    const has = b.to || (b.thread && b.thread.length) || outgoing.has(b.id);
+    const g = sentWith(b), tail = [...g].reverse().find((x) => !foldedNow.has(x.id)) || g[g.length - 1];   // sent with others: shown once, at the last of them shown
+    const has = isWork(b) || (b.thread && b.thread.length) || outgoing.has(b.id);
     const open = !!convo && g.some((x) => x.id === convo.block);
     n.classList.toggle("convo-on", !!has && open);
     if (!has || b !== tail || (quiet.has(b.id) && !b.to)) { if (part) part.remove(); return; }
     if (!part) { part = el("div", { class: "sent" }); n.append(part); }
     const a = b.to ? actorOf(b.to) : null;
     const sendingNow = outgoing.has(b.id) && !b.to;
-    const [cls, word] = sendingNow ? ["work", "Sending…"] : b.to ? standsAll(a, g) : ["idle", "Sent to no one now"];
-    const name = b.to ? nameOf(a, b.to) : "";
+    const s = sendingNow ? { key: "run", cls: "work", word: "Sending…" } : isWork(b) ? groupStands(g) : { key: "none", cls: "idle", word: "Sent to no one now" };
+    const cls = s.cls, word = s.word, name = b.to ? nameOf(a, b.to) : "";
     const asks = !!askedAll(a, g);
-    const latest = [...threadOf(g)].reverse().find((l) => l.by !== "user"), on = cls === "wait" && linesOn(a).length ? findLine(linesOn(a)[0]) : null;
-    const said = asks ? `Asks: ${askLine(a.asking)}` : cls === "wait" ? (on ? `After “${oneLine(on.b.text, 60)}”` : "After what it is on now")
-      : latest ? oneLine(latest.text, 240) : "";
-    const count = 1 + g.reduce((k, x) => k + (x.thread || []).length, 0);
-    const sig = JSON.stringify([cls, word, name, a && a.avatar, said, count, asks, open, ro, g.length]);
+    const latest = [...threadOf(g)].reverse().find((l) => l.by !== "user");
+    const said = asks ? `Asks: ${askLine(a.asking)}` : g.length > 1 ? (latest ? oneLine(latest.text, 240) : "") : isWork(b) ? itemSaid(b, s) : "";
+    const count = (b.sent ? 1 : 0) + g.reduce((k, x) => k + (x.thread || []).length, 0);
+    const review = s.key === "review" && !ro, talks = !sendingNow && (!!b.to || count > 0);
+    const sig = JSON.stringify([cls, word, name, a && a.avatar, said, count, asks, open, ro, g.length, review, talks]);
     if (part.dataset.sig === sig) return;
     part.dataset.sig = sig;
     const talk = () => toggleConvo(b.id);
-    const told = `${name}: ${word}${g.length > 1 ? ` (${g.length} lines sent together)` : ""}${said ? `\n${said}` : ""}`;   // on hover, not on the page
-    part.replaceChildren(
+    const told = `${name ? `${name}: ` : ""}${word}${g.length > 1 ? ` (${g.length} lines sent together)` : ""}${said ? `\n${said}` : ""}`;   // on hover, not on the page
+    part.replaceChildren(...[                              // (the slots left empty: none drawn, not "null")
       b.to ? el("button", { type: "button", class: `chip ${cls}`, title: `${told}\n(${open ? "close" : "open"} the conversation)`,
         "aria-label": told, onclick: talk }, face(a, 16), el("span", { text: word }))
-        : el("span", { class: `chip ${cls}` }, el("span", { text: word })),
-      sendingNow ? null : asks && !open ? el("button", { type: "button", class: "talk answer", text: "Answer", onclick: () => openConvo(b.id) })
+        : el("span", { class: `chip ${cls}`, title: told, "aria-label": told }, el("span", { text: word })),
+      review ? el("button", { type: "button", class: "accept", text: "Accept", title: "Accept it as done", onclick: () => accept(g) }) : null,
+      !talks ? null : asks && !open ? el("button", { type: "button", class: "talk answer", text: "Answer", onclick: () => openConvo(b.id) })
         : el("button", { type: "button", class: `talk${open ? " on" : ""}`, title: open ? "Close the conversation" : "Open the conversation",
           "aria-label": `${open ? "Close" : "Open"} the conversation: ${count} message${count === 1 ? "" : "s"}`, onclick: talk },
-          el("span", { html: SVG.bubble }), el("span", { text: String(count) })));
+          el("span", { html: SVG.bubble }), el("span", { text: String(count) }))].filter(Boolean));
   }
   // what an actor asks, in a line
   function askLine(ask) {
@@ -1853,7 +2029,7 @@ turned into another type or sent to an agent together, as one message naming eac
       box.replaceChildren(el("div", { class: "cv-head" }), el("div", { class: "cv-list", role: "log", "aria-live": "polite" }), el("div", { class: "cv-foot" }));
     }
     const a = b.to ? actorOf(b.to) : null, name = b.to ? nameOf(a, b.to) : "", ro = !!p.deleted;
-    const [cls, word] = b.to ? standsAll(a, g) : ["idle", "Sent to no one now"];
+    const s = isWork(b) ? groupStands(g) : { key: "none", cls: "idle", word: "Sent to no one now" }, cls = s.cls, word = s.word;
     const words = (x) => (x.type === "code" ? esc(x.text) : x.text);
     const about = g.length > 1 ? `${g.length} lines: ${g.map((x) => oneLine(words(x), 60)).join(" · ")}` : oneLine(words(b), 160);
     const head = box.querySelector(".cv-head");
@@ -1868,7 +2044,7 @@ turned into another type or sent to an agent together, as one message naming eac
           if (rs[0]) rs[0].scrollIntoView({ block: "center", behavior: "smooth" });
           for (const r of rs) { r.classList.remove("flash"); void r.offsetWidth; r.classList.add("flash"); }
         } }, el("span", { class: "dim", text: "About: " }), about || "(empty)"),
-        a ? el("button", { type: "button", class: "cv-chat", text: "Open its Chat", onclick: () => ag.actors.show(b.to).catch((e) => say(e.message, true)) }) : null);
+        a ? el("button", { type: "button", class: "cv-chat", text: "Open its Chat", onclick: () => ag.actors.show(b.to).catch((e) => say(e.message, true)) }) : "");
     }
     const list = box.querySelector(".cv-list");
     const lines = threadOf(g);
@@ -1887,14 +2063,46 @@ turned into another type or sent to an agent together, as one message naming eac
       if (fresh || atEnd) requestAnimationFrame(() => { list.scrollTop = list.scrollHeight; });   // once laid out
     }
     const foot = box.querySelector(".cv-foot");
+    let end = foot.querySelector(".cv-end");
+    if (!end) { end = el("div", { class: "cv-end" }); foot.prepend(end); }
+    drawEnd(end, g, s, ro);
     let r = foot.querySelector(".reply");
     if (b.to && !ro) {
-      if (!r) { r = replyBox(b.id); foot.replaceChildren(r); }
-      r.querySelector("input").placeholder = `Message ${name}`;
-    } else if (r || !foot.firstChild) {
-      foot.replaceChildren(el("div", { class: "cv-none", text: ro ? "This page is in the trash."
+      if (!r) { r = replyBox(b.id); for (const x of foot.querySelectorAll(".cv-none")) x.remove(); foot.append(r); }
+      r.querySelector("input").placeholder = s.key === "review" ? `Send it back to ${name}: what's left` : `Message ${name}`;
+    } else if (r || !foot.querySelector(".cv-none")) {
+      if (r) r.remove();
+      foot.append(el("div", { class: "cv-none", text: ro ? "This page is in the trash."
         : "Sent to no one now: send the line to an agent again to talk about it." }));
     }
+  }
+  // Above the message box, whether it is done -- the reader's to say: to review, Accept or Cancel (or a message sending
+  // it back); while it is worked on, the same as quiet links; ended, how, and Reopen.
+  function drawEnd(end, g, s, ro) {
+    const open = g.filter((x) => isWork(x) && !endedOf(x));
+    const sig = JSON.stringify([s.key, open.map((x) => x.id), ro, g.map(endedOf)]);
+    if (end.dataset.sig === sig) return;
+    end.dataset.sig = sig;
+    end.replaceChildren();
+    if (ro || !g.some(isWork)) return;
+    if (!open.length) {
+      const e = endedOf(g[g.length - 1]), at = Math.max(...g.map(endedAt));
+      end.append(el("div", { class: "cv-ended" }, el("span", { class: `pill ${e === "done" ? "done" : ""}`, text: e === "done" ? "Accepted as done" : "Canceled" }),
+        at ? el("span", { class: "dim", text: when(at) }) : null,
+        el("button", { type: "button", class: "link", text: "Reopen", onclick: () => reopen(g) })));
+      return;
+    }
+    if (s.key === "review") {
+      end.append(el("div", { class: "cv-q", text: open.length > 1 ? `Are these ${open.length} done?` : "Is it done?" }),
+        el("div", { class: "cv-acts" },
+          el("button", { type: "button", class: "accept big", text: "Accept: it's done", onclick: () => accept(open) }),
+          el("button", { type: "button", class: "plain", text: "Cancel it", onclick: () => cancel(open) })),
+        el("div", { class: "cv-hint", text: "Or send it back with what's left:" }));
+      return;
+    }
+    end.append(el("div", { class: "cv-acts quiet" },
+      el("button", { type: "button", class: "link", text: "Accept as done", onclick: () => accept(open) }),
+      el("button", { type: "button", class: "link", text: "Cancel it", title: "Cancel it, and tell its agent to stop", onclick: () => cancel(open) })));
   }
   function bubble(l) {
     const mine = l.by === "user", ch = mine ? "" : l.by.slice(6), a = mine ? null : actorOf(ch);
@@ -1902,7 +2110,8 @@ turned into another type or sent to an agent together, as one message naming eac
       mine ? null : face(a, 20),
       el("div", { class: "mb" },
         el("div", { class: "bub", html: clean(l.text) }),
-        el("div", { class: "mm", text: mine ? `You · ${clock(l.at)}${l.note ? ` · ${l.note}` : ""}` : `${nameOf(a, ch)} reported${l.on ? ` on “${l.on}”` : ""}${l.done ? ": done" : ""} · ${clock(l.at)}` })));
+        l.results && l.results.length ? madeRow(l.results) : null,
+        el("div", { class: "mm", text: mine ? `You · ${clock(l.at)}${l.note ? ` · ${l.note}` : ""}` : `${nameOf(a, ch)} reported${l.on ? ` on “${l.on}”` : ""}${l.done ? ", says it's done" : ""} · ${clock(l.at)}` })));
   }
   function replyBox(id) {
     const input = el("input", { type: "text", "aria-label": "Reply", autocomplete: "off" });
@@ -1952,13 +2161,15 @@ turned into another type or sent to an agent together, as one message naming eac
   }
   // Every block of the page shown that was sent to an actor drawn again (how its actor stands changed; time passed).
   function drawSent() {
+    if (current === WORK || current === LOG) return drawWorkPage();
     const p = page();
     if (!p) return;
     for (const b of p.blocks) {
       const n = rowOf(b.id);
       if (!n) continue;
       if (b.type === "agents") drawAgentsBlock(n);
-      else if (b.to || (b.thread && b.thread.length)) sentPart(n, b, !!p.deleted);
+      else if (b.type === "work") drawWorkBlock(n);
+      else if (isWork(b) || (b.thread && b.thread.length)) sentPart(n, b, !!p.deleted);
     }
     drawConvo();
   }
@@ -2087,7 +2298,7 @@ turned into another type or sent to an agent together, as one message naming eac
     const m = menu, extra = m && m.extra ? m.extra.value : "";
     closePop();
     if (!m) return;
-    const b = blockOf(m.block);
+    const b = (findLine(m.block) || {}).b;                // (the Work page's Assign: a line of any page)
     if (!b) return;
     if (m.tx && m.tx.isConnected) {
       const tx = m.tx, n = tx.closest(".blk"), c = caretIn(tx);
@@ -2149,7 +2360,7 @@ turned into another type or sent to an agent together, as one message naming eac
         el("td", {}, el("button", { type: "button", class: "who-btn", title: `Open ${nameOf(a)}'s Chat`,
           onclick: () => ag.actors.show(a.channel).catch((e) => say(e.message, true)) }, face(a, 20), el("b", { text: nameOf(a) }))),
         el("td", {}, el("span", { class: `pill ${cls}`, text: word })),
-        el("td", { class: "from" }, ...(mine.length ? mine.slice(0, 2).map(({ p, b }) => el("button", { type: "button", class: `blk-link${b.checked ? " done" : ""}`,
+        el("td", { class: "from" }, ...(mine.length ? mine.slice(0, 2).map(({ p, b }) => el("button", { type: "button", class: `blk-link${endedOf(b) || (b.type === "todo" && b.checked) ? " done" : ""}`,
           title: `On “${p.title || "Untitled"}”`, onclick: () => go(p, b), text: oneLine(b.text, 70) || "(empty)" })) : [el("span", { class: "dim", text: "—" })]),
           mine.length > 2 ? el("span", { class: "dim", text: `+${mine.length - 2} more` }) : null),
         el("td", { class: "said" }, l ? el("span", {}, oneLine(l.text, 160), el("span", { class: "dim", text: ` · ${clock(l.at)}` }))
@@ -2188,6 +2399,141 @@ turned into another type or sent to an agent together, as one message naming eac
   }
 
 
+  // ---------------------------------------------------------------- the Work page, the Logbook, and a work block
+  // Every open work item of the notebook by how it stands -- needs you, to review, working, queued, not started -- and
+  // those accepted in the last week (folded); each with its agent, page, latest report and what it made, and what the
+  // reader may do with it. The Logbook: every ended one, by the day it was ended. A work block: the open ones, on a page.
+  const GROUPS = [
+    { key: "ask", name: "Needs you", hint: "Its agent waits on you" },
+    { key: "review", name: "To review", hint: "Its agent stopped: accept it, or send it back with what's left" },
+    { key: "run", name: "Working", hint: "An agent is on it now" },
+    { key: "queue", name: "Queued", hint: "Sent: its agent gets to it after what it is on" },
+    { key: "new", name: "Not started", hint: "Marked, sent to no one yet" },
+    { key: "done", name: "Done", hint: "Accepted in the last 7 days" },
+  ];
+  const WEEK = 7 * 86400;
+  function workItems() {
+    const out = [];
+    for (const p of live()) for (const b of p.blocks) if (isWork(b)) out.push({ p, b, s: itemStands(b) });
+    return out;
+  }
+  const isOpen = (x) => x.s.key !== "done" && x.s.key !== "canceled";
+  const forYou = () => workItems().filter((x) => x.s.key === "ask" || x.s.key === "review").length;
+  const wordsOf = (b) => oneLine(b.type === "code" ? esc(b.text) : b.text, 160) || "(empty)";
+  // A work item shown on its page: the page opened (its ended lines shown, if it is one of them), the line flashed --
+  // and its conversation opened, if asked for and it has one.
+  function goLine(p, b, talk = false) {
+    if (foldOf(p).has(b.id)) showDone(p.id, true);
+    openPage(p.id);
+    if (talk && (b.to || (b.thread && b.thread.length))) openConvo(b.id);
+    requestAnimationFrame(() => {
+      const r = rowOf(b.id);
+      if (r) { r.scrollIntoView({ block: "center" }); r.classList.remove("flash"); void r.offsetWidth; r.classList.add("flash"); }
+    });
+  }
+  function workRow({ p, b, s }, compact = false) {
+    const a = b.to ? actorOf(b.to) : null, done = s.key === "done";
+    const said = done || s.key === "new" ? "" : itemSaid(b, s), made = done ? [] : madeOf(b);   // (not started: its meta says "No one yet")
+    const latest = [...(b.thread || [])].reverse().find((l) => l.by !== "user");
+    const time = done ? `accepted ${when(endedAt(b))}` : s.key === "review" && latest && (latest.at || 0) >= lastSent(b) ? `reported ${ago(latest.at)}`
+      : b.to && s.key !== "run" ? `sent ${ago(lastSent(b))}` : "";
+    const btn = (label, cls, run, title) => el("button", { type: "button", class: `wk-btn${cls ? ` ${cls}` : ""}`, text: label, title: title || null, onclick: run });
+    const pick = (ev) => openPicker(b.id, ev.currentTarget.getBoundingClientRect());
+    const acts = s.key === "ask" ? (s.word === "Agent gone" ? [btn("Cancel", "", () => cancel([b])), btn("Send to…", "primary", pick)]
+      : [btn("Answer", "answer", () => goLine(p, b, true), "Open its conversation, where it asks")])
+      : s.key === "review" ? [btn("Send back", "", () => goLine(p, b, true), "Open its conversation, to say what's left"), btn("Accept", "accept", () => accept([b]), "Accept it as done")]
+      : s.key === "run" || s.key === "queue" ? [btn("Cancel", "", () => cancel([b]), "Cancel it, and tell its agent to stop")]
+      : s.key === "new" ? [btn("Remove", "", () => markWork([b], false), "Not a work item: the line stays on its page"),     // (done without an agent: ended here)
+        btn("Cancel", "", () => cancel([b]), "Cancel it: into the Logbook, as canceled"), btn("Done", "accept", () => accept([b]), "Accept it as done: no agent needed"),
+        btn("Assign", "primary", pick, "Send it to an agent")]
+      : [btn("Reopen", "", () => reopen([b]))];
+    const pill = compact || s.key === "run" || s.key === "ask" || s.word === "Sent";
+    return el("div", { class: `wk-row ${s.key}`, "data-id": b.id },
+      b.to ? face(a, compact ? 18 : 22) : el("span", { class: "face dash", style: `width:${compact ? 18 : 22}px;height:${compact ? 18 : 22}px`, "aria-hidden": "true" }),
+      el("div", { class: "wk-main" },
+        el("button", { type: "button", class: "wk-text", title: "Show it on its page", onclick: () => goLine(p, b, !done && s.key !== "new") }, wordsOf(b)),
+        el("div", { class: "wk-meta" }, pill ? el("span", { class: `pill ${s.cls}`, text: s.word }) : null,
+          el("span", { text: [b.to ? nameOf(a, b.to) : "No one yet", p.title || "Untitled", time].filter(Boolean).join(" · ") })),
+        said && !compact ? el("div", { class: "wk-said", text: said }) : null,
+        made.length && !compact ? madeRow(made) : null),
+      el("div", { class: "wk-acts" }, ...acts));
+  }
+  function drawWorkPage() {
+    const box = $("work-page");
+    if (current === LOG) return drawLogbook(box);
+    const items = workItems(), open = items.filter(isOpen), on = new Set(open.map((x) => x.p.id)).size;
+    const doneOpen = store.get("workDone", false);
+    const sections = GROUPS.map((g) => {
+      let its = items.filter((x) => x.s.key === g.key);
+      if (g.key === "done") its = its.filter((x) => now() - endedAt(x.b) < WEEK).sort((x, y) => endedAt(y.b) - endedAt(x.b));
+      else if (g.key !== "new") its.sort((x, y) => lastSent(x.b) - lastSent(y.b));   // oldest first: waited longest
+      if (!its.length) return null;
+      const folded = g.key === "done" && !doneOpen;
+      return el("section", { class: `wk-group ${g.key}`, "aria-label": g.name },
+        el("div", { class: "wk-hd" }, el("h2", { text: g.name }), el("span", { class: `wk-n ${g.key}`, text: String(its.length) }),
+          el("span", { class: "wk-hint", text: g.hint }),
+          g.key === "done" ? el("button", { type: "button", class: "wk-fold", "aria-expanded": String(!folded), text: folded ? "Show" : "Hide",
+            onclick: () => { store.set("workDone", folded); drawWorkPage(); } }) : null),
+        folded ? null : el("div", { class: "wk-list" }, ...its.map((x) => workRow(x))));
+    }).filter(Boolean);
+    box.replaceChildren(
+      el("h1", { class: "pg-title", text: "Work" }),
+      el("p", { class: "agt-sub", text: open.length ? `${open.length} open across ${on} page${on === 1 ? "" : "s"}. You decide when each is done.` : "Nothing open." }),
+      ...(sections.length ? sections : [el("div", { class: "wk-none", text: "No work items yet. Send a line to an agent (type @ in it), or mark one from its menu (⋮⋮), and it shows here." })]),
+      el("p", { class: "agt-sub dim" }, "Older finished items are in the ", el("button", { type: "button", class: "link", text: "Logbook", onclick: () => openPage(LOG) }),
+        ". Type /work on any page to put the open ones there."));
+  }
+  const dayOf = (t) => {
+    const d = new Date(t * 1000), y = new Date(Date.now() - 86400000);
+    return d.toDateString() === new Date().toDateString() ? "Today" : d.toDateString() === y.toDateString() ? "Yesterday"
+      : d.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" });
+  };
+  function drawLogbook(box) {
+    const items = workItems().filter((x) => !isOpen(x)).sort((x, y) => endedAt(y.b) - endedAt(x.b)).slice(0, 300);
+    const days = [];
+    for (const x of items) {
+      const d = dayOf(endedAt(x.b));
+      if (!days.length || days[days.length - 1].d !== d) days.push({ d, items: [] });
+      days[days.length - 1].items.push(x);
+    }
+    box.replaceChildren(
+      el("h1", { class: "pg-title", text: "Logbook" }),
+      el("p", { class: "agt-sub", text: "Work items you accepted or canceled, newest first. They stay on their pages, folded away, so agents reading the notes still see them." }),
+      ...(days.length ? days.map(({ d, items: its }) => el("section", { class: "lg-day", "aria-label": d }, el("h2", { text: d }),
+        el("div", { class: "lg-list" }, ...its.map(logRow))))
+        : [el("div", { class: "wk-none", text: "Nothing done or canceled yet. Work items you accept or cancel show here." })]));
+  }
+  function logRow({ p, b, s }) {
+    const a = b.to ? actorOf(b.to) : null, done = s.key === "done", made = madeOf(b);
+    return el("div", { class: `lg-row${done ? "" : " canceled"}`, "data-id": b.id },
+      el("span", { class: "lg-mk", role: "img", "aria-label": done ? "Done" : "Canceled", html: done ? SVG.check : SVG.x }),
+      el("div", { class: "wk-main" },
+        el("div", { class: "wk-text", text: wordsOf(b) }),
+        el("div", { class: "wk-meta" }, el("span", { text: [b.to ? nameOf(a, b.to) : "No agent", p.title || "Untitled", `${done ? "accepted" : "canceled"} ${clock(endedAt(b))}`].join(" · ") })),
+        made.length ? madeRow(made) : null),
+      el("div", { class: "wk-acts" },
+        el("button", { type: "button", class: "wk-btn link", text: "Show line", onclick: () => goLine(p, b) }),
+        el("button", { type: "button", class: "wk-btn", text: "Reopen", onclick: () => reopen([b]) })));
+  }
+  function drawWorkBlock(n) {
+    const box = n.querySelector(".wkb");
+    if (!box) return;
+    const keys = GROUPS.map((g) => g.key), items = workItems().filter(isOpen).sort((x, y) => keys.indexOf(x.s.key) - keys.indexOf(y.s.key));
+    box.replaceChildren(el("div", { class: "agt-hd" }, el("span", { html: SVG.work }), el("span", { text: `Work items · ${items.length} open` }),
+      el("button", { type: "button", class: "wk-go", text: "Open the Work page", onclick: () => openPage(WORK) })),
+      items.length ? el("div", { class: "wk-list compact" }, ...items.map((x) => workRow(x, true))) : el("div", { class: "agt-none", text: "Nothing open." }));
+  }
+  function workEntry() {
+    const n = forYou();
+    return el("div", { class: `pg-row spec-row${current === WORK ? " on" : ""}`, role: "treeitem", "aria-selected": String(current === WORK), onclick: () => openPage(WORK) },
+      el("span", { class: "caret none" }), el("span", { class: "ic", html: SVG.work }), el("span", { class: "nm", text: "Work" }),
+      n ? el("span", { class: "needs", title: `${n} waiting for you: an answer, or your review`, text: `${n} for you` }) : null);
+  }
+  function logEntry() {
+    return el("div", { class: `pg-row spec-row${current === LOG ? " on" : ""}`, role: "treeitem", "aria-selected": String(current === LOG), onclick: () => openPage(LOG) },
+      el("span", { class: "caret none" }), el("span", { class: "ic", html: SVG.log }), el("span", { class: "nm", text: "Logbook" }));
+  }
+
   // ---------------------------------------------------------------- start
   try { book = await (await ag.api("state")).json(); } catch { book = { version: 0, pages: [] }; }
   if (!book || !Array.isArray(book.pages)) book = { version: 0, pages: [] };
@@ -2195,7 +2541,7 @@ turned into another type or sent to an agent together, as one message naming eac
   ready = true;
   for (const m of early.splice(0)) heard(m);
   const kept = store.get("page", null);
-  current = kept === AGENTS ? AGENTS : kept && pages.has(kept) && !pages.get(kept).deleted ? kept : (kidsOf(null)[0] || {}).id || null;
+  current = SPECIAL.includes(kept) ? kept : kept && pages.has(kept) && !pages.get(kept).deleted ? kept : (kidsOf(null)[0] || {}).id || null;
   takeActors(ag.actors.current);
   ag.actors.on(takeActors);
   setInterval(() => { if (!document.hidden) drawSent(); }, 30_000);   // "Working · 4m": kept current
