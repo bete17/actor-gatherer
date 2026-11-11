@@ -7,6 +7,7 @@ import sys
 import tempfile
 import time
 import unittest
+import unittest.mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
@@ -40,6 +41,60 @@ class EndGroupTest(unittest.TestCase):
         parent.wait(timeout=30)
         with self.assertRaises(ProcessLookupError):
             end_group(parent.pid)
+
+
+HOLD = ("import os, sys, time; f = open(sys.argv[1], 'a'); print(os.getpid(), flush=True); time.sleep(60)")
+
+
+class HoldersTest(unittest.TestCase):
+    """Who has a gatherer's file open, as the storage upgrade asks before it moves the read log (store/migrate.py):
+    lsof or /proc, and on Windows the Restart Manager. The process is the one that prints its pid: Windows' venv
+    python.exe starts the real one as a child."""
+
+    def hold(self, path, *extra):
+        p = subprocess.Popen([sys.executable, "-c", HOLD, path, *extra], stdout=subprocess.PIPE, text=True,
+                             start_new_session=True)
+        self.addCleanup(self.end, p)                  # before the folder goes: Windows can't delete a file held open
+        return int(p.stdout.readline())
+
+    def end(self, p):
+        try:
+            end_group(p.pid, force=True)              # the venv launcher and the python it started
+        except ProcessLookupError:
+            pass
+        p.wait(timeout=10)
+        p.stdout.close()
+
+    def test_an_older_ag_holding_the_file_is_found_and_a_dashboard_is_not(self):
+        from ag.ag_harness.store import migrate
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = os.path.join(tmp.name, "context.db")
+        open(path, "w").close()
+        if migrate._others(path) is None:
+            self.skipTest("nothing here tells what has a file open")
+        self.assertEqual(migrate.older(path), [])
+        ag = self.hold(path)
+        dashboard = self.hold(path, "-m", "ag_dashboard")
+        self.assertTrue({ag, dashboard} <= migrate._others(path))
+        started = migrate._process(ag)
+        self.assertLess(abs(started[0] - time.time()), 120)
+        self.assertIn(HOLD[:20], started[1])
+        self.assertEqual(migrate.older(path), [])                     # started after the code: this ag's
+        with unittest.mock.patch.object(migrate, "code_since", return_value=time.time() + 3600):
+            found = migrate.older(path)                               # as if started before it: an older ag's
+        self.assertEqual([int(x.split()[0]) for x in found], [ag])
+
+    def test_a_dashboard_is_told_by_its_command_on_every_os(self):
+        from ag.ag_harness.store.migrate import READER
+        for cmd in ("/usr/bin/python3 -m ag_dashboard --home /h", "/opt/python /Users/x/.local/bin/ag",
+                    "/opt/python /Users/x/.local/bin/ag dashboard --port 1",
+                    r'"C:\Py\python.exe" "C:\my venv\Scripts\ag.exe"',
+                    r'"C:\Py\python.exe" "C:\my venv\Scripts\ag.exe" dashboard --port 4217 --no-open'):
+            self.assertTrue(READER.search(cmd), cmd)
+        for cmd in ("/usr/bin/python3 -m ag.ag_harness.server", r'"C:\Py\python.exe" -m ag.ag_harness.server',
+                    r'"C:\Py\python.exe" "C:\my venv\Scripts\ag.exe" claude -p hi'):
+            self.assertFalse(READER.search(cmd), cmd)
 
 
 class MigrateLockTest(unittest.TestCase):
