@@ -113,6 +113,13 @@ class ProactiveContextManagerConfig:
     # Tell the agent where its full history is (in the gatherer guide, below).
     db_hint: bool = True
 
+    # The fixed texts that say who the other sessions' requests came from, for a gatherer whose
+    # sessions are not one user's (other people's conversations loaded as history, say).
+    # "" = ag's own (layout.JOINED_OPENING: the history's opening for a session that joined the
+    # others' build; layout.BEFORE_NOTE: the note on the block of requests made before it began).
+    joined_opening: str = ""
+    before_note: str = ""
+
     # The gatherer guide: the first item of every context, after the harness's own set-up, on
     # every read -- with or without a build -- so the agent knows from its first call what the
     # gatherer adds to its context and where the rest is. `{db_path}` is the context database. With

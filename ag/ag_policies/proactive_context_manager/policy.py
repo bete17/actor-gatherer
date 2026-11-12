@@ -651,7 +651,8 @@ class ProactiveContextManager(Policy):
         else:
             return [], 0                                  # they fit: each a message, as always
         with_cleaned(conn, [e for _, e in before])
-        item = self.format.make_section(layout.requests_before(before, budget, self.tokenizer), PARALLEL_BEFORE)
+        item = self.format.make_section(layout.requests_before(before, budget, self.tokenizer, self.config.before_note),
+                                        PARALLEL_BEFORE)
         made_id = conn.make_item(item, self.tokenizer, properties=channel.of(channel_id), name=PARALLEL_BEFORE,
                                  source=f"requests before {start}")
         return [(made_id, item, conn.made_items([made_id])[made_id][2])], start

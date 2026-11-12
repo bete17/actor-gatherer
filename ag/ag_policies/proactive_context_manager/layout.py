@@ -133,7 +133,8 @@ here is worth looking for there before concluding it did not happen:
 def overview(cfg: ProactiveContextManagerConfig, joined: bool = False) -> str:
     """The sections' fixed preamble: how they are organised. `joined`: for a session that started
     from the gatherer's other sessions (a `join` build), which has no earlier history of its own."""
-    return f"{OVERVIEW_HEADER}\n\n{JOINED_OPENING if joined else OPENING}\n\n{OVERVIEW}"
+    opening = (cfg.joined_opening or JOINED_OPENING) if joined else OPENING
+    return f"{OVERVIEW_HEADER}\n\n{opening}\n\n{OVERVIEW}"
 
 
 def guide(cfg: ProactiveContextManagerConfig, db_path: Optional[str]) -> str:
@@ -290,11 +291,12 @@ BEFORE_NOTE = ("The requests the user made in the gatherer's other sessions befo
                "correction or exclusion stated in one applies to your work too.")
 
 
-def requests_before(requests: List[Tuple[Optional[str], Entry]], budget: int, tok: Tokenizer) -> str:
+def requests_before(requests: List[Tuple[Optional[str], Entry]], budget: int, tok: Tokenizer,
+                    note: str = "") -> str:
     """The other channels' requests made before a session with no build of its own began, as one
     block within `budget`: the newest that fit, in order, after a line naming the earlier ones
-    left out."""
-    head = [BEFORE_HEADER, "", BEFORE_NOTE, ""]
+    left out. `note`: the text under the heading ("" = BEFORE_NOTE)."""
+    head = [BEFORE_HEADER, "", note or BEFORE_NOTE, ""]
     first, last = requests[0][1].row_id, requests[-1][1].row_id
     omitted = (f"[{len(requests)} earlier requests left out: ids {first}-{last} — read them from the "
                f"`events` table]")
